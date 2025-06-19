@@ -1,0 +1,28 @@
+{
+    "cSpell.words": [
+        "ALPHABLENDENABLE",
+        "COLOROP",
+        "D3DCLEAR_TARGET",
+        "D3DCLEAR_ZBUFFER",
+        "D3DCOLOR_XRGB",
+        "D3DCULL_NONE",
+        "D3DRS_CULLMODE",
+        "D3DRS_ZENABLE",
+        "DFMT",
+        "DFVF",
+        "DSURFACE",
+        "DTSS",
+        "DXVECTOR",
+        "FATX",
+        "INVSRCALPHA",
+        "lbas",
+        "LBASIZE",
+        "Lucon",
+        "NTSTATUS",
+        "SCREENVERTEX",
+        "VERTEXPROCESSING",
+        "Xapi",
+        "XBpartitioner",
+        "XDEVICE"
+    ]
+}
