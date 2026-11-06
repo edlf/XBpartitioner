@@ -32,13 +32,15 @@ enum Function
     FUNCTION_COUNT
 };
 
-// Which partition table is loaded in the editor, cycled with Y
+// Which partition table is loaded in the editor. Y cycles kernel -> hdd -> backup,
+// A loads a preset layout instead.
 enum LoadedTable
 {
     LOADED_TABLE_KERNEL = 0,
     LOADED_TABLE_HDD = 1,
     LOADED_TABLE_HDD_BACKUP = 2,
-    LOADED_TABLE_COUNT
+    LOADED_TABLE_COUNT, // Number of tables Y cycles through
+    LOADED_TABLE_PRESET = LOADED_TABLE_COUNT
 };
 
 // Index into XINPUT_GAMEPAD::bAnalogButtons as reported by XInputGetStateAny
@@ -68,6 +70,7 @@ private:
     bool ConfirmOnMainScreen(LPCWSTR message);
     void DisplayHelp();
     void DisplayWarningBackupAvailable();
+    void CheckForV4TableOnOldBios();
     bool ConfirmFormatWarning();
     bool DisplayNoInfo();
     void CheckTableStatus();
@@ -78,6 +81,7 @@ private:
     // Input
     int XInputGetStateAny(int *analog, int *analog_val, int *buttons, short *l_thumb_y_val, int wait = 2);
     void WaitForButton();
+    void WaitForRelease();
     bool ConfirmWithY();
     // Returns true if the button press should be waited out before the next poll
     bool HandleAnalogButton(int button, int value);
@@ -87,6 +91,7 @@ private:
     void ChangeSelectedPartition(int trigger_value, int direction, bool fine);
 
     // Actions bound to Start
+    bool CheckTableFitsBeforeBackup();
     void DoStart();
     void DoWriteTable();
     void DoFormatAll();
@@ -95,6 +100,7 @@ private:
 
     // Disk and kernel partition table access
     ULONGLONG get_hdd_size();
+    bool is_physical_4k_drive();
     bool read_lba48_info(XboxPartitionTable *p_table);
     bool reload_lba48();
     unsigned int get_cluster_size_from_partition(ANSI_STRING part);
@@ -134,6 +140,7 @@ private:
     // Disk and kernel patch info
     bool m_FullLba48;
     ULONGLONG m_TotalHddSectors;
+    bool m_Physical4k; // 512e drive: 4K physical sectors, decides where the backup table goes
     DWORD m_Lba48Version;
 
     // Editor state

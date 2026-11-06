@@ -81,43 +81,51 @@ Renderer::~Renderer()
     Shutdown();
 }
 
-void Renderer::Init()
+// Picks the video mode from the AV pack and the dashboard video settings:
+//   720p - component (HDTV) pack with 720p enabled
+//   480p - component or VGA pack with 480p enabled
+//   480i - everything else (composite, s-video, scart, rf)
+static VideoMode SelectVideoMode()
 {
-    D3DPRESENT_PARAMETERS d3dpp;
-    ZeroMemory(&d3dpp, sizeof(d3dpp));
-
-    // Pick the video mode from the AV pack and the dashboard video settings:
-    //   720p - component (HDTV) pack with 720p enabled
-    //   480p - component or VGA pack with 480p enabled
-    //   480i - everything else (composite, s-video, scart, rf)
     const DWORD video_flags = XGetVideoFlags();
     const DWORD av_pack = XGetAVPack();
 
     if (av_pack == XC_AV_PACK_HDTV && (video_flags & XC_VIDEO_FLAGS_HDTV_720p))
     {
-        m_VideoMode = VIDEO_MODE_720P;
+        return VIDEO_MODE_720P;
+    }
+
+    if ((av_pack == XC_AV_PACK_HDTV || av_pack == XC_AV_PACK_VGA) && (video_flags & XC_VIDEO_FLAGS_HDTV_480p))
+    {
+        return VIDEO_MODE_480P;
+    }
+
+    return VIDEO_MODE_480I;
+}
+
+// Creates the device for one video mode and sets up the layout mapping for it
+bool Renderer::CreateDevice(VideoMode mode)
+{
+    D3DPRESENT_PARAMETERS d3dpp;
+    ZeroMemory(&d3dpp, sizeof(d3dpp));
+
+    switch (mode)
+    {
+    case VIDEO_MODE_720P:
         m_Width = 1280;
         m_Height = 720;
         d3dpp.Flags = D3DPRESENTFLAG_PROGRESSIVE | D3DPRESENTFLAG_WIDESCREEN;
-    }
-    else if ((av_pack == XC_AV_PACK_HDTV || av_pack == XC_AV_PACK_VGA) && (video_flags & XC_VIDEO_FLAGS_HDTV_480p))
-    {
-        m_VideoMode = VIDEO_MODE_480P;
+        break;
+    case VIDEO_MODE_480P:
         m_Width = 640;
         m_Height = 480;
         d3dpp.Flags = D3DPRESENTFLAG_PROGRESSIVE;
-    }
-    else
-    {
-        m_VideoMode = VIDEO_MODE_480I;
+        break;
+    default:
         m_Width = 640;
         m_Height = 480;
+        break;
     }
-
-    // The layout is 4:3: scale it to the screen height and center it horizontally
-    m_Scale = (FLOAT)m_Height / LAYOUT_HEIGHT;
-    m_OffsetX = ((FLOAT)m_Width - LAYOUT_WIDTH * m_Scale) / 2.0f;
-    m_OffsetY = 0.0f;
 
     d3dpp.BackBufferWidth = m_Width;
     d3dpp.BackBufferHeight = m_Height;
@@ -125,8 +133,33 @@ void Renderer::Init()
     d3dpp.BackBufferCount = 1;
     d3dpp.SwapEffect = D3DSWAPEFFECT_DISCARD;
 
+    m_pDevice = NULL;
+    if (FAILED(m_pD3D->CreateDevice(0, D3DDEVTYPE_HAL, NULL, D3DCREATE_HARDWARE_VERTEXPROCESSING, &d3dpp, &m_pDevice)) || m_pDevice == NULL)
+    {
+        m_pDevice = NULL;
+        return false;
+    }
+
+    m_VideoMode = mode;
+
+    // The layout is 4:3: scale it to the screen height and center it horizontally
+    m_Scale = (FLOAT)m_Height / LAYOUT_HEIGHT;
+    m_OffsetX = ((FLOAT)m_Width - LAYOUT_WIDTH * m_Scale) / 2.0f;
+    m_OffsetY = 0.0f;
+
+    return true;
+}
+
+void Renderer::Init()
+{
     m_pD3D = Direct3DCreate8(D3D_SDK_VERSION);
-    m_pD3D->CreateDevice(0, D3DDEVTYPE_HAL, NULL, D3DCREATE_HARDWARE_VERTEXPROCESSING, &d3dpp, &m_pDevice);
+
+    // If the selected mode is refused, fall back to plain 480i which every setup supports
+    const VideoMode mode = SelectVideoMode();
+    if (!CreateDevice(mode) && mode != VIDEO_MODE_480I)
+    {
+        CreateDevice(VIDEO_MODE_480I);
+    }
 
     m_pDevice->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
     m_pDevice->SetRenderState(D3DRS_LIGHTING, FALSE);
@@ -200,6 +233,11 @@ void Renderer::EndFrame()
 void Renderer::Text(Font font, LPCWSTR text, int x, int y, Color color, int align)
 {
     XFONT *pFont = m_pFonts[(font >= 0 && font < FONT_COUNT) ? font : FONT_TEXT];
+    if (pFont == NULL)
+    {
+        return;
+    }
+
     const ColorStyle &style = g_ColorStyles[(color >= 0 && color < COLOR_COUNT) ? color : COLOR_LIGHT_GREY];
 
     if (style.opaque_background)

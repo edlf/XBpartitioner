@@ -5,6 +5,9 @@
 #include "Undocumented.h"
 #include "partition.hpp"
 
-bool largePartitionFixup(PANSI_STRING partitionString, const XboxPartitionTableEntry entry, const ULONG clusterSize);
+// Sets SectorsPerCluster in a freshly formatted FATX volume's metadata when the
+// formatter left it at 0 (clusters of 128KB and up). partitionString is the
+// partition device; the metadata is at offset 0 of it.
+bool largePartitionFixup(PANSI_STRING partitionString, const ULONG clusterSize);
 
 #endif

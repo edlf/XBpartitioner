@@ -5,11 +5,17 @@
 #include <io.h>
 #include <stdio.h> //used for swprintf
 #include <stdlib.h>
+#include <string.h> //used for wcscat
 #include <winbase.h>
 #include "Winioctl.h"
 #include "prometheos_code.h"
 
 #define ARRAY_COUNT(a) (sizeof(a) / sizeof((a)[0]))
+
+// Compile time checks (no static_assert in this compiler): an array of size -1
+// fails the build. The partition table is read and written as one raw sector.
+typedef char check_table_size_is_one_sector[(XboxPartitionTableSize == HDD_SECTOR_SIZE) ? 1 : -1];
+typedef char check_table_struct_size[(sizeof(XboxPartitionTable) == XboxPartitionTableSize) ? 1 : -1];
 
 //-----------------------------------------------------------------------------
 // Screen layout, in 640x480 layout coordinates (see ui.h)
@@ -81,7 +87,7 @@ static const ULONG TRIGGER_FULL_STEP = SECTORS_PER_CLUSTER * 0x20000; // Fully p
 App::App()
     : m_pTable(NULL), m_pTableOriginal(NULL), m_pKernelTable(NULL),
       m_AnalogButton(-1), m_AnalogValue(0), m_DigitalButtons(0), m_LeftThumbY(0),
-      m_FullLba48(false), m_TotalHddSectors(0), m_Lba48Version(0),
+      m_FullLba48(false), m_TotalHddSectors(0), m_Physical4k(false), m_Lba48Version(0),
       m_CurrentPart(0), m_EditStart(false), m_StartAction(FUNCTION_WRITE_TABLE),
       m_LayoutScheme(0), m_LoadedTable(LOADED_TABLE_KERNEL)
 {
@@ -90,12 +96,6 @@ App::App()
     memset(&m_TableHdd, 0, sizeof(m_TableHdd));
     memset(&m_TableHddBackup, 0, sizeof(m_TableHddBackup));
     memset(m_Controllers, 0, sizeof(m_Controllers));
-
-    // no static asserts in vc++ from this vintage
-    if (XboxPartitionTableSize != HDD_SECTOR_SIZE || XboxPartitionTableSize != sizeof(XboxPartitionTable))
-    {
-        return;
-    }
 
     for (int i = 0; i < XboxPartitionTableEntryCount; i++)
     {
@@ -119,6 +119,8 @@ App::App()
     }
 
     m_TotalHddSectors = get_hdd_size();
+    // Needed before any table manipulator is created, it decides where the backup table is
+    m_Physical4k = is_physical_4k_drive();
 
     // Read kernel patch info + kernel reported partition table.
     // This also creates m_pTableOriginal, the copy used to check if partitions changed.
@@ -135,6 +137,8 @@ App::App()
     {
         DisplayWarningBackupAvailable();
     }
+
+    CheckForV4TableOnOldBios();
 
     RefreshClusterSizes();
 
@@ -167,7 +171,7 @@ void App::MainLoop()
         // Buttons that act once per press are waited out, held ones repeat
         if (wait_for_release)
         {
-            XInputGetStateAny(&m_AnalogButton, &m_AnalogValue, &m_DigitalButtons, &m_LeftThumbY);
+            WaitForRelease();
         }
 
         XInputGetStateAny(&m_AnalogButton, &m_AnalogValue, &m_DigitalButtons, &m_LeftThumbY, 0);
@@ -268,6 +272,7 @@ bool App::HandleDigitalButtons(int buttons, short left_thumb_y)
     {
         // Undo all changes since the last write
         m_pTable->LoadNewTable(m_pTableOriginal->GetPartitionTable());
+        m_LoadedTable = LOADED_TABLE_KERNEL;
         m_CurrentPart = m_pTable->GetLastAvailablePartitionSlot();
         return true;
     }
@@ -363,16 +368,17 @@ void App::CycleLayoutScheme()
     }
 
     m_LayoutScheme = (m_LayoutScheme + 1) % 3;
+    m_LoadedTable = LOADED_TABLE_PRESET;
 }
 
-// Y: kernel -> hdd -> hdd backup -> kernel ...
+// Y: kernel -> hdd -> hdd backup -> kernel ... (after a preset: kernel first)
 // Tables that are missing/unreadable (no magic) are skipped, loading those
 // would wipe the layout. The kernel table is always valid, so this terminates.
 void App::CycleLoadedTable()
 {
     do
     {
-        m_LoadedTable = (m_LoadedTable + 1) % LOADED_TABLE_COUNT;
+        m_LoadedTable = (m_LoadedTable >= LOADED_TABLE_COUNT - 1) ? LOADED_TABLE_KERNEL : m_LoadedTable + 1;
     } while ((m_LoadedTable == LOADED_TABLE_HDD && !XboxPartitionTableManipulator::HasMagic(m_TableHdd)) ||
              (m_LoadedTable == LOADED_TABLE_HDD_BACKUP && !XboxPartitionTableManipulator::HasMagic(m_TableHddBackup)));
 
@@ -446,12 +452,18 @@ void App::ChangeSelectedPartition(int trigger_value, int direction, bool fine)
 // so it does not count as the answer.
 void App::WaitForButton()
 {
-    if (XInputGetStateAny(&m_AnalogButton, &m_AnalogValue, &m_DigitalButtons, &m_LeftThumbY, 0) != -1)
-    {
-        XInputGetStateAny(&m_AnalogButton, &m_AnalogValue, &m_DigitalButtons, &m_LeftThumbY);
-    }
-
+    WaitForRelease();
     XInputGetStateAny(&m_AnalogButton, &m_AnalogValue, &m_DigitalButtons, &m_LeftThumbY);
+}
+
+// Returns once nothing is pressed. Unlike XInputGetStateAny(wait = 2) this
+// does not wait for a new press when everything is already released.
+void App::WaitForRelease()
+{
+    while (XInputGetStateAny(&m_AnalogButton, &m_AnalogValue, &m_DigitalButtons, &m_LeftThumbY, 0) != -1)
+    {
+        Sleep(10);
+    }
 }
 
 bool App::ConfirmWithY()
@@ -492,7 +504,7 @@ void App::DrawTable()
         wchar_t partno_str[3];
         wchar_t lba_start_str[16];
         wchar_t lba_size_str[16];
-        wchar_t cluster_str[10];
+        wchar_t cluster_str[16]; // Up to "4294967295KB"
         wchar_t size_str[20];
         const bool draw_cluster = PreparePartitionInfoStrings(i, partno_str, size_str, cluster_str, lba_start_str, lba_size_str);
 
@@ -596,13 +608,14 @@ void App::DrawFormatCluster()
 void App::DrawLoadedTableName()
 {
     // Indexed by LoadedTable
-    static const LPCWSTR names[LOADED_TABLE_COUNT] = {
+    static const LPCWSTR names[LOADED_TABLE_PRESET + 1] = {
         L"Current table [Kernel]",
         L"Current table [HDD]",
         L"Current table [Backup]",
+        L"Current table [Preset]",
     };
 
-    if (m_LoadedTable >= 0 && m_LoadedTable < LOADED_TABLE_COUNT)
+    if (m_LoadedTable >= 0 && m_LoadedTable <= LOADED_TABLE_PRESET)
     {
         m_Ui.Text(FONT_TEXT, names[m_LoadedTable], LOADED_TABLE_X, TITLE_Y, COLOR_WHITE);
     }
@@ -726,8 +739,8 @@ void App::DisplayHelp()
     m_Ui.BeginFrame();
 
     int y = LINE_HEIGHT;
-    wchar_t title[50];
-    swprintf(title, L"XBpartitioner Help (video mode: %s)", m_Ui.GetVideoModeName());
+    wchar_t title[80];
+    swprintf(title, L"XBpartitioner Help (video: %s, hdd: %s sectors)", m_Ui.GetVideoModeName(), m_Physical4k ? L"4K" : L"512");
     m_Ui.Text(FONT_TEXT, title, LAYOUT_WIDTH / 2, y, COLOR_WHITE, XFONT_CENTER);
     y += 2 * LINE_HEIGHT;
 
@@ -756,7 +769,66 @@ void App::DisplayWarningBackupAvailable()
 {
     static const LPCWSTR lines[] = {
         L"Main partition table is missing, however backup is available",
-        L"Press Y twice to load the backup table.",
+        L"Press Y to load the backup table.",
+        L"Press any button to continue...",
+    };
+    DrawWarningScreen(lines, ARRAY_COUNT(lines), NULL);
+    WaitForButton();
+}
+
+// A pre v4 lba48 patch only uses the low 32 bits of each LBA. If a table has
+// partitions that need the v4 high bits (over 2TB), it was most likely made
+// with a v4 BIOS, and this BIOS sees those partitions in the wrong place.
+// The editor drops the high bits (see XboxPartitionTableManipulator), so
+// warn before the user writes or formats anything based on it.
+void App::CheckForV4TableOnOldBios()
+{
+    if (m_FullLba48 || m_pKernelTable == NULL)
+    {
+        // v4 handles it, or there is no lba48 patch at all (already warned)
+        return;
+    }
+
+    // Which tables are affected, e.g. "kernel, hdd"
+    wchar_t found_in[40] = L"";
+    const struct
+    {
+        const XboxPartitionTable *table;
+        LPCWSTR name;
+    } tables[] = {
+        {&m_TableKernel, L"kernel"},
+        {&m_TableHdd, L"hdd"},
+        {&m_TableHddBackup, L"hdd backup"},
+    };
+
+    for (int i = 0; i < ARRAY_COUNT(tables); i++)
+    {
+        if (XboxPartitionTableManipulator::HasMagic(*tables[i].table) &&
+            XboxPartitionTableManipulator::HasHighLbaBits(*tables[i].table))
+        {
+            if (found_in[0] != L'\0')
+            {
+                wcscat(found_in, L", ");
+            }
+            wcscat(found_in, tables[i].name);
+        }
+    }
+
+    if (found_in[0] == L'\0')
+    {
+        return;
+    }
+
+    wchar_t line1[80];
+    wchar_t line2[80];
+    swprintf(line1, L"This BIOS has LBA48 patch v%d, but a partition table", m_Lba48Version);
+    swprintf(line2, L"uses v4 (over 2TB) values. Found in: %s.", found_in);
+
+    const LPCWSTR lines[] = {
+        line1,
+        line2,
+        L"It is likely a v4 table: partitions above 2TB are shown wrong.",
+        L"Do not write or format. Use a v4 BIOS such as Cerbios.",
         L"Press any button to continue...",
     };
     DrawWarningScreen(lines, ARRAY_COUNT(lines), NULL);
@@ -828,6 +900,11 @@ void App::QuitToDashboard()
 
 void App::DoFormatAll()
 {
+    if (!CheckTableFitsBeforeBackup())
+    {
+        return;
+    }
+
     if (!ConfirmFormatWarning())
     {
         return;
@@ -837,11 +914,19 @@ void App::DoFormatAll()
 
     // write_partition_tables() reloads both manipulators from the new table,
     // so keep a copy of the old one to find out which partitions changed
-    const XboxPartitionTableManipulator original(m_pTableOriginal->GetPartitionTable(), m_TotalHddSectors, m_FullLba48);
+    const XboxPartitionTableManipulator original(m_pTableOriginal->GetPartitionTable(), m_TotalHddSectors, m_FullLba48, m_Physical4k);
 
     if (!write_partition_tables(table))
     {
         ShowStatus(L"Partition table write failed!", COLOR_RED, true);
+        return;
+    }
+
+    // Without the lba48 patch the kernel keeps using its old partition layout
+    // until a reboot, so formatting now would hit the wrong sectors
+    if (!m_pKernelTable)
+    {
+        ShowStatus(L"Table written, not formatted: formatting needs an LBA48 BIOS.", COLOR_YELLOW, true);
         return;
     }
 
@@ -867,8 +952,32 @@ void App::DoFormatAll()
     m_pTableOriginal->LoadNewTable(table);
 }
 
+// Shows why the table can't be written if a partition reaches the backup table sector
+bool App::CheckTableFitsBeforeBackup()
+{
+    if (!m_pTable->OverlapsBackupTable())
+    {
+        return true;
+    }
+
+    static const LPCWSTR lines[] = {
+        L"The last partition runs into the backup partition table.",
+        L"On 4K sector drives the backup is in the last 4K block.",
+        L"Shrink the last partition a little, then write again.",
+        L"Press any button to continue...",
+    };
+    DrawWarningScreen(lines, ARRAY_COUNT(lines), NULL);
+    WaitForButton();
+    return false;
+}
+
 void App::DoWriteTable()
 {
+    if (!CheckTableFitsBeforeBackup())
+    {
+        return;
+    }
+
     if (!ConfirmOnMainScreen(L"Partition table will be written to hard drive!"))
     {
         return;
@@ -892,8 +1001,15 @@ void App::DoFormatOne()
     }
 
     // Update kernel partition table if changed, else we might format a partition with wrong start/size
-    if (CheckIfPartitionTableChanged() && m_pKernelTable)
+    if (CheckIfPartitionTableChanged())
     {
+        if (!m_pKernelTable)
+        {
+            // Can't tell the kernel about the new layout, it would format the old sectors
+            ShowStatus(L"Table changed: formatting it needs an LBA48 BIOS.", COLOR_YELLOW, true);
+            return;
+        }
+
         XboxPartitionTable table = m_pTable->GetPartitionTable();
         memcpy(m_pKernelTable, &table, sizeof(XboxPartitionTable));
         RefreshClusterSizes();
@@ -934,7 +1050,7 @@ bool App::format_partition(const int i)
 
     // XapiFormatFATVolumeEx returns a BOOL (TRUE on success), not an NTSTATUS
     const bool formatted = XapiFormatFATVolumeEx(&m_PartitionPaths[i], cluster_size_bytes) != FALSE;
-    const bool fixed_up = formatted && largePartitionFixup(&m_PartitionPaths[i], m_pTable->getPartitionEntry(i), cluster_size_bytes);
+    const bool fixed_up = formatted && largePartitionFixup(&m_PartitionPaths[i], cluster_size_bytes);
 
     // The FATX header changed (or may be half written), re-read what is on disk
     m_ClusterSizes[i] = get_cluster_size_from_partition(m_PartitionPaths[i]);
@@ -1075,6 +1191,85 @@ ULONGLONG App::get_hdd_size()
     return total_sectors;
 }
 
+// IOCTL_IDE_PASS_THROUGH input/output, as used by the Xbox IDE driver
+typedef struct _XB_IDE_REGS
+{
+    UCHAR bFeaturesReg;
+    UCHAR bSectorCountReg;
+    UCHAR bSectorNumberReg;
+    UCHAR bCylLowReg;
+    UCHAR bCylHighReg;
+    UCHAR bDriveHeadReg;
+    UCHAR bCommandReg;
+    UCHAR bHostSendsData;
+} XB_IDE_REGS;
+
+typedef struct _XB_ATA_PASS_THROUGH
+{
+    XB_IDE_REGS IdeReg;
+    ULONG DataBufferSize;
+    PVOID DataBuffer;
+} XB_ATA_PASS_THROUGH;
+
+#define ATA_COMMAND_IDENTIFY_DEVICE 0xEC
+#define ATA_DRIVE_HEAD_MASTER 0xA0
+// IDENTIFY DEVICE word 106: physical/logical sector size
+#define ATA_ID_SECTOR_SIZE_WORD 106
+
+// True if the drive has 4K (or larger) physical sectors behind 512 byte logical
+// ones (512e / Advanced Format). Reported by ATA IDENTIFY DEVICE word 106:
+//   bits 15:14 = 01  word is valid
+//   bit 13         multiple logical sectors per physical sector
+//   bits 3:0       log2(logical sectors per physical sector), 3 = 8 = 4K
+// Any failure is treated as a plain 512 byte drive.
+bool App::is_physical_4k_drive()
+{
+    ANSI_STRING a_file;
+    RtlInitAnsiString(&a_file, "\\Device\\Harddisk0\\Partition0");
+
+    OBJECT_ATTRIBUTES obj_attr;
+    InitializeObjectAttributes(&obj_attr, &a_file, OBJ_CASE_INSENSITIVE, NULL);
+
+    HANDLE handle;
+    IO_STATUS_BLOCK io_stat_block;
+    NTSTATUS stat = NtOpenFile(&handle, SYNCHRONIZE | GENERIC_READ | GENERIC_WRITE, &obj_attr, &io_stat_block,
+                               FILE_SHARE_READ | FILE_SHARE_WRITE, FILE_SYNCHRONOUS_IO_ALERT);
+    if (!NT_SUCCESS(stat))
+    {
+        return false;
+    }
+
+    USHORT identify[256];
+    memset(identify, 0, sizeof(identify));
+
+    XB_ATA_PASS_THROUGH ata;
+    memset(&ata, 0, sizeof(ata));
+    ata.IdeReg.bSectorCountReg = 1;
+    ata.IdeReg.bDriveHeadReg = ATA_DRIVE_HEAD_MASTER;
+    ata.IdeReg.bCommandReg = ATA_COMMAND_IDENTIFY_DEVICE;
+    ata.IdeReg.bHostSendsData = FALSE;
+    ata.DataBufferSize = sizeof(identify);
+    ata.DataBuffer = identify;
+
+    stat = NtDeviceIoControlFile(handle, NULL, NULL, NULL, &io_stat_block, IOCTL_IDE_PASS_THROUGH,
+                                 &ata, sizeof(ata), &ata, sizeof(ata));
+    NtClose(handle);
+
+    if (!NT_SUCCESS(stat))
+    {
+        return false;
+    }
+
+    const USHORT sector_size_info = identify[ATA_ID_SECTOR_SIZE_WORD];
+    if ((sector_size_info & 0xC000) != 0x4000)
+    {
+        // Word not supported, old drive: 512 byte physical sectors
+        return false;
+    }
+
+    return (sector_size_info & 0x2000) != 0 && (sector_size_info & 0x000F) >= 3;
+}
+
 bool App::read_lba48_info(XboxPartitionTable *p_table)
 {
     ANSI_STRING a_file;
@@ -1159,14 +1354,14 @@ bool App::reload_lba48()
     // Read kernel patch info + kernel reported partition table
     if (read_lba48_info(&m_TableKernel))
     {
-        m_pTable = new XboxPartitionTableManipulator(m_TableKernel, m_TotalHddSectors, m_FullLba48);
-        m_pTableOriginal = new XboxPartitionTableManipulator(m_TableKernel, m_TotalHddSectors, m_FullLba48);
+        m_pTable = new XboxPartitionTableManipulator(m_TableKernel, m_TotalHddSectors, m_FullLba48, m_Physical4k);
+        m_pTableOriginal = new XboxPartitionTableManipulator(m_TableKernel, m_TotalHddSectors, m_FullLba48, m_Physical4k);
         return true;
     }
     else
     {
-        m_pTable = new XboxPartitionTableManipulator(m_TotalHddSectors, m_FullLba48);
-        m_pTableOriginal = new XboxPartitionTableManipulator(m_TotalHddSectors, m_FullLba48);
+        m_pTable = new XboxPartitionTableManipulator(m_TotalHddSectors, m_FullLba48, m_Physical4k);
+        m_pTableOriginal = new XboxPartitionTableManipulator(m_TotalHddSectors, m_FullLba48, m_Physical4k);
         return false;
     }
 }
@@ -1188,17 +1383,37 @@ unsigned int App::get_cluster_size_from_partition(ANSI_STRING part)
 
     status = NtOpenFile(&hDisk, SYNCHRONIZE | GENERIC_ALL, &ObjectAttributes, &IoStatusBlock, 0, FILE_SYNCHRONOUS_IO_ALERT);
 
-    if (NT_SUCCESS(status))
-    {
-        status = NtReadFile(hDisk, NULL, NULL, NULL, &IoStatusBlock, (PVOID)PartSector, sizeof(PartSector), &RWOffset);
-    }
-    else
+    if (!NT_SUCCESS(status))
     {
         return 0;
     }
+
+    status = NtReadFile(hDisk, NULL, NULL, NULL, &IoStatusBlock, (PVOID)PartSector, sizeof(PartSector), &RWOffset);
     NtClose(hDisk);
-    memcpy(&fsb, PartSector, sizeof(PartSector));
-    return fsb.ClusterSize / 2;
+
+    if (!NT_SUCCESS(status))
+    {
+        return 0;
+    }
+
+    memcpy(&fsb, PartSector, sizeof(fsb) < sizeof(PartSector) ? sizeof(fsb) : sizeof(PartSector));
+
+    // Unformatted partitions, or ones holding something else, have no FATX header:
+    // whatever is at the ClusterSize offset is not a cluster size
+    if (memcmp(fsb.Tag, "FATX", 4) != 0)
+    {
+        return 0;
+    }
+
+    // ClusterSize is in sectors and always a power of two
+    const uint32_t sectors_per_cluster = fsb.ClusterSize;
+    if (sectors_per_cluster == 0 || (sectors_per_cluster & (sectors_per_cluster - 1)) != 0)
+    {
+        return 0;
+    }
+
+    // Sectors (512 bytes) to KB
+    return sectors_per_cluster / 2;
 }
 
 void App::RefreshClusterSizes()
@@ -1230,23 +1445,25 @@ bool App::CheckIfPartitionTableChanged()
 
 LARGE_INTEGER App::get_backup_partition_offset_bytes()
 {
-    // Last sector the kernel can address. Pre v4 lba48 patches are limited to 32 bit LBAs,
-    // same cap XboxPartitionTableManipulator::SetupMaxSize() uses for partitions.
-    ULONGLONG total_sectors = m_TotalHddSectors;
-    if (!m_FullLba48 && total_sectors > (ULONGLONG)MAX_HDD_SIZE_LBA48_V3)
-    {
-        total_sectors = MAX_HDD_SIZE_LBA48_V3;
-    }
-
+    // The manipulator decides where the backup goes (last sector, or the last 4K
+    // block on 512e drives, capped for pre v4 lba48) and keeps partitions clear of it
     LARGE_INTEGER byte_pos;
-    byte_pos.QuadPart = (ULONGLONG)(total_sectors - RESERVED_SPACE_END_LBA) * (ULONGLONG)HDD_SECTOR_SIZE;
+    byte_pos.QuadPart = (ULONGLONG)m_pTable->GetBackupTableLba() * (ULONGLONG)HDD_SECTOR_SIZE;
     return byte_pos;
 }
 
 bool App::write_partition_tables(const XboxPartitionTable table)
 {
-    // Without a known disk size the backup offset would underflow
-    if (m_TotalHddSectors <= RESERVED_SPACE_END_LBA)
+    // Without a known disk size there is no valid backup location
+    if (m_pTable->GetBackupTableLba() == 0)
+    {
+        return false;
+    }
+
+    // Never write the backup over the end of a partition (callers check
+    // CheckTableFitsBeforeBackup() first to explain why)
+    const XboxPartitionTableManipulator to_write(table, m_TotalHddSectors, m_FullLba48, m_Physical4k);
+    if (to_write.OverlapsBackupTable())
     {
         return false;
     }
@@ -1297,18 +1514,35 @@ bool App::write_partition_tables(const XboxPartitionTable table)
         NtClose(hDisk);
     }
 
-    if (status == 0)
+    if (status != 0)
     {
-        // Refresh the cached on-disk copies, otherwise cycling with Y loads stale tables
-        m_TableHdd = read_hdd_main_partition_table();
-        m_TableHddBackup = read_hdd_backup_partition_table();
-        const bool reloaded = reload_lba48();
-        // Partitions may now point at different sectors
-        RefreshClusterSizes();
-        return reloaded;
+        return false;
     }
 
-    return false;
+    // Refresh the cached on-disk copies, otherwise cycling with Y loads stale tables
+    m_TableHdd = read_hdd_main_partition_table();
+    m_TableHddBackup = read_hdd_backup_partition_table();
+
+    if (m_pKernelTable)
+    {
+        // Rebuild both editor tables from the kernel's (now updated) table
+        reload_lba48();
+    }
+    else
+    {
+        // No lba48 patch: reload_lba48() would fail and reset the editor to the
+        // stock layout. The write itself succeeded, so the written table is the
+        // new baseline. The kernel only picks it up after a reboot.
+        m_pTable->LoadNewTable(table);
+        m_pTableOriginal->LoadNewTable(table);
+    }
+
+    // The editor now holds what was written, which is also the kernel's table
+    m_LoadedTable = LOADED_TABLE_KERNEL;
+
+    // Partitions may now point at different sectors
+    RefreshClusterSizes();
+    return true;
 }
 
 bool App::erase_partition_tables()
@@ -1371,9 +1605,22 @@ XboxPartitionTable App::read_hdd_backup_partition_table()
     XboxPartitionTable table;
     memset(&table, 0, sizeof(table));
 
-    if (m_TotalHddSectors > 0)
+    if (m_pTable->GetBackupTableLba() == 0)
     {
-        table = read_hdd_partition_table(get_backup_partition_offset_bytes());
+        return table;
+    }
+
+    table = read_hdd_partition_table(get_backup_partition_offset_bytes());
+
+    // Older XBpartitioner builds always put the backup in the last sector, also on
+    // 512e drives where it now goes at the last 4K block. Read-only fallback so
+    // those backups are still found; the next write puts it in the new place.
+    const uint64_t last_sector_lba = m_pTable->GetLastSectorLba();
+    if (!XboxPartitionTableManipulator::HasMagic(table) && last_sector_lba != m_pTable->GetBackupTableLba())
+    {
+        LARGE_INTEGER legacy_offset;
+        legacy_offset.QuadPart = (ULONGLONG)last_sector_lba * (ULONGLONG)HDD_SECTOR_SIZE;
+        table = read_hdd_partition_table(legacy_offset);
     }
 
     return table;

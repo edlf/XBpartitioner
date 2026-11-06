@@ -73,7 +73,11 @@ const uint32_t PE_PARTFLAGS_IN_USE = 0x80000000;
 #define LBASIZE_512GB   0x40000000
 #define LBASIZE_256GB   0x20000000
 
-// 0x1 for 512bit sector sizes, 0x100 for hdds with a 4k sector size
+// The backup partition table is kept at the end of the disk:
+//   512n drives (512 byte physical sectors): the last sector
+//   512e drives (4K physical, 512 byte logical): the first 512 byte sector of
+//   the last full 4K block, so the write is aligned (same place as Cerbios)
+// Partitions end before it. See XboxPartitionTableManipulator::GetBackupTableLba().
 #define RESERVED_SPACE_END_LBA 0x1
 #define MAX_HDD_SIZE_LBA48_V3  0xFFFFFFFF
 
@@ -113,8 +117,19 @@ typedef struct
 class XboxPartitionTableManipulator {
 
 public:
-    XboxPartitionTableManipulator(const uint64_t total_hdd_lba, const bool lbav4);
-    XboxPartitionTableManipulator(const XboxPartitionTable& part_table, const uint64_t total_hdd_lba, const bool lbav4);
+    // physical_4k: the drive has 4K physical sectors (512e), see GetBackupTableLba()
+    XboxPartitionTableManipulator(const uint64_t total_hdd_lba, const bool lbav4, const bool physical_4k);
+    XboxPartitionTableManipulator(const XboxPartitionTable& part_table, const uint64_t total_hdd_lba, const bool lbav4, const bool physical_4k);
+
+    // Sector holding the backup partition table, 0 if the disk size is unknown.
+    // Partitions always end before it.
+    uint64_t GetBackupTableLba() const;
+    // Last addressable sector (capped for pre v4 lba48), where older builds put the backup
+    uint64_t GetLastSectorLba() const;
+    // True if a partition in use reaches the backup table sector. Writing the
+    // backup would then overwrite the end of that partition. Happens with tables
+    // made before the backup moved to the last 4K block on 512e drives.
+    bool OverlapsBackupTable() const;
 
     void SetupPartitionsStock();
     void SetupPartitionsFOnly();
@@ -151,6 +166,8 @@ public:
     // Partition table methods
     bool HasMagic() const;
     static bool HasMagic(const XboxPartitionTable& part_table);
+    // True if a partition in use has LBAs above 32 bits (lba48 v4 only)
+    static bool HasHighLbaBits(const XboxPartitionTable& part_table);
     void WriteMagic();
 
     int GetLastAvailablePartitionSlot() const;
@@ -158,7 +175,7 @@ public:
     uint64_t GetUsableLBAs() const;
     uint64_t GetTotalHDDLBAs() const;
 
-    // Gets first free lba for a new partition
+    // Gets first free lba for a new partition, 0 if the disk is full
     uint64_t GetFirstFreeStart() const;
 
     // Gets available free space
@@ -187,6 +204,7 @@ private:
     void SortPartitions(uint64_t *starts, uint64_t *ends) const;
 
     void SetupMaxSize();
+    void DropHighLbaBitsIfNotV4();
 
     XboxPartitionTable m_table;
     uint64_t m_hdd_lba_size;
@@ -195,7 +213,10 @@ private:
     uint64_t m_usable_lba_size;
     // Last position where a partition can land
     uint64_t m_last_usable_lba;
+    uint64_t m_backup_table_lba;
+    uint64_t m_last_sector_lba;
     bool m_lba_v4;
+    bool m_physical_4k;
 };
 
 typedef struct _FATX_SUPERBLOCK

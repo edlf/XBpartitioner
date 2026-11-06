@@ -1,13 +1,13 @@
 #include "partition.hpp"
 #include <cstring>
 
-XboxPartitionTableManipulator::XboxPartitionTableManipulator(const uint64_t total_hdd_lba, const bool lbav4) : m_hdd_lba_size(total_hdd_lba), m_lba_v4(lbav4)
+XboxPartitionTableManipulator::XboxPartitionTableManipulator(const uint64_t total_hdd_lba, const bool lbav4, const bool physical_4k) : m_hdd_lba_size(total_hdd_lba), m_lba_v4(lbav4), m_physical_4k(physical_4k)
 {
     SetupMaxSize();
     SetupPartitionsStock();
 }
 
-XboxPartitionTableManipulator::XboxPartitionTableManipulator(const XboxPartitionTable &part_table, const uint64_t total_hdd_lba, const bool lbav4) : m_hdd_lba_size(total_hdd_lba), m_lba_v4(lbav4), m_table(part_table)
+XboxPartitionTableManipulator::XboxPartitionTableManipulator(const XboxPartitionTable &part_table, const uint64_t total_hdd_lba, const bool lbav4, const bool physical_4k) : m_table(part_table), m_hdd_lba_size(total_hdd_lba), m_lba_v4(lbav4), m_physical_4k(physical_4k)
 {
 
     SetupMaxSize();
@@ -16,19 +16,100 @@ XboxPartitionTableManipulator::XboxPartitionTableManipulator(const XboxPartition
     {
         SetupPartitionsStock();
     }
+    else
+    {
+        DropHighLbaBitsIfNotV4();
+    }
+}
+
+// Pre v4 lba48 patches only know 32 bit LBAs: the fields v4 uses for the high
+// 16 bits are reserved there and ignored by the kernel. Clear them so the
+// editor (and anything written back) matches what the kernel actually uses.
+// Callers can check HasHighLbaBits() on the original table to warn about it.
+void XboxPartitionTableManipulator::DropHighLbaBitsIfNotV4()
+{
+    if (m_lba_v4)
+    {
+        return;
+    }
+
+    for (int i = 0; i < XboxPartitionTableEntryCount; i++)
+    {
+        m_table.TableEntries[i].LBAStart_high = 0;
+        m_table.TableEntries[i].LBASize_high = 0;
+    }
+}
+
+bool XboxPartitionTableManipulator::HasHighLbaBits(const XboxPartitionTable &part_table)
+{
+    for (int i = 0; i < XboxPartitionTableEntryCount; i++)
+    {
+        const XboxPartitionTableEntry &entry = part_table.TableEntries[i];
+
+        // Only partitions in use matter, the kernel skips the others
+        if (entry.Flags == PE_PARTFLAGS_IN_USE && (entry.LBAStart_high != 0 || entry.LBASize_high != 0))
+        {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 void XboxPartitionTableManipulator::SetupMaxSize()
 {
-    m_usable_lba_size = m_hdd_lba_size - RESERVED_SPACE_END_LBA - XBOX_SWAPPART1_LBA_START;
-    m_last_usable_lba = m_hdd_lba_size - RESERVED_SPACE_END_LBA;
-
-    // Cap sizes to lba48 v3 and earlier sizes
-    if (!m_lba_v4 && (m_hdd_lba_size > (uint64_t)MAX_HDD_SIZE_LBA48_V3))
+    // Cap to what lba48 v3 and earlier can address (32 bit LBAs)
+    uint64_t total = m_hdd_lba_size;
+    if (!m_lba_v4 && total > (uint64_t)MAX_HDD_SIZE_LBA48_V3)
     {
-        m_usable_lba_size = MAX_HDD_SIZE_LBA48_V3 - RESERVED_SPACE_END_LBA - XBOX_SWAPPART1_LBA_START;
-        m_last_usable_lba = MAX_HDD_SIZE_LBA48_V3 - RESERVED_SPACE_END_LBA;
+        total = MAX_HDD_SIZE_LBA48_V3;
     }
+
+    m_last_sector_lba = (total >= RESERVED_SPACE_END_LBA) ? total - RESERVED_SPACE_END_LBA : 0;
+
+    // Backup table location, see the comment at RESERVED_SPACE_END_LBA
+    if (m_physical_4k)
+    {
+        const uint64_t last_full_4k_block_end = total & ~(uint64_t)(LBA_ALIGNMENT - 1);
+        m_backup_table_lba = (last_full_4k_block_end >= LBA_ALIGNMENT) ? last_full_4k_block_end - LBA_ALIGNMENT : 0;
+    }
+    else
+    {
+        m_backup_table_lba = m_last_sector_lba;
+    }
+
+    // Partitions end before the backup table
+    m_last_usable_lba = m_backup_table_lba;
+    m_usable_lba_size = (m_last_usable_lba > XBOX_SWAPPART1_LBA_START) ? m_last_usable_lba - XBOX_SWAPPART1_LBA_START : 0;
+}
+
+uint64_t XboxPartitionTableManipulator::GetBackupTableLba() const
+{
+    // Below the stock partitions it can only come from an unknown (0) disk size
+    if (m_backup_table_lba <= XBOX_SWAPPART1_LBA_START)
+    {
+        return 0;
+    }
+
+    return m_backup_table_lba;
+}
+
+uint64_t XboxPartitionTableManipulator::GetLastSectorLba() const
+{
+    return m_last_sector_lba;
+}
+
+bool XboxPartitionTableManipulator::OverlapsBackupTable() const
+{
+    for (int i = 0; i < XboxPartitionTableEntryCount; i++)
+    {
+        if (isPartitionEnabled(i) && GetPartitionStart(i) + GetPartitionSize(i) > m_backup_table_lba)
+        {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 void XboxPartitionTableManipulator::SetPartitionName(const uint16_t partition_number, const std::string &name)
@@ -178,6 +259,9 @@ uint64_t XboxPartitionTableManipulator::GetFirstFreeStart() const
 
     SortPartitions(starts, ends);
 
+    // First gap between partitions with room for at least one 4KB block once the
+    // start is aligned. A gap of a few sectors would put the aligned start inside
+    // the next partition.
     for (int i = 0; i < (XboxPartitionTableEntryCount - 1); i++)
     {
         if (!starts[i])
@@ -185,13 +269,22 @@ uint64_t XboxPartitionTableManipulator::GetFirstFreeStart() const
             continue;
         }
 
-        if (ends[i] < starts[i + 1])
+        const uint64_t candidate = AlignStartTo4k(ends[i]);
+        if (candidate + LBA_ALIGNMENT <= starts[i + 1])
         {
-            return AlignStartTo4k(ends[i]);
+            return candidate;
         }
     }
 
-    return AlignStartTo4k(ends[(XboxPartitionTableEntryCount - 1)]);
+    // After the last partition, if the disk is not full
+    const uint64_t candidate = AlignStartTo4k(ends[(XboxPartitionTableEntryCount - 1)]);
+    if (candidate + LBA_ALIGNMENT <= m_last_usable_lba)
+    {
+        return candidate;
+    }
+
+    // No free space
+    return 0;
 }
 
 uint64_t XboxPartitionTableManipulator::GetAvailableFreeSpaceForPartition(const int partition_number) const
@@ -292,7 +385,13 @@ void XboxPartitionTableManipulator::EnablePartition(const int partition_number)
     // A new (never placed) partition starts at LBA 0, move it to the first free spot
     if (GetPartitionStart(partition_number) == 0)
     {
-        SetPartitionStart(partition_number, GetFirstFreeStart());
+        const uint64_t start = GetFirstFreeStart();
+        if (start == 0)
+        {
+            // Disk is full, leave the slot disabled
+            return;
+        }
+        SetPartitionStart(partition_number, start);
     }
 
     m_table.TableEntries[partition_number].Flags = PE_PARTFLAGS_IN_USE;
@@ -540,6 +639,7 @@ XboxPartitionTable XboxPartitionTableManipulator::GetPartitionTable()
 void XboxPartitionTableManipulator::LoadNewTable(const XboxPartitionTable &part_table)
 {
     m_table = part_table;
+    DropHighLbaBitsIfNotV4();
 }
 
 bool XboxPartitionTableManipulator::HasMagic(const XboxPartitionTable &part_table)

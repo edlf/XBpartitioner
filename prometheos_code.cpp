@@ -13,7 +13,7 @@ USHORT WINAPI FindFirstSetRightMember(ULONG Set)
 }
 
 // Fixes volume metadata
-bool largePartitionFixup(PANSI_STRING partitionString, const XboxPartitionTableEntry entry, const ULONG clusterSize)
+bool largePartitionFixup(PANSI_STRING partitionString, const ULONG clusterSize)
 {
     NTSTATUS status;
     OBJECT_ATTRIBUTES ObjectAttributes;

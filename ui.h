@@ -71,6 +71,8 @@ public:
     void FadeOut();
 
 private:
+    bool CreateDevice(VideoMode mode);
+
     FLOAT ToScreenX(FLOAT x) const { return m_OffsetX + x * m_Scale; }
     FLOAT ToScreenY(FLOAT y) const { return m_OffsetY + y * m_Scale; }
     // Rectangle in back buffer coordinates
