@@ -1,8 +1,15 @@
 # XBpartitioner
 
-Currently doesnt format big fatx partitions. Requires cerbios for lba48v4 support.
+XBpartitioner updated with new features and lba48v4 support. Requires a lba48 v4 compatible bios, Cerbios recommended.
 
-winioctl.h is not included due to MS copyright
+## Features
+- LBA48 v4 support (+2TB HDDs)
+- Reworked interface for ease of use, no need to remember what every button does anymore
+- 512e/4K sector support
+- Partition table backup restore for HDDs formatted with FATXplorer
+- 720p support
+- Not really useful but theme support
+
 
 ## Fonts
 
@@ -21,7 +28,3 @@ tools\makefonts.bat
 | `font_title.h` | DejaVu Sans Bold | 32px |
 | `font_table.h` | DejaVu Sans Mono | 18px |
 | `font_*_720.h` | same | 27 / 48 / 27px, used in 720p mode |
-
-## Video modes
-
-The video mode follows the dashboard settings and the AV cable: 720p with a component (HDTV) cable and 720p enabled, 480p with a component or VGA cable and 480p enabled, otherwise 480i. In 720p the 4:3 layout is scaled 1.5x and centered (960x720). Start > System information shows the active mode.

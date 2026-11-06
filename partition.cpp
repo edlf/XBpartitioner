@@ -285,7 +285,6 @@ void XboxPartitionTableManipulator::SortPartitions(uint64_t *starts, uint64_t *e
         }
     }
 
-    // Sort
     uint64_t temp;
     for (int i = 0; i < (XboxPartitionTableEntryCount - 1); i++)
     {

@@ -62,6 +62,11 @@ enum Font
     FONT_COUNT
 };
 
+// Characters the GPU text has glyphs for (printable ASCII); others draw as '?'
+static const int FONT_FIRST_CHAR = 32;
+static const int FONT_LAST_CHAR = 126;
+static const int FONT_GLYPH_COUNT = FONT_LAST_CHAR - FONT_FIRST_CHAR + 1;
+
 class Renderer
 {
 public:
@@ -78,7 +83,6 @@ public:
 
     // Clears the back buffer and sets up the render states for the frame
     void BeginFrame();
-    // Shows the back buffer
     void EndFrame();
 
     // Themes: the colors everything is drawn with. SetTheme() takes effect
@@ -92,7 +96,12 @@ public:
     const Theme &GetTheme() const { return GetThemeAt(m_ThemeIndex); }
 
     // Text, in layout pixels. align is XFONT_LEFT, XFONT_CENTER or XFONT_RIGHT.
+    // Drawn by the GPU from a texture of the font's characters (see
+    // BuildFontAtlas), the same layout XFONT would give; with XFONT itself
+    // if that texture couldn't be made.
     void Text(Font font, LPCWSTR text, int x, int y, Color color, int align = XFONT_LEFT);
+    // Width of a string in pixels, as Text() lays it out
+    int TextWidth(Font font, LPCWSTR text) const;
     // Height of a font's character cell, in pixels (what XFONT_TOP aligns to).
     // Boxes around text are sized from this: text height + padding.
     int FontHeight(Font font) const;
@@ -129,22 +138,37 @@ public:
     void Outline(FLOAT x1, FLOAT y1, FLOAT x2, FLOAT y2, D3DCOLOR color);
     // Fills the whole back buffer, side bars included. Used with an alpha for fades.
     void FillScreen(D3DCOLOR color);
-    // Fades whatever is on screen to black
-    void FadeOut();
+    // Moving background over the whole back buffer (side bars included), see
+    // background.h. Drawn by the GPU; call it first in a frame. It has its own
+    // clock: a long gap between two draws (a slow operation) counts as a short
+    // step, so it carries on instead of jumping.
+    void DrawBackground();
 
-    // A copy of a whole frame, so a backdrop that hasn't changed is redrawn
-    // with one copy instead of drawing it again (text is drawn by the CPU, so
-    // a screen full of it is slow). There is one saved frame; saving replaces it.
-    // Saves the frame drawn so far (the back buffer) or the one on screen.
-    bool SaveBackBuffer();
-    bool SaveFrontBuffer();
-    // Copies the saved frame into the back buffer. false if there is none.
-    bool RestoreSavedFrame();
 
 private:
     bool CreateDevice(VideoMode mode);
-    bool SaveBuffer(INT which); // GetBackBuffer index: 0 back, -1 front
-    bool SameSamplePixels(LPDIRECT3DSURFACE8 a, LPDIRECT3DSURFACE8 b);
+
+    // GPU text: each font's characters drawn once with XFONT into a texture
+    // (white, the coverage in the alpha), each in a slot as wide as its
+    // advance plus pad on both sides for parts that reach past it. Text is
+    // then textured quads tinted with the text color.
+    struct FontAtlas
+    {
+        LPDIRECT3DTEXTURE8 texture; // NULL: this font is drawn with XFONT
+        int width;                  // Texture size, powers of two
+        int height;
+        int pad;
+        short u[FONT_GLYPH_COUNT];  // Left and top of each character's slot
+        short v[FONT_GLYPH_COUNT];
+        short advance[FONT_GLYPH_COUNT];
+    };
+    bool BuildFontAtlas(int font);
+    // XFONT on the back buffer, for a font without a texture
+    void TextXFont(Font font, LPCWSTR text, long screen_x, long screen_y, Color color, int align);
+    // Text is collected and drawn in one go per font: when the font changes,
+    // before anything else is drawn (so it stays in order), and at the end of
+    // the frame
+    void FlushText();
 
     FLOAT ToScreenX(FLOAT x) const { return m_OffsetX + x; }
     FLOAT ToScreenY(FLOAT y) const { return m_OffsetY + y; }
@@ -154,20 +178,19 @@ private:
     LPDIRECT3D8 m_pD3D;
     LPDIRECT3DDEVICE8 m_pDevice;
     XFONT *m_pFonts[FONT_COUNT];
-    // Back buffer of the frame being drawn, from BeginFrame() to EndFrame(),
-    // so Text() doesn't look it up for every string
-    LPDIRECT3DSURFACE8 m_pFrameBackBuffer;
-    LPDIRECT3DSURFACE8 m_pSavedFrame; // See SaveBackBuffer(), created on first use
-    bool m_SavedFrameValid;
-    // The first copy is checked by reading pixels back; if it didn't work on
-    // this hardware, saving is off for good and screens draw their backdrop
-    bool m_SavedFrameChecked;
-    bool m_SavedFrameBroken;
+    FontAtlas m_Atlases[FONT_COUNT];
+    int m_TextBatchFont;  // Font of the text waiting in the batch (see FlushText)
+    int m_TextBatchCount; // Vertices waiting
     int m_FontHeights[FONT_COUNT];  // Cell heights, read once when the fonts are loaded
     int m_FontDescents[FONT_COUNT]; // Below the baseline, part of the cell height
     int m_FontCapHeights[FONT_COUNT]; // Capital letters above the baseline
 
     int m_ThemeIndex;
+    // The background's gradient (see background.h), for the theme it was made for
+    LPDIRECT3DTEXTURE8 m_pBackgroundTexture;
+    int m_BackgroundTextureTheme;
+    double m_BackgroundSeconds; // Background clock, see DrawBackground()
+    DWORD m_BackgroundTick;     // When it was last drawn, 0 before the first time
     VideoMode m_VideoMode;
     unsigned int m_Width;
     unsigned int m_Height;

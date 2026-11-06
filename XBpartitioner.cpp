@@ -1,4 +1,3 @@
-// XBpartitioner.cpp : Defines the entry point for the application.
 #include "stdafx.h"
 #include "xbpartitioner.h"
 
@@ -11,136 +10,15 @@
 #include "Winioctl.h"
 #include "prometheos_code.h"
 
+// Full path of the running xbe, e.g. \Device\Harddisk0\Partition6\Apps\XBP\default.xbe
+extern "C" __declspec(dllimport) ANSI_STRING XeImageFileName;
+
 #define ARRAY_COUNT(a) (sizeof(a) / sizeof((a)[0]))
 
 // Compile time checks (no static_assert in this compiler): an array of size -1
 // fails the build. The partition table is read and written as one raw sector.
 typedef char check_table_size_is_one_sector[(XboxPartitionTableSize == HDD_SECTOR_SIZE) ? 1 : -1];
 typedef char check_table_struct_size[(sizeof(XboxPartitionTable) == XboxPartitionTableSize) ? 1 : -1];
-
-//-----------------------------------------------------------------------------
-// Screen layouts (see struct Layout), in screen pixels. 720p uses 1.5x the 480
-// values, rounded where needed so things still line up (rows inside their boxes,
-// the table centered).
-//-----------------------------------------------------------------------------
-
-static const Layout g_Layout480 = {
-    640, 480, // width, height
-
-    // Main screen
-    60,  // margin_x
-    20,  // line_height
-    52,  // title_x
-    16,  // title_y
-    400, // loaded_table_x
-    430, // free_space_y
-    450, // status_y (where the controls hint is, which isn't shown meanwhile)
-    450, // prompt_y
-
-    // Partition table, as wide as the system information panel
-    30,  // table_left
-    610, // table_right
-    54,  // table_top
-    57,  // table_first_row_y
-    5,   // table_header_gap
-    20,  // table_row_height
-    1,   // table_row_padding (18 + 2x1, +1 to split evenly = 21 bar)
-         // Last row 382-403, panel 54-406
-
-    410, // legend_y
-    38,  // map_y (between the title and the table)
-    10,  // map_height
-
-    // Dialogs
-    50,  // dialog_left
-    590, // dialog_right
-    20,  // dialog_text_inset
-    4,   // dialog_title_offset
-    50,  // dialog_title_height (32px title + room for the line under it)
-    22,  // dialog_line_height
-    150, // dialog_button_width
-    4,   // dialog_button_padding (18 + 2x4 = 26)
-    30,  // dialog_button_gap
-    14,  // dialog_padding
-
-    // Menus
-    90,  // menu_left
-    550, // menu_right
-    110, // menu_top
-    8,   // menu_title_offset
-    37,  // menu_first_item_offset
-    3,   // menu_item_padding (18 + 2x3 = 24 bar)
-    2,   // menu_item_gap
-    20,  // menu_text_inset
-    8,   // menu_selection_inset
-    30,  // menu_footer_height
-    6,   // menu_footer_text_offset
-
-    // System information
-    30,  // info_left
-    610, // info_right
-    170, // info_value_offset
-
-};
-
-static const Layout g_Layout720 = {
-    960, 720, // width, height
-
-    // Main screen
-    90,  // margin_x
-    30,  // line_height
-    78,  // title_x
-    24,  // title_y
-    600, // loaded_table_x
-    644, // free_space_y
-    675, // status_y (where the controls hint is, which isn't shown meanwhile)
-    675, // prompt_y
-
-    // Partition table, as wide as the system information panel
-    45,  // table_left
-    915, // table_right
-    81,  // table_top
-    86,  // table_first_row_y
-    8,   // table_header_gap
-    30,  // table_row_height
-    1,   // table_row_padding (27 + 2x1, +1 to split evenly = 30 bar)
-         // Last row 574-604, panel 81-609
-
-    613, // legend_y
-    57,  // map_y (between the title and the table)
-    15,  // map_height
-
-    // Dialogs
-    75,  // dialog_left
-    885, // dialog_right
-    30,  // dialog_text_inset
-    6,   // dialog_title_offset
-    75,  // dialog_title_height (48px title + room for the line under it)
-    33,  // dialog_line_height
-    225, // dialog_button_width
-    6,   // dialog_button_padding (27 + 2x6 = 39)
-    45,  // dialog_button_gap
-    21,  // dialog_padding
-
-    // Menus
-    135, // menu_left
-    825, // menu_right
-    165, // menu_top
-    12,  // menu_title_offset
-    56,  // menu_first_item_offset
-    4,   // menu_item_padding (27 + 2x4 = 35 bar)
-    3,   // menu_item_gap
-    30,  // menu_text_inset
-    12,  // menu_selection_inset
-    45,  // menu_footer_height
-    9,   // menu_footer_text_offset
-
-    // System information
-    45,  // info_left
-    915, // info_right
-    255, // info_value_offset
-
-};
 
 // Selection bars (main table, menus): fraction of the remaining distance they
 // move per 1/60 s (about 0.15s to settle), and the D-pad repeat when held
@@ -151,6 +29,10 @@ static const FLOAT SLIDE_FRAME_MS = 1000.0f / 60.0f;
 static const DWORD SLIDE_MAX_STEP_MS = 50;
 static const DWORD REPEAT_DELAY_MS = 300; // Before a held D-pad starts repeating
 static const DWORD REPEAT_RATE_MS = 120;  // Between repeats
+
+// Opacity of the main screen's table panel (0-255); menus and dialogs use the
+// theme's panel alpha (about 240)
+static const DWORD TABLE_PANEL_ALPHA = 190;
 
 
 int DpadRepeat::Step(int direction)
@@ -235,6 +117,33 @@ static void format_human_size(ULONGLONG sectors, wchar_t *out)
     }
 }
 
+// Table index of the partition the running xbe is on, from its path
+// (\Device\Harddisk0\PartitionN\...), -1 if it isn't on the hard drive
+static int launch_partition_index()
+{
+    static const char prefix[] = "\\Device\\Harddisk0\\Partition";
+    const int prefix_length = sizeof(prefix) - 1;
+    const char *path = XeImageFileName.Buffer;
+    const int length = XeImageFileName.Length;
+    if (path == NULL || length <= prefix_length || _strnicmp(path, prefix, prefix_length) != 0)
+    {
+        return -1;
+    }
+
+    int number = 0;
+    int i = prefix_length;
+    while (i < length && path[i] >= '0' && path[i] <= '9' && number <= XboxPartitionTableEntryCount)
+    {
+        number = number * 10 + (path[i] - '0');
+        i++;
+    }
+    if (i == prefix_length || (i < length && path[i] != '\\') || number < 1 || number > XboxPartitionTableEntryCount)
+    {
+        return -1;
+    }
+    return number - 1;
+}
+
 //-----------------------------------------------------------------------------
 // Startup and main loop
 //-----------------------------------------------------------------------------
@@ -244,7 +153,8 @@ App::App()
       m_AnalogButton(-1), m_DigitalButtons(0),
       m_FullLba48(false), m_TotalHddSectors(0), m_Physical4k(false), m_BackupStatus(BACKUP_NOT_USED), m_Lba48Version(0),
       m_CurrentPart(0), m_SelectionBarY(0.0f), m_SelectionBarPlaced(false), m_SelectionBarTick(0),
-      m_LoadedTable(LOADED_TABLE_KERNEL)
+      m_LoadedTable(LOADED_TABLE_KERNEL), m_pActiveEditView(NULL), m_WaitForRelease(false),
+      m_LaunchPartition(-1), m_ThemeSaveBlocked(false)
 {
     memset(m_ClusterSizes, 0, sizeof(m_ClusterSizes));
     memset(&m_TableKernel, 0, sizeof(m_TableKernel));
@@ -257,6 +167,8 @@ App::App()
     {
         RtlInitAnsiString(&m_PartitionPaths[i], partStr[i]);
     }
+
+    m_LaunchPartition = launch_partition_index();
 
     m_Ui.Init();
     m_Layout = (m_Ui.GetVideoMode() == VIDEO_MODE_720P) ? &g_Layout720 : &g_Layout480;
@@ -286,7 +198,6 @@ App::App()
     // Without a patch m_pKernelTable stays NULL; RunStartupChecks() warns about it.
     reload_lba48();
 
-    // Read partition table from HDD
     m_TableHdd = read_hdd_main_partition_table();
     m_TableHddBackup = read_hdd_backup_partition_table();
 
@@ -345,8 +256,11 @@ void App::MainLoop()
         DrawControlsHint();
         m_Ui.EndFrame();
 
-        XInputGetStateAny(&m_AnalogButton, &m_DigitalButtons, 0);
-        HandleMainScreenButtons(m_DigitalButtons, m_AnalogButton);
+        // Nothing while a button from the screen just closed is still held
+        if (ReadInput())
+        {
+            HandleMainScreenButtons(m_DigitalButtons, m_AnalogButton);
+        }
     }
 }
 
@@ -408,23 +322,20 @@ void App::UndoAllChanges()
     LoadTable(LOADED_TABLE_KERNEL);
 }
 
-// Waits for a new button press. A button still held from the previous screen
-// (e.g. Start, since the main loop polls without waiting) is released first,
-// so it does not count as the answer.
-void App::WaitForButton()
+bool App::ReadInput()
 {
-    WaitForRelease();
-    XInputGetStateAny(&m_AnalogButton, &m_DigitalButtons);
-}
-
-// Returns once nothing is pressed. Unlike XInputGetStateAny(wait = 2) this
-// does not wait for a new press when everything is already released.
-void App::WaitForRelease()
-{
-    while (XInputGetStateAny(&m_AnalogButton, &m_DigitalButtons, 0) != -1)
+    const bool pressed = (XInputGetStateAny(&m_AnalogButton, &m_DigitalButtons, 0) != -1);
+    if (m_WaitForRelease)
     {
-        Sleep(10);
+        if (!pressed)
+        {
+            m_WaitForRelease = false;
+        }
+        m_AnalogButton = -1;
+        m_DigitalButtons = 0;
+        return false;
     }
+    return true;
 }
 
 //-----------------------------------------------------------------------------
@@ -434,6 +345,8 @@ void App::WaitForRelease()
 // Everything on the main screen except the bottom two lines (status and prompt)
 void App::DrawMainScreen()
 {
+    m_Ui.DrawBackground();
+
     wchar_t title[100];
     swprintf(title, L"XBpartitioner 2.0 - LBA48 patch v%d", m_Lba48Version);
     m_Ui.Text(FONT_TEXT, title, m_Layout->title_x, m_Layout->title_y, COLOR_WHITE);
@@ -442,18 +355,6 @@ void App::DrawMainScreen()
     DrawDiskMap();
     DrawTable();
     DrawFreeSpace();
-}
-
-void App::DrawBackdrop(bool &dirty)
-{
-    // Drawn again also when there's no copy (the first time, or copying
-    // doesn't work here)
-    if (dirty || !m_Ui.RestoreSavedFrame())
-    {
-        DrawMainScreen();
-        m_Ui.SaveBackBuffer();
-    }
-    dirty = false;
 }
 
 void App::DrawTable()
@@ -468,7 +369,10 @@ void App::DrawTable()
     const int inset = m_Layout->menu_selection_inset;
     const int label_x = left + m_Layout->menu_text_inset;
 
-    m_Ui.Rect((FLOAT)left, (FLOAT)top, (FLOAT)right, (FLOAT)bottom, Colors().panel, Colors().panel);
+    // The panel color with less opacity than menus and dialogs, so the moving
+    // background shows through a little
+    const D3DCOLOR panel = (Colors().panel & 0x00FFFFFF) | ((D3DCOLOR)TABLE_PANEL_ALPHA << 24);
+    m_Ui.Rect((FLOAT)left, (FLOAT)top, (FLOAT)right, (FLOAT)bottom, panel, panel);
     m_Ui.Outline((FLOAT)left, (FLOAT)top, (FLOAT)right, (FLOAT)bottom, Colors().panel_border);
 
     // Column headers, the same width as the rows so the columns line up
@@ -490,7 +394,6 @@ void App::DrawTable()
     m_Ui.Rect((FLOAT)(left + inset), (FLOAT)selection_top, (FLOAT)(right - inset), (FLOAT)(selection_top + bar_height),
               Colors().selection, Colors().selection);
 
-    // Section labels
     const int standard_top = TableSlotTop(StandardLabelSlot());
     const int extended_top = TableSlotTop(ExtendedLabelSlot());
     m_Ui.Text(FONT_TEXT, L"Standard partitions (custom sizes might cause problems)", label_x,
@@ -515,11 +418,31 @@ void App::DrawTable()
     }
 }
 
+// Color of the k-th of count partitions on the disk map, left to right: along
+// the way from the theme's first map color to its second, every other one a
+// bit darker, so neighbours always differ but all fit the theme
+static D3DCOLOR disk_map_color(D3DCOLOR first, D3DCOLOR last, int k, int count)
+{
+    const int t256 = (count > 1) ? (k * 256) / (count - 1) : 0;
+    const int shade = (k % 2 == 0) ? 256 : 176; // Of 256
+    int channels[3];
+    for (int i = 0; i < 3; i++)
+    {
+        const int shift = 16 - 8 * i;
+        const int a = (int)((first >> shift) & 0xFF);
+        const int b = (int)((last >> shift) & 0xFF);
+        const int mixed = a + ((b - a) * t256) / 256;
+        channels[i] = (mixed * shade) / 256;
+    }
+    return D3DCOLOR_XRGB(channels[0], channels[1], channels[2]);
+}
+
 // The partitions to scale across the space they can use, above the table: free
-// space dark, standard and extended partitions in two colors, the selected one
-// yellow. The map runs from the first usable sector to the last one (before the
-// backup table), and a partition that ends less than 1 MB from there is drawn
-// to the right edge, so a disk that is fully used shows a full bar.
+// space dark, each partition its own color fitting the theme (disk_map_color),
+// the selected one in the theme's highlight color. The map runs from the first
+// usable sector to the last one (before the backup table), and a partition that
+// ends less than 1 MB from there is drawn to the right edge, so a disk that is
+// fully used shows a full bar.
 void App::DrawDiskMap()
 {
     const FLOAT left = (FLOAT)m_Layout->table_left;
@@ -543,6 +466,29 @@ void App::DrawDiskMap()
     const FLOAT inner_left = left + 1.0f;
     const FLOAT inner_right = right - 1.0f;
     const double scale = (double)(inner_right - inner_left) / (double)(map_end - map_start);
+
+    // Each partition's place from the left (by start), for its color
+    int place[XboxPartitionTableEntryCount];
+    int shown = 0;
+    for (int i = 0; i < XboxPartitionTableEntryCount; i++)
+    {
+        place[i] = -1;
+        if (!m_pTable->isPartitionEnabled(i) || m_pTable->GetPartitionSize(i) == 0)
+        {
+            continue;
+        }
+        place[i] = 0;
+        for (int j = 0; j < XboxPartitionTableEntryCount; j++)
+        {
+            if (j != i && m_pTable->isPartitionEnabled(j) && m_pTable->GetPartitionSize(j) != 0 &&
+                (m_pTable->GetPartitionStart(j) < m_pTable->GetPartitionStart(i) ||
+                 (m_pTable->GetPartitionStart(j) == m_pTable->GetPartitionStart(i) && j < i)))
+            {
+                place[i]++;
+            }
+        }
+        shown++;
+    }
 
     // The selected partition last, so it is never covered
     for (int pass = 0; pass < 2; pass++)
@@ -569,19 +515,14 @@ void App::DrawDiskMap()
 
             FLOAT x1 = inner_left + (FLOAT)((double)(part_start - map_start) * scale);
             FLOAT x2 = at_end ? inner_right : inner_left + (FLOAT)((double)(part_end - map_start) * scale);
-            // A pixel at least, and a dark pixel between two that touch (not at
-            // the end, which has no next partition)
-            if (!at_end && x2 - x1 >= 3.0f)
-            {
-                x2 -= 1.0f;
-            }
+            // A pixel at least
             if (x2 - x1 < 1.0f)
             {
                 x2 = x1 + 1.0f;
             }
 
             const D3DCOLOR color = selected ? Colors().map_selected
-                                 : (i < XBOX_STANDARD_PARTITION_COUNT) ? Colors().map_standard : Colors().map_extended;
+                                 : disk_map_color(Colors().map_standard, Colors().map_extended, place[i], shown);
             m_Ui.Rect(x1, top + 1.0f, x2, bottom - 1.0f, color, color);
         }
     }
@@ -731,13 +672,13 @@ bool App::RunDialog(LPCWSTR title, Color title_color, const LPCWSTR *lines, int 
     const int ok_x = (m_Layout->width - buttons_width) / 2;
     const int cancel_x = ok_x + m_Layout->dialog_button_width + m_Layout->dialog_button_gap;
 
-    WaitForRelease();
+    // The button that led here may still be held
+    m_WaitForRelease = true;
 
-    bool backdrop_dirty = true;
     while (true)
     {
         m_Ui.BeginFrame();
-        DrawBackdrop(backdrop_dirty);
+        DrawMainScreen();
 
         // Same box style as the menus: border, and a line under the title
         m_Ui.Rect((FLOAT)m_Layout->dialog_left, (FLOAT)top, (FLOAT)m_Layout->dialog_right, (FLOAT)(top + height), Colors().panel, Colors().panel);
@@ -770,7 +711,12 @@ bool App::RunDialog(LPCWSTR title, Color title_color, const LPCWSTR *lines, int 
 
         m_Ui.EndFrame();
 
-        WaitForButton();
+        // Polled every frame so the screen keeps moving; a press counts once
+        if (!ReadInput() || (m_AnalogButton < 0 && m_DigitalButtons == 0))
+        {
+            continue;
+        }
+        m_WaitForRelease = true;
 
         const bool cancel = (m_AnalogButton == XINPUT_GAMEPAD_B) ||
                             (m_DigitalButtons & (XINPUT_GAMEPAD_BACK | XINPUT_GAMEPAD_START)) != 0;
@@ -824,6 +770,21 @@ void App::FadeIn()
         m_Ui.FillScreen(D3DCOLOR_ARGB(alpha, 0, 0, 0));
         m_Ui.EndFrame();
     }
+}
+
+// The main screen fading to black, the background still moving
+void App::FadeOut()
+{
+    for (int alpha = 0x06; alpha < 0xff; alpha += 0x06)
+    {
+        m_Ui.BeginFrame();
+        DrawMainScreen();
+        m_Ui.FillScreen(D3DCOLOR_ARGB(alpha, 0, 0, 0));
+        m_Ui.EndFrame();
+    }
+    m_Ui.BeginFrame();
+    m_Ui.FillScreen(D3DCOLOR_ARGB(0xff, 0, 0, 0));
+    m_Ui.EndFrame();
 }
 
 // Main screen with a progress message in the status line ("Formatting...").
@@ -1034,22 +995,33 @@ void App::DisplaySystemInfo()
     const int label_x = m_Layout->info_left + m_Layout->menu_text_inset;
     const int value_x = m_Layout->info_left + m_Layout->info_value_offset;
 
-    m_Ui.BeginFrame();
-    DrawMainScreen();
-    DrawPanel(m_Layout->info_left, top, m_Layout->info_right, bottom, L"System information", first_item_y);
+    // Drawn every frame until a button is pressed; the one that opened it may
+    // still be held
+    m_WaitForRelease = true;
 
-    for (int i = 0; i < row_count; i++)
+    while (true)
     {
-        const int bar_top = first_item_y + i * item_height;
-        const int text_y = m_Ui.TextYCentered(FONT_TEXT, bar_top, bar_top + bar_height);
-        m_Ui.Text(FONT_TEXT, rows[i].label, label_x, text_y, COLOR_GREY);
-        m_Ui.Text(FONT_TEXT, rows[i].value, value_x, text_y, rows[i].color);
+        m_Ui.BeginFrame();
+        DrawMainScreen();
+        DrawPanel(m_Layout->info_left, top, m_Layout->info_right, bottom, L"System information", first_item_y);
+
+        for (int i = 0; i < row_count; i++)
+        {
+            const int bar_top = first_item_y + i * item_height;
+            const int text_y = m_Ui.TextYCentered(FONT_TEXT, bar_top, bar_top + bar_height);
+            m_Ui.Text(FONT_TEXT, rows[i].label, label_x, text_y, COLOR_GREY);
+            m_Ui.Text(FONT_TEXT, rows[i].value, value_x, text_y, rows[i].color);
+        }
+
+        DrawPanelFooter(m_Layout->info_left, m_Layout->info_right, bottom, L"Press any button to close");
+        m_Ui.EndFrame();
+
+        if (ReadInput() && (m_AnalogButton >= 0 || m_DigitalButtons != 0))
+        {
+            m_WaitForRelease = true;
+            return;
+        }
     }
-
-    DrawPanelFooter(m_Layout->info_left, m_Layout->info_right, bottom, L"Press any button to close");
-    m_Ui.EndFrame();
-
-    WaitForButton();
 }
 
 // Disk size to check partition ends against: without an lba48 patch the reported
@@ -1186,16 +1158,28 @@ bool App::ConfirmFormatWarning(bool format_changed)
     }
 
     // Index 0 is E, 1 is C (see partStr)
-    LPCWSTR lines[3];
+    LPCWSTR lines[4];
     int line_count = 0;
+    wchar_t program_line[100];
     lines[line_count++] = message;
     if (marked[0])
     {
-        lines[line_count++] = L"E holds saves and settings, and maybe this program!";
+        lines[line_count++] = L"E holds saves and settings!";
     }
     if (marked[1])
     {
         lines[line_count++] = L"C holds the dashboard, the Xbox may not boot!";
+    }
+    if (m_LaunchPartition >= 0 && marked[m_LaunchPartition])
+    {
+        FormatLaunchPartitionLine(program_line, L"it will be deleted.");
+        lines[line_count++] = program_line;
+    }
+    else if (format_changed && MovesLaunchPartition(m_pTable->GetPartitionTable()))
+    {
+        // Removed in the new table, so not formatted, but gone all the same
+        FormatLaunchPartitionLine(program_line, L"it will be unreadable.");
+        lines[line_count++] = program_line;
     }
 
     return ConfirmWarning(lines, line_count, L"Format");
@@ -1252,7 +1236,7 @@ bool App::ConfirmExit()
 // Fades the current screen to black and returns to the dashboard. Does not return.
 void App::QuitToDashboard()
 {
-    m_Ui.FadeOut();
+    FadeOut();
     m_Ui.Shutdown();
 
     LD_LAUNCH_DASHBOARD LaunchDashData = {XLD_LAUNCH_DASHBOARD_MAIN_MENU};
@@ -1348,20 +1332,31 @@ void App::DoWriteTable()
     // FATX works out its layout from the partition size, so a partition that
     // already existed and was moved or resized is unreadable until formatted
     bool resized[XboxPartitionTableEntryCount];
-    if (GetChangedPartitions(resized, true) > 0)
+    const int resized_count = GetChangedPartitions(resized, true);
+    const bool moves_program = MovesLaunchPartition(m_pTable->GetPartitionTable());
+    if (resized_count > 0 || moves_program)
     {
         wchar_t list[100];
         FormatPartitionList(resized, list, ARRAY_COUNT(list));
 
         wchar_t line1[120];
         swprintf(line1, L"Moved or resized: %s", list);
+        wchar_t program_line[100];
+        FormatLaunchPartitionLine(program_line, L"it will be unreadable.");
 
-        const LPCWSTR lines[] = {
-            line1,
-            L"Their data is unreadable until they are formatted.",
-            L"Use Start > Partition table > Write table and format.",
-        };
-        if (!ConfirmWarning(lines, ARRAY_COUNT(lines), L"Write anyway"))
+        LPCWSTR lines[4];
+        int line_count = 0;
+        if (resized_count > 0)
+        {
+            lines[line_count++] = line1;
+            lines[line_count++] = L"Their data is unreadable until they are formatted.";
+            lines[line_count++] = L"Use Start > Partition table > Write table and format.";
+        }
+        if (moves_program)
+        {
+            lines[line_count++] = program_line;
+        }
+        if (!ConfirmWarning(lines, line_count, L"Write anyway"))
         {
             return;
         }
@@ -1531,12 +1526,9 @@ int App::RunMenu(LPCWSTR title, const LPCWSTR *labels, const bool *enabled, int 
     DWORD slide_tick = 0;
     DWORD thumb_tick = 0;
     DpadRepeat repeat;
-    // The main screen behind doesn't change while the menu is open, except
-    // with a new theme from the preview
-    bool backdrop_dirty = true;
 
     // The button that opened the menu (Start, A) is still held
-    WaitForRelease();
+    m_WaitForRelease = true;
 
     while (true)
     {
@@ -1544,7 +1536,6 @@ int App::RunMenu(LPCWSTR title, const LPCWSTR *labels, const bool *enabled, int 
         {
             (this->*preview)(selected);
             previewed = selected;
-            backdrop_dirty = true;
         }
 
         first_visible = menu_scroll_to(selected, first_visible, visible);
@@ -1552,7 +1543,7 @@ int App::RunMenu(LPCWSTR title, const LPCWSTR *labels, const bool *enabled, int 
         SlideTowards(thumb_y, menu_thumb_top(track_top, track_height, thumb_height, first_visible, count, visible), thumb_tick);
 
         m_Ui.BeginFrame();
-        DrawBackdrop(backdrop_dirty);
+        DrawMainScreen();
 
         DrawPanel(m_Layout->menu_left, box_top, m_Layout->menu_right, box_bottom, title, first_item_y);
 
@@ -1592,8 +1583,12 @@ int App::RunMenu(LPCWSTR title, const LPCWSTR *labels, const bool *enabled, int 
         DrawPanelFooter(m_Layout->menu_left, m_Layout->menu_right, box_bottom, submenu ? L"A: select    B: back    Start: close" : L"A: select    B: close");
         m_Ui.EndFrame();
 
-        // Polled every frame; the screen that comes next gets a released pad
-        XInputGetStateAny(&m_AnalogButton, &m_DigitalButtons, 0);
+        // Polled every frame; nothing until the button that opened it is released
+        if (!ReadInput())
+        {
+            repeat.Step(0);
+            continue;
+        }
 
         const int direction = (m_DigitalButtons & XINPUT_GAMEPAD_DPAD_UP) ? -1 : (m_DigitalButtons & XINPUT_GAMEPAD_DPAD_DOWN) ? 1 : 0;
         const int move = repeat.Step(direction);
@@ -1610,19 +1605,19 @@ int App::RunMenu(LPCWSTR title, const LPCWSTR *labels, const bool *enabled, int 
 
         if (m_DigitalButtons & XINPUT_GAMEPAD_START)
         {
-            WaitForRelease();
+            m_WaitForRelease = true;
             return MENU_RESULT_CLOSE;
         }
 
         if (m_AnalogButton == XINPUT_GAMEPAD_B)
         {
-            WaitForRelease();
+            m_WaitForRelease = true;
             return MENU_RESULT_BACK;
         }
 
         if (m_AnalogButton == XINPUT_GAMEPAD_A && enabled[selected])
         {
-            WaitForRelease();
+            m_WaitForRelease = true;
             return selected;
         }
     }
@@ -1670,9 +1665,7 @@ void App::DisplayStartMenu()
         {
             enabled[i] = true;
         }
-        // Only an enabled partition can be formatted
         enabled[MENU_FORMAT_SELECTED] = m_pTable->isPartitionEnabled(m_CurrentPart);
-        // Nothing to undo without changes
         enabled[MENU_UNDO_ALL] = CheckIfPartitionTableChanged();
 
         selected = RunMenu(L"Menu", labels, enabled, MENU_ITEM_COUNT, selected, false);
@@ -1746,9 +1739,9 @@ bool App::DisplayThemeMenu()
     }
 
     m_Ui.SetTheme(chosen);
-    if (chosen != original && !SaveThemeSetting())
+    if (chosen != original)
     {
-        ShowMessage(L"Theme", COLOR_WHITE, L"Couldn't save the theme, it's only used until you exit.");
+        SaveThemeSetting();
     }
     return true;
 }
@@ -1809,8 +1802,16 @@ void App::LoadThemeSetting()
     }
 }
 
-bool App::SaveThemeSetting()
+// Best effort and silent: it can't be written when running from a DVD, and
+// isn't once D:'s partition changed (m_ThemeSaveBlocked). The theme is then
+// only kept until exit.
+void App::SaveThemeSetting()
 {
+    if (m_ThemeSaveBlocked)
+    {
+        return;
+    }
+
     // Theme names are plain ASCII
     char text[80];
     const wchar_t *name = m_Ui.GetTheme().name;
@@ -1825,13 +1826,31 @@ bool App::SaveThemeSetting()
     HANDLE file = CreateFile(THEME_SETTING_PATH, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
     if (file == INVALID_HANDLE_VALUE)
     {
-        return false;
+        return;
     }
 
     DWORD written = 0;
-    const BOOL ok = WriteFile(file, text, (DWORD)length, &written, NULL);
+    WriteFile(file, text, (DWORD)length, &written, NULL);
     CloseHandle(file);
-    return ok && written == (DWORD)length;
+}
+
+void App::FormatLaunchPartitionLine(wchar_t *out, LPCWSTR what)
+{
+    swprintf(out, L"Partition %d (%c) holds this program: %s", m_LaunchPartition + 1,
+             partition_letter(m_LaunchPartition), what);
+}
+
+bool App::MovesLaunchPartition(const XboxPartitionTable &table) const
+{
+    if (m_LaunchPartition < 0 || !m_pTableOriginal->isPartitionEnabled(m_LaunchPartition))
+    {
+        return false;
+    }
+
+    const XboxPartitionTableManipulator written(table, m_TotalHddSectors, m_FullLba48, m_Physical4k);
+    return !written.isPartitionEnabled(m_LaunchPartition) ||
+           written.GetPartitionStart(m_LaunchPartition) != m_pTableOriginal->GetPartitionStart(m_LaunchPartition) ||
+           written.GetPartitionSize(m_LaunchPartition) != m_pTableOriginal->GetPartitionSize(m_LaunchPartition);
 }
 
 // Order of the Partition table menu, must match labels[] in DisplayPartitionTableMenu()
@@ -1901,7 +1920,6 @@ bool App::DisplayPartitionTableMenu()
             DoEraseTable();
             return true;
         default:
-            // Start: close all menus
             return true;
         }
     }
@@ -1939,7 +1957,6 @@ bool App::DisplayNewTableMenu()
     {
         ApplyPreset(choice);
     }
-    // Start (MENU_RESULT_CLOSE): close all menus
     return true;
 }
 
@@ -1979,7 +1996,6 @@ bool App::DisplayLoadTableMenu()
     {
         LoadTable((LoadedTable)choice);
     }
-    // Start (MENU_RESULT_CLOSE): close all menus
     return true;
 }
 
@@ -2006,8 +2022,6 @@ void App::ApplyPreset(int preset)
         return;
     }
 
-    // No confirmation: this only changes the editor, nothing is written.
-    // An identical layout leaves the table (and its label) alone.
     if (!preview.HasSameLayout(*m_pTable))
     {
         m_pTable->LoadNewTable(preview.GetPartitionTable());
@@ -2074,7 +2088,7 @@ int App::EditPanelTop() const
 // Up/Down: field, Left/Right: change it (held: repeats), A: toggle/apply, or
 // on start, size and end: type a value (RunNumberInput),
 // Y: reset this partition to the last written table, B or Start: back.
-// Changes go into the edited table like on the main screen; nothing is written here.
+// Changes go into the edited table; nothing is written here.
 // Runs one frame per pass so the selection bar slides between fields.
 void App::DisplayEditPartition()
 {
@@ -2087,13 +2101,10 @@ void App::DisplayEditPartition()
     const int first_item_y = EditPanelTop() + m_Layout->menu_first_item_offset;
     FLOAT bar_y = (FLOAT)(first_item_y + field * MenuItemHeight());
     DWORD slide_tick = 0;
-    // The main screen behind the panel is drawn once and then copied (see
-    // Renderer::SaveBackBuffer), again only when this partition changes
-    bool backdrop_dirty = true;
     DpadRepeat field_repeat;  // Up/down: choose a field
     DpadRepeat change_repeat; // Left/right: change start and size
 
-    WaitForRelease();
+    m_WaitForRelease = true;
 
     while (true)
     {
@@ -2115,10 +2126,17 @@ void App::DisplayEditPartition()
         }
 
         SlideTowards(bar_y, (FLOAT)(first_item_y + field * MenuItemHeight()), slide_tick);
-        DrawEditPartition(part, field, field_available, g_EditStepNames[step], message, message_color, bar_y, backdrop_dirty);
-        backdrop_dirty = false;
+        const EditView view = {part, field, field_available, g_EditStepNames[step], message, message_color, bar_y};
+        m_Ui.BeginFrame();
+        DrawMainScreen();
+        DrawEditPanel(view);
+        m_Ui.EndFrame();
 
-        XInputGetStateAny(&m_AnalogButton, &m_DigitalButtons, 0);
+        // Nothing while a press that was acted on is still held
+        if (!ReadInput())
+        {
+            continue;
+        }
         const int buttons = m_DigitalButtons;
         const int analog = m_AnalogButton;
 
@@ -2158,8 +2176,7 @@ void App::DisplayEditPartition()
                 message = L"Can't reset: other partitions now use that space.";
                 message_color = COLOR_RED;
             }
-            backdrop_dirty = true;
-            WaitForRelease();
+            m_WaitForRelease = true;
             continue;
         }
 
@@ -2169,19 +2186,17 @@ void App::DisplayEditPartition()
 
         if (horizontal == 0 && !apply)
         {
-            // Nothing (relevant) pressed
             continue;
         }
 
         const ULONG step_sectors = g_EditSteps[step];
-        const XboxPartitionTableEntry entry_before = m_pTable->getPartitionEntry(part);
 
-        // A on start, size or end: type the value in
         if (apply && (field == EDIT_START || field == EDIT_SIZE || field == EDIT_END))
         {
+            // The keypad draws this screen behind it
+            m_pActiveEditView = &view;
             TypeEditValue(part, field, message, message_color);
-            // The keypad used the saved frame for its own backdrop
-            backdrop_dirty = true;
+            m_pActiveEditView = NULL;
             continue;
         }
 
@@ -2202,7 +2217,7 @@ void App::DisplayEditPartition()
                     message_color = COLOR_RED;
                 }
             }
-            WaitForRelease();
+            m_WaitForRelease = true;
             break;
 
         case EDIT_START:
@@ -2238,7 +2253,7 @@ void App::DisplayEditPartition()
             // A or Right: bigger steps, Left: smaller
             message = NULL;
             step = (step + (horizontal < 0 ? EDIT_STEP_COUNT - 1 : 1)) % EDIT_STEP_COUNT;
-            WaitForRelease();
+            m_WaitForRelease = true;
             break;
 
         case EDIT_FILL:
@@ -2248,7 +2263,7 @@ void App::DisplayEditPartition()
                 message = NULL;
                 m_pTable->PartitionIncreaseSizeBy(part, (uint64_t)-1);
             }
-            WaitForRelease();
+            m_WaitForRelease = true;
             break;
 
         case EDIT_BACK:
@@ -2258,13 +2273,6 @@ void App::DisplayEditPartition()
                 return;
             }
             break;
-        }
-
-        // The main screen behind shows this partition too
-        const XboxPartitionTableEntry entry_after = m_pTable->getPartitionEntry(part);
-        if (memcmp(&entry_before, &entry_after, sizeof(entry_after)) != 0)
-        {
-            backdrop_dirty = true;
         }
     }
 }
@@ -2439,7 +2447,7 @@ void App::TypeEditValue(int part, int field, LPCWSTR &message, Color &message_co
 // B or Back cancels. The value is typed in whole units (sectors in decimal or
 // hex, MB, GB; A-F are greyed out unless typing hex) and
 // must be within min..max sectors. Returns false if cancelled; *result is in
-// sectors. Redraws only when something changes (it doesn't animate).
+// sectors.
 bool App::RunNumberInput(LPCWSTR title, ULONGLONG current, ULONGLONG min, ULONGLONG max, int unit, ULONGLONG *result)
 {
     wchar_t digits[KEYPAD_MAX_DIGITS + 1];
@@ -2450,30 +2458,31 @@ bool App::RunNumberInput(LPCWSTR title, ULONGLONG current, ULONGLONG min, ULONGL
     wchar_t message_text[100];
     DpadRepeat vertical_repeat;
     DpadRepeat horizontal_repeat;
-    bool ready = false; // Buttons other than the D-pad act once per press
-    bool dirty = true;
-
-    // The screen behind (the editor) stays as it is: keep what is on screen
-    const bool have_backdrop = m_Ui.SaveFrontBuffer();
+    // The A that opened it is still held
+    m_WaitForRelease = true;
 
     while (true)
     {
-        if (dirty)
+        // Every frame (Present waits for the next one). Behind it: the main
+        // screen and, from the editor, the editor.
+        m_Ui.BeginFrame();
+        DrawMainScreen();
+        if (m_pActiveEditView != NULL)
         {
-            m_Ui.BeginFrame();
-            if (!have_backdrop || !m_Ui.RestoreSavedFrame())
-            {
-                DrawMainScreen();
-            }
-            DrawNumberInput(title, digits, unit, current, min, max, g_KeypadKeys[row][column], message);
-            m_Ui.EndFrame();
-            dirty = false;
+            DrawEditPanel(*m_pActiveEditView);
         }
+        DrawNumberInput(title, digits, unit, current, min, max, g_KeypadKeys[row][column], message);
+        m_Ui.EndFrame();
 
-        XInputGetStateAny(&m_AnalogButton, &m_DigitalButtons, 0);
+        // Nothing until a pressed key is released, so each press counts once
+        if (!ReadInput())
+        {
+            vertical_repeat.Step(0);
+            horizontal_repeat.Step(0);
+            continue;
+        }
         const int buttons = m_DigitalButtons;
         const int analog = m_AnalogButton;
-        static const int DPAD = XINPUT_GAMEPAD_DPAD_UP | XINPUT_GAMEPAD_DPAD_DOWN | XINPUT_GAMEPAD_DPAD_LEFT | XINPUT_GAMEPAD_DPAD_RIGHT;
 
         // D-pad: move between keys, stopping at the edges
         const int vertical = vertical_repeat.Step((buttons & XINPUT_GAMEPAD_DPAD_UP) ? -1 : (buttons & XINPUT_GAMEPAD_DPAD_DOWN) ? 1 : 0);
@@ -2491,54 +2500,36 @@ bool App::RunNumberInput(LPCWSTR title, ULONGLONG current, ULONGLONG min, ULONGL
             {
                 column = new_column;
             }
-            dirty = true;
-        }
-
-        // Released (also the A that opened this). Not while the D-pad is held:
-        // then XInputGetStateAny doesn't report the face buttons, so a held A
-        // would look released and press again.
-        if (analog < 0 && buttons == 0)
-        {
-            ready = true;
         }
 
         int key = -1;
-        if (ready)
+        if (analog == XINPUT_GAMEPAD_A)
         {
-            if (analog == XINPUT_GAMEPAD_A)
-            {
-                key = g_KeypadKeys[row][column];
-            }
-            else if (analog == XINPUT_GAMEPAD_X)
-            {
-                key = KEY_DELETE;
-            }
-            else if (analog == XINPUT_GAMEPAD_Y)
-            {
-                key = KEY_UNIT;
-            }
-            else if (analog == XINPUT_GAMEPAD_B || (buttons & XINPUT_GAMEPAD_BACK))
-            {
-                key = KEY_CANCEL;
-            }
-            else if (buttons & XINPUT_GAMEPAD_START)
-            {
-                key = KEY_OK;
-            }
+            key = g_KeypadKeys[row][column];
+        }
+        else if (analog == XINPUT_GAMEPAD_X)
+        {
+            key = KEY_DELETE;
+        }
+        else if (analog == XINPUT_GAMEPAD_Y)
+        {
+            key = KEY_UNIT;
+        }
+        else if (analog == XINPUT_GAMEPAD_B || (buttons & XINPUT_GAMEPAD_BACK))
+        {
+            key = KEY_CANCEL;
+        }
+        else if (buttons & XINPUT_GAMEPAD_START)
+        {
+            key = KEY_OK;
         }
 
         if (key < 0)
         {
-            if (!dirty)
-            {
-                // Nothing to draw, don't spin
-                Sleep(10);
-            }
             continue;
         }
 
-        ready = false;
-        dirty = true;
+        m_WaitForRelease = true;
         message = NULL;
 
         if (key <= 0xF)
@@ -2607,7 +2598,7 @@ bool App::RunNumberInput(LPCWSTR title, ULONGLONG current, ULONGLONG min, ULONGL
         }
 
         case KEY_CANCEL:
-            WaitForRelease();
+            m_WaitForRelease = true;
             return false;
 
         case KEY_OK:
@@ -2638,7 +2629,7 @@ bool App::RunNumberInput(LPCWSTR title, ULONGLONG current, ULONGLONG min, ULONGL
 
             // value <= max / unit, so this can't overflow
             *result = value * g_InputUnitSectors[unit];
-            WaitForRelease();
+            m_WaitForRelease = true;
             return true;
         }
         }
@@ -2754,11 +2745,19 @@ void App::LeaveEditPartition(int part)
         m_pTable->DisablePartition(part);
     }
 
-    WaitForRelease();
+    m_WaitForRelease = true;
 }
 
-void App::DrawEditPartition(int part, int field, const bool field_available[], LPCWSTR step_name, LPCWSTR message, Color message_color, FLOAT bar_y, bool redraw_backdrop)
+void App::DrawEditPanel(const EditView &view)
 {
+    const int part = view.part;
+    const int field = view.field;
+    const bool *field_available = view.field_available;
+    const LPCWSTR step_name = view.step_name;
+    const LPCWSTR message = view.message;
+    const Color message_color = view.message_color;
+    const FLOAT bar_y = view.bar_y;
+
     const int left = m_Layout->info_left;
     const int right = m_Layout->info_right;
     const int top = EditPanelTop();
@@ -2778,10 +2777,6 @@ void App::DrawEditPartition(int part, int field, const bool field_available[], L
     wchar_t text[120];
     wchar_t human[32];
     wchar_t lba[16];
-
-    m_Ui.BeginFrame();
-    // The main screen behind only changes with this partition
-    DrawBackdrop(redraw_backdrop);
 
     swprintf(text, L"Edit partition %d (%c)", part + 1, partition_letter(part));
     DrawPanel(left, top, right, bottom, text, first_item_y);
@@ -2936,7 +2931,6 @@ void App::DrawEditPartition(int part, int field, const bool field_available[], L
         m_Ui.Text(details[d].font, details[d].value, value_x, m_Ui.TextYCentered(details[d].font, row_top, row_top + bar_height), details[d].color);
     }
 
-    // Footer: the last message if there is one, else the controls
     if (message != NULL)
     {
         DrawPanelFooter(left, right, bottom, message, message_color);
@@ -2948,7 +2942,6 @@ void App::DrawEditPartition(int part, int field, const bool field_available[], L
                                                       : L"Left/Right: change   A: apply   Y: reset   B: back");
     }
 
-    m_Ui.EndFrame();
 }
 
 // Replaces the table with the stock layout on disk (main and backup)
@@ -2975,6 +2968,12 @@ void App::DoEraseTable()
 
 bool App::format_partition(const int i)
 {
+    // D: is on this partition, or it's unknown where D: is
+    if (m_LaunchPartition < 0 || i == m_LaunchPartition)
+    {
+        m_ThemeSaveBlocked = true;
+    }
+
     const int cluster_size = m_pTable->CalculateClusterSizeForPartition(i);
     const ULONG cluster_size_bytes = cluster_size << 10;
 
@@ -3370,7 +3369,8 @@ unsigned int App::get_cluster_size_from_partition(ANSI_STRING part)
     RWOffset.QuadPart = 0;
     memset(PartSector, 0, sizeof(PartSector));
 
-    status = NtOpenFile(&hDisk, SYNCHRONIZE | GENERIC_ALL, &ObjectAttributes, &IoStatusBlock, 0, FILE_SYNCHRONOUS_IO_ALERT);
+    status = NtOpenFile(&hDisk, SYNCHRONIZE | GENERIC_READ, &ObjectAttributes, &IoStatusBlock,
+                        FILE_SHARE_READ | FILE_SHARE_WRITE, FILE_SYNCHRONOUS_IO_ALERT);
 
     if (!NT_SUCCESS(status))
     {
@@ -3526,6 +3526,12 @@ bool App::write_partition_tables(const XboxPartitionTable table, bool *backup_wr
     BYTE PartSector[HDD_SECTOR_SIZE]; // XboxPartitionTable should be the same size as HDD_SECTOR_SIZE
     memcpy(PartSector, &table, HDD_SECTOR_SIZE);
 
+    // Before anything is written: from here D: may no longer match its partition
+    if (m_LaunchPartition < 0 || MovesLaunchPartition(table))
+    {
+        m_ThemeSaveBlocked = true;
+    }
+
     HANDLE hDisk = NULL;
     OBJECT_ATTRIBUTES ObjectAttributes;
     ANSI_STRING a_path;
@@ -3538,13 +3544,11 @@ bool App::write_partition_tables(const XboxPartitionTable table, bool *backup_wr
     // fails, the mismatch check on the next boot will point it out.
     if (status == 0 && write_backup)
     {
-        // Write backup table
         status = NtWriteFile(hDisk, NULL, NULL, NULL, &IoStatusBlock, (PVOID)PartSector, HDD_SECTOR_SIZE, &RWOffset_backup);
     }
 
     if (status == 0)
     {
-        // Write main table
         status = NtWriteFile(hDisk, NULL, NULL, NULL, &IoStatusBlock, (PVOID)PartSector, HDD_SECTOR_SIZE, &RWOffset);
     }
 
@@ -3554,10 +3558,6 @@ bool App::write_partition_tables(const XboxPartitionTable table, bool *backup_wr
         // p_table_add
         memcpy(m_pKernelTable, &table, sizeof(XboxPartitionTable));
         memcpy(&m_TableKernel, &table, sizeof(XboxPartitionTable));
-        if (m_pTable)
-        {
-            m_pTable->LoadNewTable(table);
-        }
     }
 
     if (hDisk != NULL)
@@ -3630,7 +3630,8 @@ XboxPartitionTable App::read_hdd_partition_table(LARGE_INTEGER offset)
     InitializeObjectAttributes(&ObjectAttributes, &a_path, OBJ_CASE_INSENSITIVE, NULL);
     memset(PartSector, 0, sizeof(PartSector));
 
-    status = NtOpenFile(&hDisk, SYNCHRONIZE | GENERIC_ALL, &ObjectAttributes, &IoStatusBlock, 0, FILE_SYNCHRONOUS_IO_ALERT);
+    status = NtOpenFile(&hDisk, SYNCHRONIZE | GENERIC_READ, &ObjectAttributes, &IoStatusBlock,
+                        FILE_SHARE_READ | FILE_SHARE_WRITE, FILE_SYNCHRONOUS_IO_ALERT);
     if (status == 0)
     {
         status = NtReadFile(hDisk, NULL, NULL, NULL, &IoStatusBlock, (PVOID)PartSector, HDD_SECTOR_SIZE, &RWOffset);
@@ -3707,10 +3708,6 @@ XboxPartitionTable App::read_hdd_backup_partition_table()
     return table;
 }
 
-//-----------------------------------------------------------------------------
-// Name: main()
-// Desc: The application's entry point
-//-----------------------------------------------------------------------------
 void __cdecl main()
 {
     App app;

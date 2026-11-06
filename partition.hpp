@@ -79,7 +79,7 @@ const uint32_t PE_PARTFLAGS_IN_USE = 0x80000000;
 // The backup partition table is kept at the end of the disk:
 //   512n drives (512 byte physical sectors): the last sector
 //   512e drives (4K physical, 512 byte logical): the first 512 byte sector of
-//   the last full 4K block, so the write is aligned (same place as Cerbios)
+//   the last full 4K block, so the write is aligned (same place as Fatxplorer)
 // Partitions end before it. See XboxPartitionTableManipulator::GetBackupTableLba().
 #define RESERVED_SPACE_END_LBA 0x1
 #define MAX_HDD_SIZE_LBA48_V3  0xFFFFFFFF
@@ -144,7 +144,6 @@ public:
 
     XboxPartitionTable GetPartitionTable();
 
-    // Replace loaded table
     void LoadNewTable(const XboxPartitionTable& part_table);
 
     // Individual Partition Methods
@@ -164,7 +163,6 @@ public:
     void DisablePartition(const int partition_number);
     bool isPartitionEnabled(const int partition_number) const;
 
-    // Calculates expected cluster size for partition
     unsigned int CalculateClusterSizeForPartition(const int partition_number) const;
     unsigned int CalculateClusterSize(const uint64_t lba_size) const;
 
@@ -198,13 +196,12 @@ public:
     // Gets available free space
     uint64_t GetAvailableLBAs() const;
 
-    // Gets available free space in front of a partition
+    // Free space after a partition, up to the next one or the end of the disk
     uint64_t GetAvailableFreeSpaceForPartition(const int partition_number) const;
 
-    // Gets available free space behind a partition
+    // Free space before a partition, back to the previous one or the first usable sector
     uint64_t GetAvailableFreeSpaceForPartitionBefore(const int partition_number) const;
 
-    // Increase/decrease partition sizes
     void PartitionIncreaseSizeBy(const int partition_number, const uint64_t delta);
     void PartitionDecreaseSizeBy(const int partition_number, const uint64_t delta);
 
@@ -230,7 +227,6 @@ public:
     bool isAlignedTo4k(const uint64_t value) const;
 
 private:
-    // Sorts partitions
     void SortPartitions(uint64_t *starts, uint64_t *ends) const;
 
     void SetupMaxSize();

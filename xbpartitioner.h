@@ -5,6 +5,7 @@
 #include "partition.hpp"
 #include "Undocumented.h"
 #include "ui.h"
+#include "layout.h"
 
 const char partStr[][32] = {
     "\\Device\\Harddisk0\\Partition1",
@@ -60,74 +61,6 @@ enum BackupStatus
 #define MENU_RESULT_CLOSE -2 // Start: close all menus
 
 
-// Screen layout in real screen pixels, one per video mode (g_Layout480,
-// g_Layout720 in XBpartitioner.cpp). Both describe a 4:3 area; the renderer
-// centers it on the screen (720p: 960x720 with side bars) and draws 1:1, so
-// nothing is scaled or rounded.
-struct Layout
-{
-    int width;  // 4:3 area
-    int height;
-
-    // Main screen
-    int margin_x; // Left edge of messages and prompts
-    int line_height;
-    int title_x;
-    int title_y;
-    int loaded_table_x; // "Current table [...]", right of the title
-    int free_space_y;   // "Free: ... of ...", under the legend
-    int status_y;       // Progress messages
-    int prompt_y;       // Controls hint
-
-    // Partition table: one menu style panel. Its rows ("slots", all
-    // table_row_height apart) are the column headers, a line, "Standard
-    // partitions", partitions 1-5, "Extended partitions", partitions 6-14.
-    int table_left;
-    int table_right;
-    int table_top;          // Panel top; the same space is left below the last row
-    int table_first_row_y;  // Top of the header row's bar
-    int table_header_gap;   // Extra space after the header row, for the line
-    int table_row_height;   // Row pitch
-    int table_row_padding;  // Above and below the text in a row's selection bar
-
-    // Legend for the table's markers, right aligned under the table
-    int legend_y;
-    // Disk map above the table: the partitions to scale across the whole drive
-    int map_y;
-    int map_height;
-
-    // Dialog boxes, centered vertically
-    int dialog_left;
-    int dialog_right;
-    int dialog_text_inset;
-    int dialog_title_offset; // Title text from the top of the box
-    int dialog_title_height;
-    int dialog_line_height;
-    int dialog_button_width;
-    int dialog_button_padding; // Above and below the label: button height = text + 2x this
-    int dialog_button_gap;
-    int dialog_padding;
-
-    // Menus
-    int menu_left;
-    int menu_right;
-    int menu_top;
-    int menu_title_offset;      // Title text from the top of the box
-    int menu_first_item_offset; // First item slot from the top of the box
-    int menu_item_padding;      // Above and below the text: bar height = text + 2x this
-    int menu_item_gap;          // Space between two selection bars
-    int menu_text_inset;        // Item text from the left of the box
-    int menu_selection_inset;   // Selection bar from the sides of the box
-    int menu_footer_height;
-    int menu_footer_text_offset;
-
-    // System information: a wider menu panel, rows spaced like menu items
-    int info_left;
-    int info_right;
-    int info_value_offset; // Values from the panel's left edge (labels use menu_text_inset)
-
-};
-
 // Up/down repeat for a held D-pad, timed rather than slept so screens keep
 // drawing (and selection bars keep sliding) while it is held. Step() is called
 // once per frame with the direction held (-1 up, 1 down, 0 none) and returns
@@ -149,6 +82,18 @@ struct DpadRepeat
 // based, so the bar is as fast when frames take longer to draw.
 void SlideTowards(FLOAT &position, FLOAT target, DWORD &last_tick);
 
+// What the partition editor shows, so the keypad over it can draw it too
+struct EditView
+{
+    int part;
+    int field;
+    const bool *field_available;
+    LPCWSTR step_name;
+    LPCWSTR message;
+    Color message_color;
+    FLOAT bar_y;
+};
+
 class App
 {
 public:
@@ -159,10 +104,9 @@ public:
 
 private:
     // Screens. All coordinates are in layout space, see ui.h.
+    // The main screen; also drawn, every frame, behind menus, dialogs, the
+    // editor and the keypad (text is drawn by the GPU, so that's cheap)
     void DrawMainScreen();
-    // The main screen behind a menu, dialog or the editor: drawn and saved when
-    // dirty (then cleared), else the saved copy (Renderer::SaveBackBuffer)
-    void DrawBackdrop(bool &dirty);
     void DrawTable();
     void DrawDiskMap();
     void FormatTableHeader(wchar_t *row);
@@ -173,6 +117,7 @@ private:
     bool ConfirmWarning(const LPCWSTR *lines, int line_count, LPCWSTR ok_label);
     void ShowWarning(const LPCWSTR *lines, int line_count);
     void FadeIn();
+    void FadeOut();
 
     void ShowStatus(LPCWSTR message, Color color);
     void ShowMessage(LPCWSTR title, Color title_color, LPCWSTR message);
@@ -193,8 +138,11 @@ private:
 
     // Input
     int XInputGetStateAny(int *analog, int *buttons, int wait = 2);
-    void WaitForButton();
-    void WaitForRelease();
+    // Per frame input: reads the pad, and is false (no input this frame)
+    // while m_WaitForRelease is set, until everything is released. Screens set
+    // it when they open or act on a press, so a held button counts once and
+    // never carries over to the next screen, without ever stopping drawing.
+    bool ReadInput();
     void HandleMainScreenButtons(int buttons, int analog);
     void UpdateSelectionBar();
     void ApplyPreset(int preset);
@@ -206,12 +154,16 @@ private:
     typedef void (App::*MenuPreview)(int item);
     int RunMenu(LPCWSTR title, const LPCWSTR *labels, const bool *enabled, int count, int initial = 0, bool submenu = false,
                 MenuPreview preview = NULL);
-    // Colors of the current theme
     const Theme &Colors() const { return m_Ui.GetTheme(); }
     bool DisplayThemeMenu();
     void PreviewTheme(int index) { m_Ui.SetTheme(index); }
     void LoadThemeSetting();
-    bool SaveThemeSetting();
+    void SaveThemeSetting();
+    // Partition 6 (F) holds this program: a line for the write and format warnings
+    void FormatLaunchPartitionLine(wchar_t *out, LPCWSTR what);
+    // True if table puts the partition this program runs from somewhere else
+    // than the table on disk does (moved, resized or removed)
+    bool MovesLaunchPartition(const XboxPartitionTable &table) const;
     // Menu style box: background, border, title and the line under it, and the footer text
     void DrawPanel(int left, int top, int right, int bottom, LPCWSTR title, int first_item_y);
     void DrawPanelFooter(int left, int right, int bottom, LPCWSTR text, Color color = COLOR_GREY);
@@ -226,7 +178,10 @@ private:
     void LoadTable(LoadedTable which);
     void DisplayEditPartition();
     void LeaveEditPartition(int part);
-    void DrawEditPartition(int part, int field, const bool field_available[], LPCWSTR step_name, LPCWSTR message, Color message_color, FLOAT bar_y, bool redraw_backdrop);
+    // The editor's panel (not the main screen behind it), inside BeginFrame()/EndFrame()
+    void DrawEditPanel(const EditView &view);
+    // While the editor's keypad is open: the editor, to draw behind it. NULL otherwise.
+    const EditView *m_pActiveEditView;
     void TypeEditValue(int part, int field, LPCWSTR &message, Color &message_color);
     bool RunNumberInput(LPCWSTR title, ULONGLONG current, ULONGLONG min, ULONGLONG max, int unit, ULONGLONG *result);
     void DrawNumberInput(LPCWSTR title, const wchar_t *digits, int unit, ULONGLONG current, ULONGLONG min, ULONGLONG max,
@@ -292,6 +247,15 @@ private:
     HANDLE m_Controllers[4];
     int m_AnalogButton;
     int m_DigitalButtons;
+    bool m_WaitForRelease; // See ReadInput()
+
+    // Table index of the partition this program (and D:) runs from, -1 if not
+    // on the hard drive (a DVD) or unknown
+    int m_LaunchPartition;
+    // D: is a FATX volume the kernel mounted at launch, with that partition's
+    // layout. Once the partition is moved, resized or formatted, writing a file
+    // through it would land in the wrong sectors, so the theme isn't saved anymore.
+    bool m_ThemeSaveBlocked;
 
     // Disk and kernel patch info
     bool m_FullLba48;

@@ -275,6 +275,12 @@
 			Filter="cpp;c;cxx;def;odl;idl;hpj;bat;asm;asmx"
 			UniqueIdentifier="{4FC737F1-C7A5-4376-A066-2A32D752A2FF}">
 			<File
+				RelativePath=".\background.cpp">
+			</File>
+			<File
+				RelativePath=".\layout.cpp">
+			</File>
+			<File
 				RelativePath=".\partition.cpp">
 			</File>
 			<File
@@ -282,6 +288,9 @@
 			</File>
 			<File
 				RelativePath=".\stdafx.cpp">
+			</File>
+			<File
+				RelativePath=".\themes.cpp">
 			</File>
 			<File
 				RelativePath=".\ui.cpp">
@@ -294,6 +303,9 @@
 			Name="Header Files"
 			Filter="h;hpp;hxx;hm;inl;inc;xsd"
 			UniqueIdentifier="{93995380-89BD-4b04-88EB-625FBE52EBFB}">
+			<File
+				RelativePath=".\background.h">
+			</File>
 			<File
 				RelativePath=".\font_table.h">
 			</File>
@@ -313,6 +325,9 @@
 				RelativePath=".\font_title_720.h">
 			</File>
 			<File
+				RelativePath=".\layout.h">
+			</File>
+			<File
 				RelativePath=".\partition.hpp">
 			</File>
 			<File
@@ -320,6 +335,9 @@
 			</File>
 			<File
 				RelativePath=".\stdafx.h">
+			</File>
+			<File
+				RelativePath=".\themes.h">
 			</File>
 			<File
 				RelativePath=".\Undocumented.h">
