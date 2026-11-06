@@ -59,22 +59,14 @@ const uint32_t PE_PARTFLAGS_IN_USE = 0x80000000;
 // Clears the low 3 bits (0xFFFFFFFFFFF8)
 #define LBA_ALIGNMENT_MASK (LBA48_MAX_LBA - (LBA_ALIGNMENT - 1))
 
-#define CLUSTER_SIZE 0x4000
 #define SECTORS_PER_CLUSTER 32
 
 #define SCALE_MEGABYTE 0x100000
 #define SCALE_GIGABYTE 0x40000000
 
 #define LBA_LOWER_BITS   0xFFFFFFFF
-// Sizes that require LBA48:
-#define LBASIZE_16TB    0x800000000 // Max hdd size
-#define LBASIZE_8TB     0x400000000
-#define LBASIZE_4TB     0x200000000
-#define LBASIZE_2TB     0x100000000
-// Sizes that only require LBA32:
-#define LBASIZE_1TB     0x80000000
-#define LBASIZE_512GB   0x40000000
-#define LBASIZE_256GB   0x20000000
+// Largest partition the presets make (FATX and the cluster sizes go up to 16TB)
+#define LBASIZE_16TB    0x800000000
 
 // The backup partition table is kept at the end of the disk:
 //   512n drives (512 byte physical sectors): the last sector
@@ -153,7 +145,6 @@ public:
 
     uint64_t GetPartitionSize(const int partition_number) const;
     uint64_t GetPartitionStart(const int partition_number) const;
-    uint64_t GetPartitionSizeInBytes(const int partition_number) const;
 
     // Wipes partition entry and disables partition
     void ErasePartition(const int partition_number);
@@ -183,12 +174,15 @@ public:
     // one in use, each with a size, after the first usable sector, inside the
     // disk (when total_sectors is known) and not overlapping each other.
     static bool IsTableUsable(const XboxPartitionTable& part_table, const uint64_t total_sectors);
+    // True if two partitions in use overlap or start at the same sector (also
+    // when one of them is empty); *first and *second are their table indexes.
+    // Such a table must not be written.
+    bool FindConflict(int *first, int *second) const;
     void WriteMagic();
 
-    int GetLastAvailablePartitionSlot() const;
+    int GetFirstAvailablePartitionSlot() const;
     int GetActivePartitionCount() const;
     uint64_t GetUsableLBAs() const;
-    uint64_t GetTotalHDDLBAs() const;
 
     // Gets first free lba for a new partition, 0 if the disk is full
     uint64_t GetFirstFreeStart() const;
@@ -204,10 +198,6 @@ public:
 
     void PartitionIncreaseSizeBy(const int partition_number, const uint64_t delta);
     void PartitionDecreaseSizeBy(const int partition_number, const uint64_t delta);
-
-    // Moves partitions (start and end, the size stays the same)
-    void PartitionMoveBack(const int partition_number, const uint64_t delta);
-    void PartitionMoveForward(const int partition_number, const uint64_t delta);
 
     // Moves only the start, the end stays where it is: forward shrinks the
     // partition (down to one 4K block), back grows it into the free space before.
@@ -229,6 +219,11 @@ public:
 private:
     void SortPartitions(uint64_t *starts, uint64_t *ends) const;
 
+    // Moves partitions (start and end, the size stays the same); the start
+    // functions above use them for zero size partitions
+    void PartitionMoveBack(const int partition_number, const uint64_t delta);
+    void PartitionMoveForward(const int partition_number, const uint64_t delta);
+
     void SetupMaxSize();
     void DropHighLbaBitsIfNotV4();
     bool IsRangeFree(const uint64_t start, const uint64_t end) const;
@@ -248,15 +243,8 @@ private:
     bool m_physical_4k;
 };
 
-typedef struct _FATX_SUPERBLOCK
-{
-    char    Tag[4];
-    uint32_t VolumeID;
-    uint32_t ClusterSize;
-    uint16_t FatCopies;
-    int Resvd;
-    char Unused[4078];
-} FATX_SUPERBLOCK;
+// "FATX"
+#define FATX_signature 1481916742
 
 // Code stolen from PrometheOS
 #define FAT_VOLUME_NAME_LENGTH          32

@@ -127,6 +127,7 @@ private:
     bool IsMainTableUsable();
     bool IsBackupTableUsable();
     void CheckForV4TableOnOldBios();
+    void WarnUnalignedPartitions();
     bool ConfirmFormatWarning(bool format_changed);
     bool DisplayNoInfo();
     void CheckTableStatus();
@@ -188,6 +189,9 @@ private:
                          int selected_key, LPCWSTR message);
     int EditPanelTop() const;
     void DoEraseTable();
+    // Shows why a table can't be written and returns true, if two of its
+    // partitions overlap or share a start (see FindConflict)
+    bool RefuseConflictingTable(const XboxPartitionTable &table);
     void DoWriteTable();
     void DoFormatAll();
     void DoFormatOne();

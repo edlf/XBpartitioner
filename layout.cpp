@@ -64,6 +64,10 @@ const Layout g_Layout480 = {
     610, // info_right
     170, // info_value_offset
 
+    // Partition edit
+    50,  // edit_left
+    590, // edit_right
+
 };
 
 const Layout g_Layout720 = {
@@ -122,5 +126,9 @@ const Layout g_Layout720 = {
     45,  // info_left
     915, // info_right
     255, // info_value_offset
+
+    // Partition edit
+    75,  // edit_left
+    885, // edit_right
 
 };

@@ -203,7 +203,7 @@ App::App()
 
     RefreshClusterSizes();
 
-    m_CurrentPart = m_pTable->GetLastAvailablePartitionSlot();
+    m_CurrentPart = m_pTable->GetFirstAvailablePartitionSlot();
 
     FadeIn();
 }
@@ -229,6 +229,7 @@ void App::RunStartupChecks()
     }
 
     CheckForV4TableOnOldBios();
+    WarnUnalignedPartitions();
     WarnBackupOverlapped();
     CheckTableStatus();
 }
@@ -1074,6 +1075,40 @@ void App::OfferBackupRestore()
 // with a v4 BIOS, and this BIOS sees those partitions in the wrong place.
 // The editor drops the high bits (see XboxPartitionTableManipulator), so
 // warn before the user writes or formats anything based on it.
+// At startup: partitions in use whose start or size isn't a whole number of
+// 4 KB blocks (tables from other tools). The editor keeps everything 4K
+// aligned, so changing one of them rounds it, and moves it.
+void App::WarnUnalignedPartitions()
+{
+    bool marked[XboxPartitionTableEntryCount];
+    bool any = false;
+    for (int i = 0; i < XboxPartitionTableEntryCount; i++)
+    {
+        marked[i] = m_pTable->isPartitionEnabled(i) &&
+                    (!m_pTable->isAlignedTo4k(m_pTable->GetPartitionStart(i)) ||
+                     !m_pTable->isAlignedTo4k(m_pTable->GetPartitionSize(i)));
+        any = any || marked[i];
+    }
+    if (!any)
+    {
+        return;
+    }
+
+    wchar_t list[100];
+    FormatPartitionList(marked, list, ARRAY_COUNT(list));
+    wchar_t line1[120];
+    swprintf(line1, L"Not aligned to 4 KB: %s.", list);
+
+    const LPCWSTR lines[] = {
+        line1,
+        m_Physical4k ? L"This drive has 4K sectors, so they are slower."
+                     : L"That makes them slower on drives with 4K sectors.",
+        L"Editing one rounds it to 4 KB, which moves it:",
+        L"it then needs formatting, and its data is lost.",
+    };
+    ShowWarning(lines, ARRAY_COUNT(lines));
+}
+
 void App::CheckForV4TableOnOldBios()
 {
     if (m_FullLba48 || m_pKernelTable == NULL)
@@ -1247,8 +1282,35 @@ void App::QuitToDashboard()
 // Actions bound to Start
 //-----------------------------------------------------------------------------
 
+bool App::RefuseConflictingTable(const XboxPartitionTable &table)
+{
+    const XboxPartitionTableManipulator check(table, m_TotalHddSectors, m_FullLba48, m_Physical4k);
+    int first = 0;
+    int second = 0;
+    if (!check.FindConflict(&first, &second))
+    {
+        return false;
+    }
+
+    wchar_t line[100];
+    swprintf(line, L"Partitions %d (%c) and %d (%c) %s.", first + 1, partition_letter(first), second + 1,
+             partition_letter(second),
+             (check.GetPartitionStart(first) == check.GetPartitionStart(second)) ? L"start at the same sector" : L"overlap");
+    const LPCWSTR lines[] = {
+        line,
+        L"Fix that in the partition editor before writing.",
+    };
+    ShowWarning(lines, ARRAY_COUNT(lines));
+    return true;
+}
+
 void App::DoFormatAll()
 {
+    if (RefuseConflictingTable(m_pTable->GetPartitionTable()))
+    {
+        return;
+    }
+
     if (!ConfirmFormatWarning(true))
     {
         return;
@@ -1329,6 +1391,11 @@ void App::WarnBackupOverlapped()
 
 void App::DoWriteTable()
 {
+    if (RefuseConflictingTable(m_pTable->GetPartitionTable()))
+    {
+        return;
+    }
+
     // FATX works out its layout from the partition size, so a partition that
     // already existed and was moved or resized is unreadable until formatted
     bool resized[XboxPartitionTableEntryCount];
@@ -2758,8 +2825,8 @@ void App::DrawEditPanel(const EditView &view)
     const Color message_color = view.message_color;
     const FLOAT bar_y = view.bar_y;
 
-    const int left = m_Layout->info_left;
-    const int right = m_Layout->info_right;
+    const int left = m_Layout->edit_left;
+    const int right = m_Layout->edit_right;
     const int top = EditPanelTop();
     const int bar_height = MenuItemBarHeight();
     const int item_height = MenuItemHeight();
@@ -3362,7 +3429,7 @@ unsigned int App::get_cluster_size_from_partition(ANSI_STRING part)
     IO_STATUS_BLOCK IoStatusBlock;
     BYTE PartSector[HDD_SECTOR_SIZE * 8];
     LARGE_INTEGER RWOffset;
-    FATX_SUPERBLOCK fsb;
+    FAT_VOLUME_METADATA fsb;
 
     InitializeObjectAttributes(&ObjectAttributes, &part, OBJ_CASE_INSENSITIVE, NULL);
 
@@ -3388,14 +3455,14 @@ unsigned int App::get_cluster_size_from_partition(ANSI_STRING part)
     memcpy(&fsb, PartSector, sizeof(fsb) < sizeof(PartSector) ? sizeof(fsb) : sizeof(PartSector));
 
     // Unformatted partitions, or ones holding something else, have no FATX header:
-    // whatever is at the ClusterSize offset is not a cluster size
-    if (memcmp(fsb.Tag, "FATX", 4) != 0)
+    // whatever is at the SectorsPerCluster offset is not a cluster size
+    if (fsb.Signature != FATX_signature)
     {
         return 0;
     }
 
     // ClusterSize is in sectors and always a power of two
-    const uint32_t sectors_per_cluster = fsb.ClusterSize;
+    const uint32_t sectors_per_cluster = fsb.SectorsPerCluster;
     if (sectors_per_cluster == 0 || (sectors_per_cluster & (sectors_per_cluster - 1)) != 0)
     {
         return 0;
@@ -3517,6 +3584,15 @@ bool App::write_partition_tables(const XboxPartitionTable table, bool *backup_wr
     //     the backup would overwrite the end of that partition. Writing a table
     //     that leaves room for it (e.g. a new one from a preset) brings it back.
     const XboxPartitionTableManipulator to_write(table, m_TotalHddSectors, m_FullLba48, m_Physical4k);
+
+    // Overlapping partitions or two at the same start: never written (the
+    // menu actions explain it first, see RefuseConflictingTable)
+    int first = 0;
+    int second = 0;
+    if (to_write.FindConflict(&first, &second))
+    {
+        return false;
+    }
     const bool write_backup = (m_pKernelTable != NULL) && (m_pTable->GetBackupTableLba() != 0) && !to_write.OverlapsBackupTable();
 
     LARGE_INTEGER RWOffset;
