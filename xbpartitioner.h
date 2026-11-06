@@ -1,10 +1,10 @@
 #ifndef __XBPARTITIONER_H__
 #define __XBPARTITIONER_H__
 
-#include <xfont.h> //used for directX textout
-#include "partition.hpp"
 #include <Xtl.h>
+#include "partition.hpp"
 #include "Undocumented.h"
+#include "ui.h"
 
 const char partStr[][32] = {
     "\\Device\\Harddisk0\\Partition1",
@@ -23,119 +23,125 @@ const char partStr[][32] = {
     "\\Device\\Harddisk0\\Partition14"
 };
 
-struct SCREENVERTEX
-{
-    D3DXVECTOR4 pos; // The transformed position for the vertex point.
-    DWORD color;     // The vertex color.
-};
-
-#define D3DFVF_SCREENVERTEX (D3DFVF_XYZRHW | D3DFVF_DIFFUSE)
-
+// What the Start button does, cycled with White
 enum Function
 {
     FUNCTION_WRITE_TABLE = 0,
     FUNCTION_WRITE_TABLE_FORMAT = 1,
-    FUNCTION_FORMAT_CURRENT_PARTITION = 2
+    FUNCTION_FORMAT_CURRENT_PARTITION = 2,
+    FUNCTION_COUNT
 };
 
-enum Color
+// Which partition table is loaded in the editor, cycled with Y
+enum LoadedTable
 {
-    COLOR_WHITE = 0,
-    COLOR_RED = 1,
-    COLOR_GREEN = 2,
-    COLOR_BLUE = 3,
-    COLOR_YELLOW = 4,
-    COLOR_WHITE_BG = 5,
-    COLOR_RED_BG = 6,
-    COLOR_GREY = 7,
-    COLOR_DARK_YELLOW = 8
+    LOADED_TABLE_KERNEL = 0,
+    LOADED_TABLE_HDD = 1,
+    LOADED_TABLE_HDD_BACKUP = 2,
+    LOADED_TABLE_COUNT
 };
 
-class App {
-    public:
-        App();
-        ~App();
+// Index into XINPUT_GAMEPAD::bAnalogButtons as reported by XInputGetStateAny
+#define ANALOG_BUTTON_Y 3
 
-        void MainLoop();
+class App
+{
+public:
+    App();
+    ~App();
 
-        void InitialiseD3D();
-        void CleanUpD3D();
+    void MainLoop();
 
-        int XInputGetStateAny(int *analog, int *analog_val, int *buttons, short *l_thumb_y_val, int wait = 2);
-        void DrawRect(FLOAT x1, FLOAT y1, FLOAT x2, FLOAT y2, DWORD dwStartColor, DWORD dwEndColor);
-        void DrawText(XFONT *font, LPCWSTR text_string, ULONG xpos, ULONG ypos, Color color, int just = XFONT_LEFT);
+private:
+    // Screens. All coordinates are in layout space, see ui.h.
+    void DrawMainScreen();
+    void DrawTable();
+    void DrawFreeSpace();
+    void DrawFormatCluster();
+    void DrawLoadedTableName();
+    void DrawStartActionHint();
+    void DrawYPrompt(LPCWSTR action, int x, int y);
+    void DrawWarningScreen(const LPCWSTR *lines, int line_count, LPCWSTR y_prompt_action);
+    void FadeIn();
 
-        void DisplayText(LPCWSTR text_string, ULONG xpos, ULONG ypos, Color color, int just = XFONT_LEFT);
-        void DisplayTableText(LPCWSTR text_string, ULONG xpos, ULONG ypos, Color color, int just = XFONT_LEFT);
-        void DisplayWarningBackupAvailable();
-        void DisplayWarning();
-        bool DisplayNoInfo();
+    void ShowStatus(LPCWSTR message, Color color, bool wait_for_button);
+    bool ConfirmOnMainScreen(LPCWSTR message);
+    void DisplayHelp();
+    void DisplayWarningBackupAvailable();
+    bool ConfirmFormatWarning();
+    bool DisplayNoInfo();
+    void CheckTableStatus();
+    void QuitToDashboard();
 
-        bool format_partition(const int i);
-        ULONGLONG get_hdd_size();
-        bool read_lba48_info(XboxPartitionTable *p_table);
-        bool reload_lba48();
-        unsigned int get_cluster_size_from_partition(ANSI_STRING part);
-        bool CheckIfPartitionTableChanged();
-        LARGE_INTEGER get_backup_partition_offset_bytes();
-        bool write_partition_tables(const XboxPartitionTable table);
-        bool erase_partition_tables();
-        XboxPartitionTable read_hdd_partition_table(LARGE_INTEGER offset);
+    bool PreparePartitionInfoStrings(const int partition_number, wchar_t *partno_str, wchar_t *size_string, wchar_t *cluster_string, wchar_t *lba_start_str, wchar_t *lba_size_str);
 
-        XboxPartitionTable read_hdd_main_partition_table();
-        XboxPartitionTable read_hdd_backup_partition_table();
-        void DisplayHelp();
+    // Input
+    int XInputGetStateAny(int *analog, int *analog_val, int *buttons, short *l_thumb_y_val, int wait = 2);
+    void WaitForButton();
+    bool ConfirmWithY();
+    // Returns true if the button press should be waited out before the next poll
+    bool HandleAnalogButton(int button, int value);
+    bool HandleDigitalButtons(int buttons, short left_thumb_y);
+    void CycleLayoutScheme();
+    void CycleLoadedTable();
+    void ChangeSelectedPartition(int trigger_value, int direction, bool fine);
 
-        bool PreparePartitionInfoStrings(const int partition_number, wchar_t * partno_str, wchar_t * size_string, wchar_t * cluster_string, wchar_t * lba_start_str, wchar_t * lba_end_str);
-        void DrawTable();
-        void DrawAvailableTables();
-        void DrawInfo();
-        void DrawScreen(int g_iCurrentPart);
-        void DrawFreeSpace();
-        void DrawFormatCluster();
-        void CheckTableStatus();
-        void DrawLastLoadedTable(const int table_id);
-        void DoFormatAll();
-        void DoWriteTable();
-        void DoFormatOne();
-        void DoStart();
-        void part_change_size(int TrigValue, int change_start, int Direction, bool fine);
+    // Actions bound to Start
+    void DoStart();
+    void DoWriteTable();
+    void DoFormatAll();
+    void DoFormatOne();
+    bool format_partition(const int i);
 
-    private:
-        ANSI_STRING partition_str[XboxPartitionTableEntryCount];
+    // Disk and kernel partition table access
+    ULONGLONG get_hdd_size();
+    bool read_lba48_info(XboxPartitionTable *p_table);
+    bool reload_lba48();
+    unsigned int get_cluster_size_from_partition(ANSI_STRING part);
+    void RefreshClusterSizes();
+    bool CheckIfPartitionTableChanged();
+    LARGE_INTEGER get_backup_partition_offset_bytes();
+    bool write_partition_tables(const XboxPartitionTable table);
+    bool erase_partition_tables();
+    XboxPartitionTable read_hdd_partition_table(LARGE_INTEGER offset);
+    XboxPartitionTable read_hdd_main_partition_table();
+    XboxPartitionTable read_hdd_backup_partition_table();
 
-        XboxPartitionTableManipulator *tableManipulator;
-        XboxPartitionTableManipulator *tableManipulatorOriginal;
-        XboxPartitionTable tableKernel;
-        XboxPartitionTable tableHDD;
-        XboxPartitionTable tableHDDBackup;
-        XboxPartitionTable *KernelPartTblAdd;
+    Renderer m_Ui;
 
-        // D3D Vars
-        unsigned int SCREEN_SIZE_X;
-        unsigned int SCREEN_SIZE_Y;
+    ANSI_STRING m_PartitionPaths[XboxPartitionTableEntryCount];
 
-        LPDIRECT3D8 g_pD3D;
-        LPDIRECT3DDEVICE8 g_pD3DDevice;
-        LPDIRECT3DTEXTURE8 g_pBackTexture;
+    // Table being edited, and the one it was loaded from (to see what changed)
+    XboxPartitionTableManipulator *m_pTable;
+    XboxPartitionTableManipulator *m_pTableOriginal;
+    XboxPartitionTable m_TableKernel;
+    XboxPartitionTable m_TableHdd;
+    XboxPartitionTable m_TableHddBackup;
+    // The kernel's in-memory partition table, NULL without an lba48 patch
+    XboxPartitionTable *m_pKernelTable;
 
-        XFONT *g_pLucon18BitmapFont;
-        XFONT *g_pArial18BitmapFont;
-        XFONT *g_pArial32BitmapFont;
+    // Cluster size (KB) read from each partition's FATX header, 0 if unformatted/unreadable.
+    // Cached because reading it means opening and reading every partition.
+    unsigned int m_ClusterSizes[XboxPartitionTableEntryCount];
 
-        // Controller handler
-        HANDLE g_Controller[4];
-        int aButton, aButtonVal, tButton;
-        short aLThumbY;
+    // Controllers and the last input read by XInputGetStateAny
+    HANDLE m_Controllers[4];
+    int m_AnalogButton;
+    int m_AnalogValue;
+    int m_DigitalButtons;
+    short m_LeftThumbY;
 
-        // Global vars for part table
-        bool g_full_lba48;
-        ULONGLONG g_TotalHDDSectors;
-        DWORD g_lba48_version;
+    // Disk and kernel patch info
+    bool m_FullLba48;
+    ULONGLONG m_TotalHddSectors;
+    DWORD m_Lba48Version;
 
-        int g_iCurrentPart;
-        int g_start_size_selector;
-        int g_iFunction;
+    // Editor state
+    int m_CurrentPart;
+    bool m_EditStart;   // true: size controls move the start, false: they resize
+    int m_StartAction;  // Function
+    int m_LayoutScheme; // Next standard layout for the A button
+    int m_LoadedTable;  // LoadedTable
 };
 
 #endif // __XBPARTITIONER_H__

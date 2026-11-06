@@ -284,6 +284,9 @@
 				RelativePath=".\stdafx.cpp">
 			</File>
 			<File
+				RelativePath=".\ui.cpp">
+			</File>
+			<File
 				RelativePath=".\XBpartitioner.cpp">
 			</File>
 		</Filter>
@@ -292,13 +295,22 @@
 			Filter="h;hpp;hxx;hm;inl;inc;xsd"
 			UniqueIdentifier="{93995380-89BD-4b04-88EB-625FBE52EBFB}">
 			<File
-				RelativePath=".\arial18normal.h">
+				RelativePath=".\font_table.h">
 			</File>
 			<File
-				RelativePath=".\arial32bold.h">
+				RelativePath=".\font_table_720.h">
 			</File>
 			<File
-				RelativePath=".\lucon18bold.h">
+				RelativePath=".\font_text.h">
+			</File>
+			<File
+				RelativePath=".\font_text_720.h">
+			</File>
+			<File
+				RelativePath=".\font_title.h">
+			</File>
+			<File
+				RelativePath=".\font_title_720.h">
 			</File>
 			<File
 				RelativePath=".\partition.hpp">
@@ -311,6 +323,9 @@
 			</File>
 			<File
 				RelativePath=".\Undocumented.h">
+			</File>
+			<File
+				RelativePath=".\ui.h">
 			</File>
 			<File
 				RelativePath=".\xbpartitioner.h">

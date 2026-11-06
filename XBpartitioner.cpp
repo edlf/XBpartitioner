@@ -1,315 +1,1038 @@
 // XBpartitioner.cpp : Defines the entry point for the application.
 #include "stdafx.h"
 #include "xbpartitioner.h"
-#include "partition.hpp"
 
-#include <xfont.h> //used for directX textout
 #include <io.h>
 #include <stdio.h> //used for swprintf
 #include <stdlib.h>
-#include <Xtl.h>
 #include <winbase.h>
 #include "Winioctl.h"
-#include "Undocumented.h"
-// Fonts
-#include "arial18normal.h"
-#include "lucon18bold.h"
-#include "arial32bold.h"
-
 #include "prometheos_code.h"
 
-void App::InitialiseD3D()
+#define ARRAY_COUNT(a) (sizeof(a) / sizeof((a)[0]))
+
+//-----------------------------------------------------------------------------
+// Screen layout, in 640x480 layout coordinates (see ui.h)
+//-----------------------------------------------------------------------------
+
+static const int MARGIN_X = 60;      // Left edge of messages and prompts
+static const int LINE_HEIGHT = 20;
+
+static const int TITLE_X = 52;
+static const int TITLE_Y = 20;
+static const int LOADED_TABLE_X = 400; // "Current table [...]", right of the title
+
+static const int FREE_SPACE_Y = 394;     // Two lines: free GB, then free LBAs
+static const int FORMAT_CLUSTER_X = 380; // "Will use N KB clusters", right of free GB
+static const int STATUS_Y = 428;         // Status and result messages
+static const int PROMPT_Y = 448;         // Prompts, and the Start action hint
+
+// Partition table: standard partitions (1-5) in a box, then extended (6-14)
+static const FLOAT TABLE_LEFT = 37.0f;
+static const FLOAT TABLE_RIGHT = 603.0f;
+static const int TABLE_LABEL_X = 40;
+static const int STANDARD_LABEL_Y = 56;
+static const FLOAT STANDARD_BOX_TOP = 80.0f;
+static const FLOAT STANDARD_BOX_BOTTOM = 183.0f;
+static const int EXTENDED_LABEL_Y = 188;
+static const FLOAT EXTENDED_BOX_TOP = 210.0f;
+static const FLOAT EXTENDED_BOX_BOTTOM = 392.0f;
+
+static const int STANDARD_PARTITION_COUNT = 5;
+static const int TABLE_FIRST_ROW_Y = 83;
+static const int TABLE_EXTENDED_GAP = 30; // Extra space for the "Extended partitions" label
+static const int TABLE_ROW_HEIGHT = 20;
+static const int SELECTION_TOP = 3;       // Selection bar, relative to the row's text
+static const int SELECTION_BOTTOM = 20;
+
+// Columns
+static const int COLUMN_INDEX_X = 50;
+static const int COLUMN_START_X = 84;
+static const int COLUMN_SEPARATOR_X = 230;
+static const int COLUMN_SIZE_X = 238;
+static const int COLUMN_CLUSTER_X = 400;
+static const int COLUMN_BYTES_X = 592; // Right aligned
+
+static const D3DCOLOR STANDARD_BOX_TOP_COLOR = D3DCOLOR_XRGB(0, 55, 55);
+static const D3DCOLOR STANDARD_BOX_BOTTOM_COLOR = D3DCOLOR_XRGB(0, 130, 168);
+static const D3DCOLOR EXTENDED_BOX_TOP_COLOR = D3DCOLOR_XRGB(155, 0, 168);
+static const D3DCOLOR EXTENDED_BOX_BOTTOM_COLOR = D3DCOLOR_XRGB(51, 0, 55);
+static const D3DCOLOR SELECTION_COLOR = D3DCOLOR_XRGB(51, 0, 55);
+
+// Warning screens
+static const int WARNING_TITLE_Y = 80;
+static const int WARNING_TEXT_Y = 200;
+static const int WARNING_LINE_HEIGHT = 40;
+
+// Help screen
+static const int HELP_BUTTON_X = 50;
+static const int HELP_DESCRIPTION_X = 240;
+
+// Step sizes for moving/resizing partitions, in sectors
+static const ULONG FINE_STEP = 8;                                // Thumb stick: one 4KB block
+static const ULONG DPAD_STEP = 0x200000;                         // D-pad: 1GB
+static const ULONG TRIGGER_LIGHT_STEP = 64;                      // Barely pressed trigger
+static const ULONG TRIGGER_FULL_STEP = SECTORS_PER_CLUSTER * 0x20000; // Fully pressed trigger: 2GB
+
+//-----------------------------------------------------------------------------
+// Startup and main loop
+//-----------------------------------------------------------------------------
+
+App::App()
+    : m_pTable(NULL), m_pTableOriginal(NULL), m_pKernelTable(NULL),
+      m_AnalogButton(-1), m_AnalogValue(0), m_DigitalButtons(0), m_LeftThumbY(0),
+      m_FullLba48(false), m_TotalHddSectors(0), m_Lba48Version(0),
+      m_CurrentPart(0), m_EditStart(false), m_StartAction(FUNCTION_WRITE_TABLE),
+      m_LayoutScheme(0), m_LoadedTable(LOADED_TABLE_KERNEL)
 {
-    // First of all, create the main D3D object. If it is created successfully we
-    // should get a pointer to an IDirect3D8 interface.
-    g_pD3D = Direct3DCreate8(D3D_SDK_VERSION);
+    memset(m_ClusterSizes, 0, sizeof(m_ClusterSizes));
+    memset(&m_TableKernel, 0, sizeof(m_TableKernel));
+    memset(&m_TableHdd, 0, sizeof(m_TableHdd));
+    memset(&m_TableHddBackup, 0, sizeof(m_TableHddBackup));
+    memset(m_Controllers, 0, sizeof(m_Controllers));
 
-    // Create a structure to hold the settings for our device
-    D3DPRESENT_PARAMETERS d3dpp;
-    ZeroMemory(&d3dpp, sizeof(d3dpp));
-
-    // Fill the structure.
-    // Set fullscreen 640x480x32 mode
-    d3dpp.BackBufferWidth = SCREEN_SIZE_X;
-    d3dpp.BackBufferHeight = SCREEN_SIZE_Y;
-    d3dpp.BackBufferFormat = D3DFMT_X8R8G8B8;
-
-    // Create one backbuffer and a z-buffer
-    d3dpp.BackBufferCount = 1;
-
-    // Set up how the backbuffer is "presented" to the frontbuffer each time
-    d3dpp.SwapEffect = D3DSWAPEFFECT_DISCARD;
-
-    // Create a Direct3D device.
-    g_pD3D->CreateDevice(0, D3DDEVTYPE_HAL, NULL,
-                         D3DCREATE_HARDWARE_VERTEXPROCESSING,
-                         &d3dpp, &g_pD3DDevice);
-
-    g_pD3DDevice->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
-    g_pD3DDevice->SetRenderState(D3DRS_LIGHTING, FALSE);
-    DWORD videoFlags = XGetVideoFlags();
-
-    // Turn on z-buffering
-    g_pD3DDevice->SetRenderState(D3DRS_ZENABLE, D3DZB_TRUE);
-
-    // Fonts
-    XFONT_OpenBitmapFontFromMemory(lucon18bold, sizeof(lucon18bold), &g_pLucon18BitmapFont);
-    XFONT_OpenBitmapFontFromMemory(arial18normal, sizeof(arial18normal), &g_pArial18BitmapFont);
-    XFONT_OpenBitmapFontFromMemory(arial32bold, sizeof(arial32bold), &g_pArial32BitmapFont);
-}
-
-void App::CleanUpD3D()
-{
-    g_pLucon18BitmapFont->Release();
-    g_pArial18BitmapFont->Release();
-    g_pArial32BitmapFont->Release();
-    g_pD3DDevice->Release();
-    g_pD3D->Release();
-}
-
-void App::DrawRect(FLOAT x1, FLOAT y1, FLOAT x2, FLOAT y2, DWORD dwStartColor, DWORD dwEndColor)
-{
-    SCREENVERTEX v[4];
-    v[0].pos = D3DXVECTOR4(x1 - 0.5f, y1 - 0.5f, 1.0f, 1.0f);
-    v[0].color = dwStartColor;
-    v[1].pos = D3DXVECTOR4(x2 - 0.5f, y1 - 0.5f, 1.0f, 1.0f);
-    v[1].color = dwStartColor;
-    v[2].pos = D3DXVECTOR4(x1 - 0.5f, y2 - 0.5f, 1.0f, 1.0f);
-    v[2].color = dwEndColor;
-    v[3].pos = D3DXVECTOR4(x2 - 0.5f, y2 - 0.5f, 1.0f, 1.0f);
-    v[3].color = dwEndColor;
-
-    // Render the rectangle
-    g_pD3DDevice->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_DISABLE);
-    g_pD3DDevice->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
-    g_pD3DDevice->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
-    g_pD3DDevice->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
-
-    g_pD3DDevice->SetVertexShader(D3DFVF_SCREENVERTEX);
-    g_pD3DDevice->DrawPrimitiveUP(D3DPT_TRIANGLESTRIP, 2, v, sizeof(SCREENVERTEX));
-}
-
-void App::DrawText(XFONT *font, LPCWSTR text_string, ULONG xpos, ULONG ypos, Color color, int just)
-{
-    // Create some DirectX text buffers
-    LPDIRECT3DSURFACE8 pFrontBuffer;
-
-    // InitialiseFonts
-    g_pD3DDevice->GetBackBuffer(0, D3DBACKBUFFER_TYPE_MONO, &pFrontBuffer);
-
-    // Display our text.
-    switch (color)
+    // no static asserts in vc++ from this vintage
+    if (XboxPartitionTableSize != HDD_SECTOR_SIZE || XboxPartitionTableSize != sizeof(XboxPartitionTable))
     {
-    case COLOR_WHITE:
-        font->SetBkMode(XFONT_TRANSPARENT);
-        font->SetTextColor(D3DCOLOR_XRGB(255, 255, 255));
+        return;
+    }
+
+    for (int i = 0; i < XboxPartitionTableEntryCount; i++)
+    {
+        RtlInitAnsiString(&m_PartitionPaths[i], partStr[i]);
+    }
+
+    m_Ui.Init();
+
+    XDEVICE_PREALLOC_TYPE deviceTypes[] = {
+        {XDEVICE_TYPE_GAMEPAD, 4},
+    };
+    XInitDevices(ARRAY_COUNT(deviceTypes), deviceTypes);
+
+    // Give the controllers time to be enumerated
+    Sleep(2000);
+
+    static const DWORD ports[] = {XDEVICE_PORT0, XDEVICE_PORT1, XDEVICE_PORT2, XDEVICE_PORT3};
+    for (int i = 0; i < ARRAY_COUNT(ports); i++)
+    {
+        m_Controllers[i] = XInputOpen(XDEVICE_TYPE_GAMEPAD, ports[i], XDEVICE_NO_SLOT, 0);
+    }
+
+    m_TotalHddSectors = get_hdd_size();
+
+    // Read kernel patch info + kernel reported partition table.
+    // This also creates m_pTableOriginal, the copy used to check if partitions changed.
+    if (!reload_lba48() && !DisplayNoInfo())
+    {
+        QuitToDashboard();
+    }
+
+    // Read partition table from HDD
+    m_TableHdd = read_hdd_main_partition_table();
+    m_TableHddBackup = read_hdd_backup_partition_table();
+
+    if (!XboxPartitionTableManipulator::HasMagic(m_TableHdd) && XboxPartitionTableManipulator::HasMagic(m_TableHddBackup))
+    {
+        DisplayWarningBackupAvailable();
+    }
+
+    RefreshClusterSizes();
+
+    m_CurrentPart = m_pTable->GetLastAvailablePartitionSlot();
+
+    FadeIn();
+}
+
+App::~App()
+{
+    delete m_pTableOriginal;
+    delete m_pTable;
+
+    m_Ui.Shutdown();
+}
+
+void App::MainLoop()
+{
+    CheckTableStatus();
+
+    bool wait_for_release = false;
+
+    while (true)
+    {
+        m_Ui.BeginFrame();
+        DrawMainScreen();
+        DrawStartActionHint();
+        m_Ui.EndFrame();
+
+        // Buttons that act once per press are waited out, held ones repeat
+        if (wait_for_release)
+        {
+            XInputGetStateAny(&m_AnalogButton, &m_AnalogValue, &m_DigitalButtons, &m_LeftThumbY);
+        }
+
+        XInputGetStateAny(&m_AnalogButton, &m_AnalogValue, &m_DigitalButtons, &m_LeftThumbY, 0);
+
+        if (!m_DigitalButtons && !m_LeftThumbY)
+        {
+            wait_for_release = HandleAnalogButton(m_AnalogButton, m_AnalogValue);
+        }
+        else
+        {
+            wait_for_release = HandleDigitalButtons(m_DigitalButtons, m_LeftThumbY);
+        }
+    }
+}
+
+//-----------------------------------------------------------------------------
+// Input handling
+//-----------------------------------------------------------------------------
+
+// A, B, X, Y, Black, White and the triggers
+bool App::HandleAnalogButton(int button, int value)
+{
+    switch (button)
+    {
+    case XINPUT_GAMEPAD_A:
+        CycleLayoutScheme();
+        return true;
+
+    case XINPUT_GAMEPAD_B:
+        // No-op
+        return true;
+
+    case XINPUT_GAMEPAD_X:
+        m_EditStart = !m_EditStart;
+        return true;
+
+    case XINPUT_GAMEPAD_Y:
+        CycleLoadedTable();
+        return true;
+
+    case XINPUT_GAMEPAD_BLACK:
+        if (ConfirmOnMainScreen(L"Partition table will be erased!"))
+        {
+            if (erase_partition_tables())
+            {
+                ShowStatus(L"Partition table erased.", COLOR_GREEN, true);
+            }
+            else
+            {
+                ShowStatus(L"Partition table erasure failed!", COLOR_RED, true);
+            }
+        }
+        return false;
+
+    case XINPUT_GAMEPAD_WHITE:
+        m_StartAction = (m_StartAction + 1) % FUNCTION_COUNT;
+        return true;
+
+    case XINPUT_GAMEPAD_LEFT_TRIGGER:
+        if (m_pTable->isPartitionEnabled(m_CurrentPart))
+        {
+            ChangeSelectedPartition(value, -1, false);
+        }
+        return false;
+
+    case XINPUT_GAMEPAD_RIGHT_TRIGGER:
+        if (!m_pTable->isPartitionEnabled(m_CurrentPart))
+        {
+            m_pTable->EnablePartition(m_CurrentPart);
+        }
+        else
+        {
+            ChangeSelectedPartition(value, 1, false);
+        }
+        return false;
+
+    default:
+        return false;
+    }
+}
+
+// D-pad, thumb sticks and buttons, Start and Back
+bool App::HandleDigitalButtons(int buttons, short left_thumb_y)
+{
+    if (left_thumb_y > 28671)
+    {
+        ChangeSelectedPartition(0, 1, true);
+        return false;
+    }
+
+    if (left_thumb_y < -28672)
+    {
+        ChangeSelectedPartition(0, -1, true);
+        return false;
+    }
+
+    if ((buttons & XINPUT_GAMEPAD_LEFT_THUMB) && (buttons & XINPUT_GAMEPAD_RIGHT_THUMB))
+    {
+        // Undo all changes since the last write
+        m_pTable->LoadNewTable(m_pTableOriginal->GetPartitionTable());
+        m_CurrentPart = m_pTable->GetLastAvailablePartitionSlot();
+        return true;
+    }
+
+    if (buttons & XINPUT_GAMEPAD_RIGHT_THUMB)
+    {
+        if (m_pTable->isPartitionEnabled(m_CurrentPart))
+        {
+            m_pTable->DisablePartition(m_CurrentPart);
+            if (m_CurrentPart)
+            {
+                m_CurrentPart--;
+            }
+        }
+        else
+        {
+            m_pTable->EnablePartition(m_CurrentPart);
+        }
+        return true;
+    }
+
+    const bool enabled = m_pTable->isPartitionEnabled(m_CurrentPart);
+
+    if ((buttons & XINPUT_GAMEPAD_DPAD_RIGHT) && enabled)
+    {
+        if (m_EditStart)
+        {
+            m_pTable->PartitionMoveForward(m_CurrentPart, DPAD_STEP);
+        }
+        else
+        {
+            m_pTable->PartitionIncreaseSizeBy(m_CurrentPart, DPAD_STEP);
+        }
+        Sleep(250);
+    }
+    else if ((buttons & XINPUT_GAMEPAD_DPAD_LEFT) && enabled)
+    {
+        if (m_EditStart)
+        {
+            m_pTable->PartitionMoveBack(m_CurrentPart, DPAD_STEP);
+        }
+        else
+        {
+            m_pTable->PartitionDecreaseSizeBy(m_CurrentPart, DPAD_STEP);
+        }
+        Sleep(250);
+    }
+    else if ((buttons & XINPUT_GAMEPAD_DPAD_UP) && m_CurrentPart > 0)
+    {
+        // Leaving an empty partition disables it
+        if (!m_pTable->GetPartitionSize(m_CurrentPart))
+        {
+            m_pTable->DisablePartition(m_CurrentPart);
+        }
+        m_CurrentPart--;
+        Sleep(150);
+    }
+    else if ((buttons & XINPUT_GAMEPAD_DPAD_DOWN) && m_CurrentPart < (XboxPartitionTableEntryCount - 1))
+    {
+        if (!m_pTable->GetPartitionSize(m_CurrentPart))
+        {
+            m_pTable->DisablePartition(m_CurrentPart);
+        }
+        m_CurrentPart++;
+        Sleep(150);
+    }
+    else if (buttons & XINPUT_GAMEPAD_BACK)
+    {
+        DisplayHelp();
+    }
+    else if (buttons & XINPUT_GAMEPAD_START)
+    {
+        DoStart();
+    }
+
+    return false;
+}
+
+// A: stock -> F only -> F and G split -> stock ...
+void App::CycleLayoutScheme()
+{
+    switch (m_LayoutScheme)
+    {
+    case 0:
+        m_pTable->SetupPartitionsStock();
         break;
-    case COLOR_RED:
-        font->SetBkMode(XFONT_TRANSPARENT);
-        font->SetTextColor(D3DCOLOR_XRGB(255, 40, 40));
-        break;
-    case COLOR_GREEN:
-        font->SetBkMode(XFONT_TRANSPARENT);
-        font->SetTextColor(D3DCOLOR_XRGB(20, 255, 20));
-        break;
-    case COLOR_BLUE:
-        font->SetBkMode(XFONT_TRANSPARENT);
-        font->SetTextColor(D3DCOLOR_XRGB(100, 100, 255));
-        break;
-    case COLOR_YELLOW:
-        font->SetBkMode(XFONT_TRANSPARENT);
-        font->SetTextColor(D3DCOLOR_XRGB(224, 224, 20));
-        break;
-    case COLOR_WHITE_BG:
-        font->SetBkMode(XFONT_OPAQUE);
-        font->SetBkColor(D3DCOLOR_XRGB(40, 40, 40));
-        font->SetTextColor(D3DCOLOR_XRGB(255, 255, 255));
-        break;
-    case COLOR_RED_BG:
-        font->SetBkMode(XFONT_OPAQUE);
-        font->SetBkColor(D3DCOLOR_XRGB(40, 40, 40));
-        font->SetTextColor(D3DCOLOR_XRGB(255, 20, 20));
-        break;
-    case COLOR_GREY:
-        font->SetBkMode(XFONT_TRANSPARENT);
-        font->SetTextColor(D3DCOLOR_XRGB(140, 140, 140));
-        break;
-    case COLOR_DARK_YELLOW:
-        font->SetBkMode(XFONT_TRANSPARENT);
-        font->SetTextColor(D3DCOLOR_XRGB(160, 160, 0));
+    case 1:
+        m_pTable->SetupPartitionsFOnly();
         break;
     default:
-        font->SetBkMode(XFONT_TRANSPARENT);
-        font->SetTextColor(D3DCOLOR_XRGB(240, 240, 240));
+        m_pTable->SetupPartitionsFGSplit();
         break;
     }
 
-    font->SetTextAlignment(XFONT_TOP | just);
-    font->TextOut(pFrontBuffer, text_string, -1, (long)xpos, (long)ypos);
-    pFrontBuffer->Release();
+    m_LayoutScheme = (m_LayoutScheme + 1) % 3;
 }
 
-void App::DisplayText(LPCWSTR text_string, ULONG xpos, ULONG ypos, Color color, int just)
+// Y: kernel -> hdd -> hdd backup -> kernel ...
+// Tables that are missing/unreadable (no magic) are skipped, loading those
+// would wipe the layout. The kernel table is always valid, so this terminates.
+void App::CycleLoadedTable()
 {
-    DrawText(g_pArial18BitmapFont, text_string, xpos, ypos, color, just);
+    do
+    {
+        m_LoadedTable = (m_LoadedTable + 1) % LOADED_TABLE_COUNT;
+    } while ((m_LoadedTable == LOADED_TABLE_HDD && !XboxPartitionTableManipulator::HasMagic(m_TableHdd)) ||
+             (m_LoadedTable == LOADED_TABLE_HDD_BACKUP && !XboxPartitionTableManipulator::HasMagic(m_TableHddBackup)));
+
+    switch (m_LoadedTable)
+    {
+    case LOADED_TABLE_KERNEL:
+        m_pTable->LoadNewTable(m_pTableOriginal->GetPartitionTable());
+        break;
+    case LOADED_TABLE_HDD:
+        m_pTable->LoadNewTable(m_TableHdd);
+        break;
+    case LOADED_TABLE_HDD_BACKUP:
+        m_pTable->LoadNewTable(m_TableHddBackup);
+        break;
+    }
 }
 
-void App::DisplayTableText(LPCWSTR text_string, ULONG xpos, ULONG ypos, Color color, int just)
+// Resizes the selected partition, or moves its start when X has toggled that mode.
+// trigger_value is the analog pressure (0-255), harder presses take bigger steps.
+// fine (thumb stick) always uses the smallest step.
+void App::ChangeSelectedPartition(int trigger_value, int direction, bool fine)
 {
-    DrawText(g_pLucon18BitmapFont, text_string, xpos, ypos, color, just);
+    ULONG lba_delta;
+
+    if (fine)
+    {
+        lba_delta = FINE_STEP;
+    }
+    else if (trigger_value < 0x60)
+    {
+        lba_delta = TRIGGER_LIGHT_STEP;
+        Sleep(250);
+    }
+    else if (trigger_value > 0xf0)
+    {
+        lba_delta = TRIGGER_FULL_STEP;
+        Sleep(250);
+    }
+    else
+    {
+        // 0x60-0xf0: doubles with every 16 steps of pressure (256 sectors up to 256K sectors)
+        lba_delta = (SECTORS_PER_CLUSTER * 2) << ((trigger_value >> 4) - 4);
+    }
+
+    if (m_EditStart)
+    {
+        if (direction > 0)
+        {
+            m_pTable->PartitionMoveForward(m_CurrentPart, lba_delta);
+        }
+        else
+        {
+            m_pTable->PartitionMoveBack(m_CurrentPart, lba_delta);
+        }
+    }
+    else
+    {
+        if (direction > 0)
+        {
+            m_pTable->PartitionIncreaseSizeBy(m_CurrentPart, lba_delta);
+        }
+        else
+        {
+            m_pTable->PartitionDecreaseSizeBy(m_CurrentPart, lba_delta);
+        }
+    }
+}
+
+// Waits for a new button press. A button still held from the previous screen
+// (e.g. Start, since the main loop polls without waiting) is released first,
+// so it does not count as the answer.
+void App::WaitForButton()
+{
+    if (XInputGetStateAny(&m_AnalogButton, &m_AnalogValue, &m_DigitalButtons, &m_LeftThumbY, 0) != -1)
+    {
+        XInputGetStateAny(&m_AnalogButton, &m_AnalogValue, &m_DigitalButtons, &m_LeftThumbY);
+    }
+
+    XInputGetStateAny(&m_AnalogButton, &m_AnalogValue, &m_DigitalButtons, &m_LeftThumbY);
+}
+
+bool App::ConfirmWithY()
+{
+    WaitForButton();
+    return m_AnalogButton == ANALOG_BUTTON_Y;
+}
+
+//-----------------------------------------------------------------------------
+// Screens
+//-----------------------------------------------------------------------------
+
+// Everything on the main screen except the bottom two lines (status and prompt)
+void App::DrawMainScreen()
+{
+    wchar_t title[100];
+    swprintf(title, L"XBpartitioner 1.4 - LBA48 patch v%d", m_Lba48Version);
+    m_Ui.Text(FONT_TEXT, title, TITLE_X, TITLE_Y, COLOR_WHITE);
+
+    DrawLoadedTableName();
+    DrawTable();
+    DrawFreeSpace();
+    DrawFormatCluster();
+}
+
+void App::DrawTable()
+{
+    m_Ui.Text(FONT_TEXT, L"Standard partitions. Custom sizes here might lead to problems", TABLE_LABEL_X, STANDARD_LABEL_Y, COLOR_WHITE);
+    m_Ui.Rect(TABLE_LEFT, STANDARD_BOX_TOP, TABLE_RIGHT, STANDARD_BOX_BOTTOM, STANDARD_BOX_TOP_COLOR, STANDARD_BOX_BOTTOM_COLOR);
+
+    m_Ui.Text(FONT_TEXT, L"Extended partitions", TABLE_LABEL_X, EXTENDED_LABEL_Y, COLOR_WHITE);
+    m_Ui.Rect(TABLE_LEFT, EXTENDED_BOX_TOP, TABLE_RIGHT, EXTENDED_BOX_BOTTOM, EXTENDED_BOX_TOP_COLOR, EXTENDED_BOX_BOTTOM_COLOR);
+
+    for (int i = 0; i < XboxPartitionTableEntryCount; i++)
+    {
+        const int y = TABLE_FIRST_ROW_Y + i * TABLE_ROW_HEIGHT + (i >= STANDARD_PARTITION_COUNT ? TABLE_EXTENDED_GAP : 0);
+
+        wchar_t partno_str[3];
+        wchar_t lba_start_str[16];
+        wchar_t lba_size_str[16];
+        wchar_t cluster_str[10];
+        wchar_t size_str[20];
+        const bool draw_cluster = PreparePartitionInfoStrings(i, partno_str, size_str, cluster_str, lba_start_str, lba_size_str);
+
+        const Color text_color = m_pTable->isPartitionEnabled(i) ? COLOR_WHITE : COLOR_GREY;
+        Color start_color = text_color;
+        Color size_color = text_color;
+
+        if (m_CurrentPart == i)
+        {
+            m_Ui.Rect(TABLE_LEFT, (FLOAT)(y - SELECTION_TOP), TABLE_RIGHT, (FLOAT)(y + SELECTION_BOTTOM), SELECTION_COLOR, SELECTION_COLOR);
+
+            // Highlight the value the size controls change
+            if (m_EditStart)
+            {
+                start_color = COLOR_YELLOW;
+            }
+            else
+            {
+                size_color = COLOR_YELLOW;
+            }
+        }
+
+        m_Ui.Text(FONT_TABLE, partno_str, COLUMN_INDEX_X, y, text_color);
+        m_Ui.Text(FONT_TABLE, lba_start_str, COLUMN_START_X, y, start_color);
+        m_Ui.Text(FONT_TEXT, L":", COLUMN_SEPARATOR_X, y, text_color);
+        m_Ui.Text(FONT_TABLE, lba_size_str, COLUMN_SIZE_X, y, size_color);
+        if (draw_cluster)
+        {
+            m_Ui.Text(FONT_TABLE, cluster_str, COLUMN_CLUSTER_X, y, text_color);
+        }
+        m_Ui.Text(FONT_TABLE, size_str, COLUMN_BYTES_X, y, text_color, XFONT_RIGHT);
+    }
+}
+
+// Formats one table row. Returns true if the cluster column should be drawn.
+bool App::PreparePartitionInfoStrings(const int partition_number, wchar_t *partno_str, wchar_t *size_string, wchar_t *cluster_string, wchar_t *lba_start_str, wchar_t *lba_size_str)
+{
+    const ULONGLONG lba_start = m_pTable->GetPartitionStart(partition_number);
+    const ULONGLONG lba_size = m_pTable->GetPartitionSize(partition_number);
+
+    swprintf(partno_str, L"%d", partition_number + 1);
+    // 48 bit LBAs: 4 high + 8 low hex digits
+    swprintf(lba_start_str, L"%.04X%.08X", (ULONG)(WORD)(lba_start >> 32), (ULONG)(lba_start & LBA_LOWER_BITS));
+    swprintf(lba_size_str, L"%.04X%.08X", (ULONG)(WORD)(lba_size >> 32), (ULONG)(lba_size & LBA_LOWER_BITS));
+
+    // Extended partitions in GB, the small standard ones in MB
+    const ULONGLONG size_bytes = m_pTable->GetPartitionSizeInBytes(partition_number);
+    if (partition_number >= STANDARD_PARTITION_COUNT)
+    {
+        swprintf(size_string, L"%.2f GB", (double)size_bytes / SCALE_GIGABYTE);
+    }
+    else
+    {
+        swprintf(size_string, L"%.2f MB", (double)size_bytes / SCALE_MEGABYTE);
+    }
+
+    const unsigned int cluster_size = m_ClusterSizes[partition_number];
+
+    if (cluster_size == 0)
+    {
+        swprintf(cluster_string, L"");
+    }
+    else if (cluster_size < m_pTable->CalculateClusterSize(lba_size))
+    {
+        // Too small for the partition size, uses the same rule as the formatter
+        swprintf(cluster_string, L"ERROR");
+    }
+    else
+    {
+        swprintf(cluster_string, L"%dKB", cluster_size);
+    }
+
+    return (cluster_size != 0 && lba_size > 0);
+}
+
+void App::DrawFreeSpace()
+{
+    const uint64_t usable_lbas = m_pTable->GetUsableLBAs();
+    const uint64_t available_lbas = m_pTable->GetAvailableLBAs();
+
+    wchar_t free_gb_str[150];
+    wchar_t free_lba_str[150];
+
+    // 0x200000 sectors per GB. %I64u: this CRT does not support %llu.
+    swprintf(free_gb_str, L"Usable free space: %.0f of %.0f GB", (float)available_lbas / 0x200000, (float)usable_lbas / 0x200000);
+    swprintf(free_lba_str, L"Usable LBAs: %I64u, available LBAs %I64u", usable_lbas, available_lbas);
+    m_Ui.Text(FONT_TEXT, free_gb_str, MARGIN_X, FREE_SPACE_Y, COLOR_WHITE);
+    m_Ui.Text(FONT_TEXT, free_lba_str, MARGIN_X, FREE_SPACE_Y + LINE_HEIGHT, COLOR_WHITE);
+}
+
+void App::DrawFormatCluster()
+{
+    if (m_StartAction == FUNCTION_FORMAT_CURRENT_PARTITION)
+    {
+        wchar_t cluster_str[50];
+        swprintf(cluster_str, L"Will use %d KB clusters", m_pTable->CalculateClusterSizeForPartition(m_CurrentPart));
+        m_Ui.Text(FONT_TEXT, cluster_str, FORMAT_CLUSTER_X, FREE_SPACE_Y, COLOR_WHITE);
+    }
+}
+
+void App::DrawLoadedTableName()
+{
+    // Indexed by LoadedTable
+    static const LPCWSTR names[LOADED_TABLE_COUNT] = {
+        L"Current table [Kernel]",
+        L"Current table [HDD]",
+        L"Current table [Backup]",
+    };
+
+    if (m_LoadedTable >= 0 && m_LoadedTable < LOADED_TABLE_COUNT)
+    {
+        m_Ui.Text(FONT_TEXT, names[m_LoadedTable], LOADED_TABLE_X, TITLE_Y, COLOR_WHITE);
+    }
+}
+
+void App::DrawStartActionHint()
+{
+    // Indexed by Function
+    static const LPCWSTR hints[FUNCTION_COUNT] = {
+        L"Press Start to write partition table. Press Back for help.",
+        L"Press Start to write table and format. Press Back for help.",
+        L"Press Start to format current partition. Press Back for help.",
+    };
+
+    if (m_StartAction >= 0 && m_StartAction < FUNCTION_COUNT)
+    {
+        m_Ui.Text(FONT_TEXT, hints[m_StartAction], MARGIN_X, PROMPT_Y, COLOR_WHITE);
+    }
+}
+
+// Draws "Press Y <action>" with a yellow Y
+void App::DrawYPrompt(LPCWSTR action, int x, int y)
+{
+    m_Ui.Text(FONT_TEXT, L"Press", x, y, COLOR_LIGHT_GREY);
+    m_Ui.Text(FONT_TEXT, L"Y", x + 50, y, COLOR_YELLOW);
+    m_Ui.Text(FONT_TEXT, action, x + 68, y, COLOR_LIGHT_GREY);
+}
+
+// Full screen warning: red title, then one line of text per entry.
+// If y_prompt_action is set a "Press Y ..." line is added at the end.
+// Draws and presents, does not wait for input.
+void App::DrawWarningScreen(const LPCWSTR *lines, int line_count, LPCWSTR y_prompt_action)
+{
+    m_Ui.BeginFrame();
+    m_Ui.Text(FONT_TITLE, L"!!!!!!!! WARNING !!!!!!!!", LAYOUT_WIDTH / 2, WARNING_TITLE_Y, COLOR_WARNING, XFONT_CENTER);
+
+    int y = WARNING_TEXT_Y;
+    for (int i = 0; i < line_count; i++, y += WARNING_LINE_HEIGHT)
+    {
+        m_Ui.Text(FONT_TEXT, lines[i], MARGIN_X, y, COLOR_LIGHT_GREY);
+    }
+
+    if (y_prompt_action != NULL)
+    {
+        DrawYPrompt(y_prompt_action, MARGIN_X, y);
+    }
+
+    m_Ui.EndFrame();
+}
+
+void App::FadeIn()
+{
+    for (int alpha = 0xff; alpha > 0x06; alpha -= 0x06)
+    {
+        m_Ui.BeginFrame();
+        DrawMainScreen();
+        DrawStartActionHint();
+        m_Ui.FillScreen(D3DCOLOR_ARGB(alpha, 0, 0, 0));
+        m_Ui.EndFrame();
+    }
+}
+
+// Main screen with a message in the status line.
+// With wait_for_button, adds "Press any button" and blocks until one is pressed.
+void App::ShowStatus(LPCWSTR message, Color color, bool wait_for_button)
+{
+    m_Ui.BeginFrame();
+    DrawMainScreen();
+    m_Ui.Text(FONT_TEXT, message, MARGIN_X, STATUS_Y, color);
+    if (wait_for_button)
+    {
+        m_Ui.Text(FONT_TEXT, L"Press any button to continue.", MARGIN_X, PROMPT_Y, COLOR_WHITE);
+    }
+    m_Ui.EndFrame();
+
+    if (wait_for_button)
+    {
+        WaitForButton();
+    }
+}
+
+// Main screen with a message and a "Press Y to continue" prompt, returns true on Y
+bool App::ConfirmOnMainScreen(LPCWSTR message)
+{
+    m_Ui.BeginFrame();
+    DrawMainScreen();
+    m_Ui.Text(FONT_TEXT, message, MARGIN_X, STATUS_Y, COLOR_WHITE);
+    DrawYPrompt(L"to continue or any other button to abort.", MARGIN_X, PROMPT_Y);
+    m_Ui.EndFrame();
+
+    return ConfirmWithY();
+}
+
+struct HelpEntry
+{
+    LPCWSTR button;
+    Color color;
+    LPCWSTR description;
+};
+
+static const HelpEntry g_HelpEntries[] = {
+    {L"A", COLOR_GREEN, L"cycle through standard setup schemes"},
+    {L"B", COLOR_RED, L"does nothing"},
+    {L"X", COLOR_BLUE, L"toggle change size \\ change start sector"},
+    {L"Y", COLOR_YELLOW, L"cycle kernel \\ hdd \\ hdd backup partition tables"},
+    {L"L Trigger", COLOR_YELLOW, L"decrease partition size"},
+    {L"R Trigger", COLOR_GREEN, L"increase partition size"},
+    {L"D-Pad Left", COLOR_RED, L"decrease partition size by 1GB"},
+    {L"D-Pad Right", COLOR_BLUE, L"increase partition size by 1GB"},
+    {L"D-Pad Up/Down", COLOR_YELLOW, L"select partition"},
+    {L"L Thumb Stick", COLOR_YELLOW, L"partition size fine control"},
+    {L"R Thumb Button", COLOR_GREEN, L"enable \\ disable current partition"},
+    {L"L+R Thumb Buttons", COLOR_RED, L"undo all changes since last write"},
+    {L"Black", COLOR_BLUE, L"erase the partition table from the disk"},
+    {L"White", COLOR_YELLOW, L"select Start Button action"},
+    {L"Start", COLOR_GREEN, L"write & format changed \\ write only \\ format"},
+};
+
+void App::DisplayHelp()
+{
+    m_Ui.BeginFrame();
+
+    int y = LINE_HEIGHT;
+    wchar_t title[50];
+    swprintf(title, L"XBpartitioner Help (video mode: %s)", m_Ui.GetVideoModeName());
+    m_Ui.Text(FONT_TEXT, title, LAYOUT_WIDTH / 2, y, COLOR_WHITE, XFONT_CENTER);
+    y += 2 * LINE_HEIGHT;
+
+    for (int i = 0; i < ARRAY_COUNT(g_HelpEntries); i++, y += LINE_HEIGHT)
+    {
+        m_Ui.Text(FONT_TEXT, g_HelpEntries[i].button, HELP_BUTTON_X, y, g_HelpEntries[i].color);
+        m_Ui.Text(FONT_TEXT, g_HelpEntries[i].description, HELP_DESCRIPTION_X, y, COLOR_WHITE);
+    }
+
+    y += LINE_HEIGHT + 4;
+    m_Ui.Text(FONT_TEXT, L"Actions which write to disk require confirmation.", HELP_BUTTON_X, y, COLOR_YELLOW);
+    y += LINE_HEIGHT;
+    m_Ui.Text(FONT_TEXT, L"Press Back to exit XBpartitioner, any other button to go back.", HELP_BUTTON_X, y, COLOR_YELLOW);
+
+    m_Ui.EndFrame();
+
+    WaitForButton();
+
+    if (m_DigitalButtons & XINPUT_GAMEPAD_BACK)
+    {
+        QuitToDashboard();
+    }
 }
 
 void App::DisplayWarningBackupAvailable()
 {
-    // Create some DirectX text buffers
-    LPDIRECT3DSURFACE8 pFrontBuffer;
-
-    // InitialiseFonts
-    g_pD3DDevice->GetBackBuffer(0, D3DBACKBUFFER_TYPE_MONO, &pFrontBuffer);
-
-    // Display our text.
-    g_pD3DDevice->Clear(0, NULL, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, D3DCOLOR_XRGB(0, 0, 0), 1.0f, 0);
-    g_pArial32BitmapFont->SetTextAlignment(XFONT_CENTER | XFONT_TOP);
-    g_pArial32BitmapFont->SetTextColor(D3DCOLOR_XRGB(255, 30, 20));
-    g_pArial32BitmapFont->TextOut(pFrontBuffer, L"!!!!!!!! WARNING !!!!!!!!", -1, 320, 80);
-
-    g_pArial18BitmapFont->SetTextColor(D3DCOLOR_XRGB(240, 240, 240));
-    g_pArial18BitmapFont->SetTextAlignment(XFONT_LEFT | XFONT_TOP);
-
-    g_pArial18BitmapFont->TextOut(pFrontBuffer, L"Main partition table is missing, however backup is available", -1, 60, 200);
-    g_pArial18BitmapFont->TextOut(pFrontBuffer, L"Press Y twice to load the backup table.", -1, 60, 240);
-    g_pArial18BitmapFont->TextOut(pFrontBuffer, L"Press any key to continue...", -1, 60, 280);
-
-    g_pD3DDevice->Present(NULL, NULL, NULL, NULL);
-
-    pFrontBuffer->Release();
+    static const LPCWSTR lines[] = {
+        L"Main partition table is missing, however backup is available",
+        L"Press Y twice to load the backup table.",
+        L"Press any button to continue...",
+    };
+    DrawWarningScreen(lines, ARRAY_COUNT(lines), NULL);
+    WaitForButton();
 }
 
-void App::DisplayWarning()
+// Returns true if the user confirmed formatting with Y
+bool App::ConfirmFormatWarning()
 {
-    // Create some DirectX text buffers
-    LPDIRECT3DSURFACE8 pFrontBuffer;
-
-    // InitialiseFonts
-    g_pD3DDevice->GetBackBuffer(0, D3DBACKBUFFER_TYPE_MONO, &pFrontBuffer);
-
-    // Display our text.
-    g_pD3DDevice->Clear(0, NULL, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, D3DCOLOR_XRGB(0, 0, 0), 1.0f, 0);
-    g_pArial32BitmapFont->SetTextAlignment(XFONT_CENTER | XFONT_TOP);
-    g_pArial32BitmapFont->SetTextColor(D3DCOLOR_XRGB(255, 30, 20));
-    g_pArial32BitmapFont->TextOut(pFrontBuffer, L"!!!!!!!! WARNING !!!!!!!!", -1, 320, 80);
-
-    g_pArial18BitmapFont->SetTextColor(D3DCOLOR_XRGB(240, 240, 240));
-    g_pArial18BitmapFont->SetTextAlignment(XFONT_LEFT | XFONT_TOP);
-
-    if (g_iFunction == FUNCTION_WRITE_TABLE_FORMAT)
+    wchar_t message[50];
+    if (m_StartAction == FUNCTION_WRITE_TABLE_FORMAT)
     {
-        g_pArial18BitmapFont->TextOut(pFrontBuffer, L"Changed partitions will be formatted!", -1, 60, 200);
+        swprintf(message, L"Changed partitions will be formatted!");
     }
     else
     {
-        wchar_t format_str[50];
-        swprintf(format_str, L"Partition %d will be formatted!", g_iCurrentPart + 1);
-        g_pArial18BitmapFont->TextOut(pFrontBuffer, format_str, -1, 60, 200);
+        swprintf(message, L"Partition %d will be formatted!", m_CurrentPart + 1);
     }
 
-    g_pArial18BitmapFont->TextOut(pFrontBuffer, L"Press", -1, 60, 240);
-    g_pArial18BitmapFont->SetTextColor(D3DCOLOR_XRGB(240, 240, 0));
-    g_pArial18BitmapFont->TextOut(pFrontBuffer, L"Y", -1, 110, 240);
-    g_pArial18BitmapFont->SetTextColor(D3DCOLOR_XRGB(240, 240, 240));
-    g_pArial18BitmapFont->TextOut(pFrontBuffer, L"to continue or any other button to abort.", -1, 128, 240);
-
-    g_pD3DDevice->Present(NULL, NULL, NULL, NULL);
-
-    pFrontBuffer->Release();
+    const LPCWSTR lines[] = {message};
+    DrawWarningScreen(lines, ARRAY_COUNT(lines), L"to continue or any other button to abort.");
+    return ConfirmWithY();
 }
 
+// Returns true if the user chose to continue without lba48 info
 bool App::DisplayNoInfo()
 {
+    static const LPCWSTR lines[] = {
+        L"LBA48 info not found! Custom Partitions will not work with this BIOS!",
+        L"Update your BIOS to Cerbios.",
+    };
+    DrawWarningScreen(lines, ARRAY_COUNT(lines), L"to continue or any other button to quit.");
+    return ConfirmWithY();
+}
+
+void App::CheckTableStatus()
+{
+    // Check if we should report that main and backup dont match up.
+    // Only when both are valid: a missing main is reported by DisplayWarningBackupAvailable(),
+    // and a missing backup is normal for drives partitioned with other tools.
+    if (XboxPartitionTableManipulator::HasMagic(m_TableHdd) &&
+        XboxPartitionTableManipulator::HasMagic(m_TableHddBackup) &&
+        memcmp(&m_TableHdd, &m_TableHddBackup, sizeof(XboxPartitionTable)) != 0)
+    {
+        static const LPCWSTR lines[] = {
+            L"Main and backup partition tables dont match!",
+            L"Carefully check which one is correct before doing anything!",
+            L"Press Y to cycle kernel \\ hdd \\ hdd backup tables.",
+            L"Press any button to continue...",
+        };
+        DrawWarningScreen(lines, ARRAY_COUNT(lines), NULL);
+        WaitForButton();
+    }
+}
+
+// Fades the current screen to black and returns to the dashboard. Does not return.
+void App::QuitToDashboard()
+{
+    m_Ui.FadeOut();
+    m_Ui.Shutdown();
+
     LD_LAUNCH_DASHBOARD LaunchDashData = {XLD_LAUNCH_DASHBOARD_MAIN_MENU};
+    XLaunchNewImage(NULL, (LAUNCH_DATA *)&LaunchDashData);
+}
 
-    // Create some DirectX text buffers
-    LPDIRECT3DSURFACE8 pFrontBuffer;
+//-----------------------------------------------------------------------------
+// Actions bound to Start
+//-----------------------------------------------------------------------------
 
-    // InitialiseFonts
-    g_pD3DDevice->GetBackBuffer(0, D3DBACKBUFFER_TYPE_MONO, &pFrontBuffer);
-
-    // Display our text.
-    g_pD3DDevice->Clear(0, NULL, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, D3DCOLOR_XRGB(0, 0, 0), 1.0f, 0);
-    g_pD3DDevice->Present(NULL, NULL, NULL, NULL);
-    g_pD3DDevice->Clear(0, NULL, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, D3DCOLOR_XRGB(0, 0, 0), 1.0f, 0);
-
-    g_pArial32BitmapFont->SetTextAlignment(XFONT_CENTER | XFONT_TOP);
-    g_pArial32BitmapFont->SetTextColor(D3DCOLOR_XRGB(255, 30, 20));
-    g_pArial32BitmapFont->TextOut(pFrontBuffer, L"!!!!!!!! WARNING !!!!!!!!", -1, 320, 80);
-
-    g_pArial18BitmapFont->SetTextColor(D3DCOLOR_XRGB(240, 240, 240));
-    g_pArial18BitmapFont->SetTextAlignment(XFONT_LEFT | XFONT_TOP);
-
-    g_pArial18BitmapFont->TextOut(pFrontBuffer, L"LBA48 info not found! Custom Partitions will not work with this BIOS!", -1, 50, 200);
-    g_pArial18BitmapFont->TextOut(pFrontBuffer, L"Update your BIOS to Cerbios.", -1, 50, 240);
-    g_pArial18BitmapFont->TextOut(pFrontBuffer, L"Press", -1, 50, 280);
-    g_pArial18BitmapFont->SetTextColor(D3DCOLOR_XRGB(240, 240, 0));
-    g_pArial18BitmapFont->TextOut(pFrontBuffer, L"Y", -1, 100, 280);
-    g_pArial18BitmapFont->SetTextColor(D3DCOLOR_XRGB(240, 240, 240));
-    g_pArial18BitmapFont->TextOut(pFrontBuffer, L"to continue or any other button to abort.", -1, 118, 280);
-
-    // Release our TextBuffers
-    pFrontBuffer->Release();
-
-    g_pD3DDevice->Present(NULL, NULL, NULL, NULL);
-
-    if (-1 != XInputGetStateAny(&aButton, &aButtonVal, &tButton, &aLThumbY, 0))
+void App::DoFormatAll()
+{
+    if (!ConfirmFormatWarning())
     {
-        XInputGetStateAny(&aButton, &aButtonVal, &tButton, &aLThumbY);
+        return;
     }
 
-    XInputGetStateAny(&aButton, &aButtonVal, &tButton, &aLThumbY);
+    XboxPartitionTable table = m_pTable->GetPartitionTable();
 
-    if (aButton == 3)
+    // write_partition_tables() reloads both manipulators from the new table,
+    // so keep a copy of the old one to find out which partitions changed
+    const XboxPartitionTableManipulator original(m_pTableOriginal->GetPartitionTable(), m_TotalHddSectors, m_FullLba48);
+
+    if (!write_partition_tables(table))
     {
-        return 1;
+        ShowStatus(L"Partition table write failed!", COLOR_RED, true);
+        return;
     }
 
-    return 0;
+    ShowStatus(L"Partition table written...", COLOR_GREEN, false);
+    Sleep(500);
+
+    // Format modified partitions
+    for (int i = 0; i < XboxPartitionTableEntryCount; i++)
+    {
+        // Check if partition actually changed
+        if (m_pTable->isPartitionEnabled(i) &&
+            (original.GetPartitionSize(i) != m_pTable->GetPartitionSize(i) ||
+             original.GetPartitionStart(i) != m_pTable->GetPartitionStart(i)))
+        {
+            wchar_t format_str[50];
+            swprintf(format_str, L"Formatting partition %d with %dk clusters...", i + 1, m_pTable->CalculateClusterSizeForPartition(i));
+            ShowStatus(format_str, COLOR_GREEN, false);
+            format_partition(i);
+        }
+    }
+
+    // Update the original table since we saved a new copy
+    m_pTableOriginal->LoadNewTable(table);
+}
+
+void App::DoWriteTable()
+{
+    if (!ConfirmOnMainScreen(L"Partition table will be written to hard drive!"))
+    {
+        return;
+    }
+
+    if (write_partition_tables(m_pTable->GetPartitionTable()))
+    {
+        ShowStatus(L"Partition table written...", COLOR_GREEN, true);
+    }
+    else
+    {
+        ShowStatus(L"Partition table write failed!", COLOR_RED, true);
+    }
+}
+
+void App::DoFormatOne()
+{
+    if (!ConfirmFormatWarning())
+    {
+        return;
+    }
+
+    // Update kernel partition table if changed, else we might format a partition with wrong start/size
+    if (CheckIfPartitionTableChanged() && m_pKernelTable)
+    {
+        XboxPartitionTable table = m_pTable->GetPartitionTable();
+        memcpy(m_pKernelTable, &table, sizeof(XboxPartitionTable));
+        RefreshClusterSizes();
+    }
+
+    wchar_t format_str[50];
+    swprintf(format_str, L"Formatting partition %d with %dk clusters...", m_CurrentPart + 1, m_pTable->CalculateClusterSizeForPartition(m_CurrentPart));
+    ShowStatus(format_str, COLOR_GREEN, false);
+
+    format_partition(m_CurrentPart);
+}
+
+void App::DoStart()
+{
+    switch (m_StartAction)
+    {
+    case FUNCTION_WRITE_TABLE:
+        DoWriteTable();
+        break;
+    case FUNCTION_WRITE_TABLE_FORMAT:
+        DoFormatAll();
+        break;
+    case FUNCTION_FORMAT_CURRENT_PARTITION:
+        if (m_pTable->isPartitionEnabled(m_CurrentPart))
+        {
+            DoFormatOne();
+        }
+        break;
+    default:
+        break;
+    }
 }
 
 bool App::format_partition(const int i)
 {
-    const int cluster_size = tableManipulator->CalculateClusterSizeForPartition(i);
+    const int cluster_size = m_pTable->CalculateClusterSizeForPartition(i);
     const ULONG cluster_size_bytes = cluster_size << 10;
 
-    BOOL status = XapiFormatFATVolumeEx(&partition_str[i], cluster_size_bytes);
-
-    wchar_t format_str[50];
-
     // XapiFormatFATVolumeEx returns a BOOL (TRUE on success), not an NTSTATUS
-    if (!status)
+    const bool formatted = XapiFormatFATVolumeEx(&m_PartitionPaths[i], cluster_size_bytes) != FALSE;
+    const bool fixed_up = formatted && largePartitionFixup(&m_PartitionPaths[i], m_pTable->getPartitionEntry(i), cluster_size_bytes);
+
+    // The FATX header changed (or may be half written), re-read what is on disk
+    m_ClusterSizes[i] = get_cluster_size_from_partition(m_PartitionPaths[i]);
+
+    if (!formatted)
     {
-        swprintf(format_str, L"Failed to format partition...");
-        g_pD3DDevice->Clear(0, NULL, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, D3DCOLOR_XRGB(0, 0, 0), 1.0f, 0);
-        DisplayText(format_str, 60, 428, COLOR_RED);
-        DisplayText(L"Press any button to continue.", 60, 448, COLOR_WHITE);
-        g_pD3DDevice->Present(NULL, NULL, NULL, NULL);
-        XInputGetStateAny(&aButton, &aButtonVal, &tButton, &aLThumbY);
+        ShowStatus(L"Failed to format partition...", COLOR_RED, true);
         return false;
     }
 
-    bool res = largePartitionFixup(&partition_str[i], tableManipulator->getPartitionEntry(i), cluster_size_bytes);
-
-    if (!res)
+    if (!fixed_up)
     {
-        swprintf(format_str, L"Failed to fix up big partition...");
-        g_pD3DDevice->Clear(0, NULL, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, D3DCOLOR_XRGB(0, 0, 0), 1.0f, 0);
-        DisplayText(format_str, 60, 428, COLOR_RED);
-        DisplayText(L"Press any button to continue.", 60, 448, COLOR_WHITE);
-        g_pD3DDevice->Present(NULL, NULL, NULL, NULL);
-        XInputGetStateAny(&aButton, &aButtonVal, &tButton, &aLThumbY);
+        ShowStatus(L"Failed to fix up big partition...", COLOR_RED, true);
         return false;
     }
 
     return true;
 }
+
+//-----------------------------------------------------------------------------
+// Controller polling
+//-----------------------------------------------------------------------------
+
+// Reads the first controller with something pressed.
+// wait: 0 = poll once, 1 = wait for a press, 2 = wait for a press and its release.
+// Returns the controller index, or -1 if nothing was pressed (wait = 0).
+int App::XInputGetStateAny(int *analog, int *analog_val, int *buttons, short *l_thumb_y_val, int wait)
+{
+    XINPUT_STATE ControllerState[4];
+    int i, j, c = -1;
+    *analog = -1;
+    *buttons = 0;
+    *l_thumb_y_val = 0;
+
+    do
+    {
+        for (i = 0; i < 4; i++)
+        {
+            if (m_Controllers[i])
+            {
+                XInputGetState(m_Controllers[i], &ControllerState[i]);
+                *buttons = ControllerState[i].Gamepad.wButtons;
+
+                if (*buttons)
+                {
+                    c = i;
+                    break;
+                }
+
+                if (!wait && (ControllerState[i].Gamepad.sThumbLY < -28672 || ControllerState[i].Gamepad.sThumbLY > 28671))
+                {
+                    *l_thumb_y_val = ControllerState[i].Gamepad.sThumbLY;
+                    c = i;
+                    break;
+                }
+
+                for (j = 0; j < 8; j++)
+                {
+                    if (ControllerState[i].Gamepad.bAnalogButtons[j])
+                    {
+                        *analog_val = ControllerState[i].Gamepad.bAnalogButtons[j];
+                        *analog = j;
+                        c = i;
+                        break;
+                    }
+                }
+
+                // Stop at the first controller with something pressed, the next
+                // controller would overwrite *buttons
+                if (c != -1)
+                {
+                    break;
+                }
+            }
+        }
+        if (!wait)
+        {
+            return c;
+        }
+    } while (c == -1);
+
+    for (; wait == 2;)
+    {
+        XInputGetState(m_Controllers[c], &ControllerState[c]);
+
+        // *analog is -1 when a digital button was pressed
+        if (!ControllerState[c].Gamepad.wButtons && (*analog < 0 || !ControllerState[c].Gamepad.bAnalogButtons[*analog]))
+        {
+            break;
+        }
+    }
+
+    return c;
+}
+
+//-----------------------------------------------------------------------------
+// Disk and kernel partition table access
+//-----------------------------------------------------------------------------
 
 ULONGLONG App::get_hdd_size()
 {
@@ -328,7 +1051,8 @@ ULONGLONG App::get_hdd_size()
 
     if (stat != STATUS_SUCCESS)
     {
-        return stat;
+        // 0 means unknown size; returning the NTSTATUS would be read as a sector count
+        return 0;
     }
 
     unsigned int geom_ioctl_cmd_in_buf[100];
@@ -402,15 +1126,15 @@ bool App::read_lba48_info(XboxPartitionTable *p_table)
     unsigned int partition_table_addr = lba48_ioctl_cmd_out_buf[LBA48_GET_INFO_LOWCODE_BASE_IDX];
     partition_table_addr += lba48_ioctl_cmd_out_buf[LBA48_GET_INFO_PART_TABLE_OFS_IDX];
 
-    g_lba48_version = lba48_ioctl_cmd_out_buf[LBA48_GET_INFO_PATCHCODE_VERSION_IDX];
-    g_full_lba48 = (g_lba48_version > 3);
+    m_Lba48Version = lba48_ioctl_cmd_out_buf[LBA48_GET_INFO_PATCHCODE_VERSION_IDX];
+    m_FullLba48 = (m_Lba48Version > 3);
 
-    if (g_lba48_version == 2)
+    if (m_Lba48Version == 2)
     {
         partition_table_addr += 0x200;
     }
 
-    KernelPartTblAdd = (XboxPartitionTable *)partition_table_addr;
+    m_pKernelTable = (XboxPartitionTable *)partition_table_addr;
 
     // Read partition table from ram?
     memcpy(p_table, (void *)partition_table_addr, sizeof(XboxPartitionTable));
@@ -420,29 +1144,29 @@ bool App::read_lba48_info(XboxPartitionTable *p_table)
 
 bool App::reload_lba48()
 {
-    if (tableManipulator != NULL)
+    if (m_pTable != NULL)
     {
-        delete (tableManipulator);
-        tableManipulator = NULL;
+        delete (m_pTable);
+        m_pTable = NULL;
     }
 
-    if (tableManipulatorOriginal != NULL)
+    if (m_pTableOriginal != NULL)
     {
-        delete (tableManipulatorOriginal);
-        tableManipulatorOriginal = NULL;
+        delete (m_pTableOriginal);
+        m_pTableOriginal = NULL;
     }
 
     // Read kernel patch info + kernel reported partition table
-    if (read_lba48_info(&tableKernel))
+    if (read_lba48_info(&m_TableKernel))
     {
-        tableManipulator = new XboxPartitionTableManipulator(tableKernel, g_TotalHDDSectors, g_full_lba48);
-        tableManipulatorOriginal = new XboxPartitionTableManipulator(tableKernel, g_TotalHDDSectors, g_full_lba48);
+        m_pTable = new XboxPartitionTableManipulator(m_TableKernel, m_TotalHddSectors, m_FullLba48);
+        m_pTableOriginal = new XboxPartitionTableManipulator(m_TableKernel, m_TotalHddSectors, m_FullLba48);
         return true;
     }
     else
     {
-        tableManipulator = new XboxPartitionTableManipulator(g_TotalHDDSectors, g_full_lba48);
-        tableManipulatorOriginal = new XboxPartitionTableManipulator(g_TotalHDDSectors, g_full_lba48);
+        m_pTable = new XboxPartitionTableManipulator(m_TotalHddSectors, m_FullLba48);
+        m_pTableOriginal = new XboxPartitionTableManipulator(m_TotalHddSectors, m_FullLba48);
         return false;
     }
 }
@@ -477,79 +1201,26 @@ unsigned int App::get_cluster_size_from_partition(ANSI_STRING part)
     return fsb.ClusterSize / 2;
 }
 
-int App::XInputGetStateAny(int *analog, int *analog_val, int *buttons, short *l_thumb_y_val, int wait)
+void App::RefreshClusterSizes()
 {
-    XINPUT_STATE ControllerState[4];
-    int i, j, c = -1;
-    *analog = -1;
-    *buttons = 0;
-    *l_thumb_y_val = 0;
-
-    do
+    for (int i = 0; i < XboxPartitionTableEntryCount; i++)
     {
-        for (i = 0; i < 4; i++)
-        {
-            if (g_Controller[i])
-            {
-                XInputGetState(g_Controller[i], &ControllerState[i]);
-                *buttons = ControllerState[i].Gamepad.wButtons;
-
-                if (*buttons)
-                {
-                    c = i;
-                    break;
-                }
-
-                if (!wait && (ControllerState[i].Gamepad.sThumbLY < -28672 || ControllerState[i].Gamepad.sThumbLY > 28671))
-                {
-                    *l_thumb_y_val = ControllerState[i].Gamepad.sThumbLY;
-                    c = i;
-                    break;
-                }
-
-                for (j = 0; j < 8; j++)
-                {
-                    if (ControllerState[i].Gamepad.bAnalogButtons[j])
-                    {
-                        *analog_val = ControllerState[i].Gamepad.bAnalogButtons[j];
-                        *analog = j;
-                        c = i;
-                        break;
-                    }
-                }
-            }
-        }
-        if (!wait)
-        {
-            return c;
-        }
-    } while (c == -1);
-
-    for (; wait == 2;)
-    {
-        XInputGetState(g_Controller[c], &ControllerState[c]);
-
-        if (!ControllerState[c].Gamepad.wButtons && !ControllerState[c].Gamepad.bAnalogButtons[*analog])
-        {
-            break;
-        }
+        m_ClusterSizes[i] = get_cluster_size_from_partition(m_PartitionPaths[i]);
     }
-
-    return c;
 }
 
 bool App::CheckIfPartitionTableChanged()
 {
     for (int i = 0; i < XboxPartitionTableEntryCount; i++)
     {
-        ULONGLONG new_partition_start = tableManipulator->GetPartitionStart(i);
-        ULONGLONG new_partition_size = tableManipulator->GetPartitionSize(i);
+        ULONGLONG new_partition_start = m_pTable->GetPartitionStart(i);
+        ULONGLONG new_partition_size = m_pTable->GetPartitionSize(i);
 
-        ULONGLONG existing_partition_start = tableManipulatorOriginal->GetPartitionStart(i);
-        ULONGLONG existing_partition_size = tableManipulatorOriginal->GetPartitionSize(i);
+        ULONGLONG existing_partition_start = m_pTableOriginal->GetPartitionStart(i);
+        ULONGLONG existing_partition_size = m_pTableOriginal->GetPartitionSize(i);
 
         // Check if partition actually changed
-        if (tableManipulator->isPartitionEnabled(i) && (existing_partition_size != new_partition_size || existing_partition_start != new_partition_start))
+        if (m_pTable->isPartitionEnabled(i) && (existing_partition_size != new_partition_size || existing_partition_start != new_partition_start))
         {
             return true;
         }
@@ -559,13 +1230,27 @@ bool App::CheckIfPartitionTableChanged()
 
 LARGE_INTEGER App::get_backup_partition_offset_bytes()
 {
+    // Last sector the kernel can address. Pre v4 lba48 patches are limited to 32 bit LBAs,
+    // same cap XboxPartitionTableManipulator::SetupMaxSize() uses for partitions.
+    ULONGLONG total_sectors = m_TotalHddSectors;
+    if (!m_FullLba48 && total_sectors > (ULONGLONG)MAX_HDD_SIZE_LBA48_V3)
+    {
+        total_sectors = MAX_HDD_SIZE_LBA48_V3;
+    }
+
     LARGE_INTEGER byte_pos;
-    byte_pos.QuadPart = (ULONGLONG)(g_TotalHDDSectors - RESERVED_SPACE_END_LBA) * (ULONGLONG)HDD_SECTOR_SIZE;
+    byte_pos.QuadPart = (ULONGLONG)(total_sectors - RESERVED_SPACE_END_LBA) * (ULONGLONG)HDD_SECTOR_SIZE;
     return byte_pos;
 }
 
 bool App::write_partition_tables(const XboxPartitionTable table)
 {
+    // Without a known disk size the backup offset would underflow
+    if (m_TotalHddSectors <= RESERVED_SPACE_END_LBA)
+    {
+        return false;
+    }
+
     LARGE_INTEGER RWOffset;
     RWOffset.QuadPart = 0;
     LARGE_INTEGER RWOffset_backup = get_backup_partition_offset_bytes();
@@ -573,7 +1258,7 @@ bool App::write_partition_tables(const XboxPartitionTable table)
     BYTE PartSector[HDD_SECTOR_SIZE]; // XboxPartitionTable should be the same size as HDD_SECTOR_SIZE
     memcpy(PartSector, &table, HDD_SECTOR_SIZE);
 
-    HANDLE hDisk;
+    HANDLE hDisk = NULL;
     OBJECT_ATTRIBUTES ObjectAttributes;
     ANSI_STRING a_path;
     RtlInitAnsiString(&a_path, "\\Device\\Harddisk0\\Partition0");
@@ -581,35 +1266,46 @@ bool App::write_partition_tables(const XboxPartitionTable table)
     IO_STATUS_BLOCK IoStatusBlock;
     NTSTATUS status = NtOpenFile(&hDisk, SYNCHRONIZE | GENERIC_ALL, &ObjectAttributes, &IoStatusBlock, 0, FILE_SYNCHRONOUS_IO_ALERT);
 
-    if (status == 0)
-    {
-        // Write main table
-        status = NtWriteFile(hDisk, NULL, NULL, NULL, &IoStatusBlock, (PVOID)PartSector, HDD_SECTOR_SIZE, &RWOffset);
-    }
-
+    // Backup first: if it fails nothing has been touched yet. If the main write then
+    // fails, the mismatch check on the next boot will point it out.
     if (status == 0)
     {
         // Write backup table
         status = NtWriteFile(hDisk, NULL, NULL, NULL, &IoStatusBlock, (PVOID)PartSector, HDD_SECTOR_SIZE, &RWOffset_backup);
     }
 
+    if (status == 0)
+    {
+        // Write main table
+        status = NtWriteFile(hDisk, NULL, NULL, NULL, &IoStatusBlock, (PVOID)PartSector, HDD_SECTOR_SIZE, &RWOffset);
+    }
+
     // This shouldn't really be here, but both the kernel and the internal XBpartitioner logic need to know about the new partition table
-    if (status == 0 && KernelPartTblAdd)
+    if (status == 0 && m_pKernelTable)
     {
         // p_table_add
-        memcpy(KernelPartTblAdd, &table, sizeof(XboxPartitionTable));
-        memcpy(&tableKernel, &table, sizeof(XboxPartitionTable));
-        if (tableManipulator)
+        memcpy(m_pKernelTable, &table, sizeof(XboxPartitionTable));
+        memcpy(&m_TableKernel, &table, sizeof(XboxPartitionTable));
+        if (m_pTable)
         {
-            tableManipulator->LoadNewTable(table);
+            m_pTable->LoadNewTable(table);
         }
     }
 
-    NtClose(hDisk);
+    if (hDisk != NULL)
+    {
+        NtClose(hDisk);
+    }
 
     if (status == 0)
     {
-        return reload_lba48();
+        // Refresh the cached on-disk copies, otherwise cycling with Y loads stale tables
+        m_TableHdd = read_hdd_main_partition_table();
+        m_TableHddBackup = read_hdd_backup_partition_table();
+        const bool reloaded = reload_lba48();
+        // Partitions may now point at different sectors
+        RefreshClusterSizes();
+        return reloaded;
     }
 
     return false;
@@ -617,16 +1313,18 @@ bool App::write_partition_tables(const XboxPartitionTable table)
 
 bool App::erase_partition_tables()
 {
-    tableManipulator->SetupPartitionsStock();
-    return write_partition_tables(tableManipulator->GetPartitionTable());
+    m_pTable->SetupPartitionsStock();
+    return write_partition_tables(m_pTable->GetPartitionTable());
 }
 
 XboxPartitionTable App::read_hdd_partition_table(LARGE_INTEGER offset)
 {
+    // Zeroed so a failed read gives a table without magic instead of stack garbage
     XboxPartitionTable table;
+    memset(&table, 0, sizeof(table));
     LARGE_INTEGER RWOffset = offset;
 
-    HANDLE hDisk;
+    HANDLE hDisk = NULL;
     NTSTATUS status;
     ANSI_STRING a_path;
     OBJECT_ATTRIBUTES ObjectAttributes;
@@ -646,15 +1344,19 @@ XboxPartitionTable App::read_hdd_partition_table(LARGE_INTEGER offset)
     {
         memcpy(&table, PartSector, HDD_SECTOR_SIZE);
     }
-    NtClose(hDisk);
+    if (hDisk != NULL)
+    {
+        NtClose(hDisk);
+    }
     return table;
 }
 
 XboxPartitionTable App::read_hdd_main_partition_table()
 {
     XboxPartitionTable table;
+    memset(&table, 0, sizeof(table));
 
-    if (g_TotalHDDSectors > 0)
+    if (m_TotalHddSectors > 0)
     {
         LARGE_INTEGER offset;
         offset.QuadPart = 0;
@@ -667,851 +1369,14 @@ XboxPartitionTable App::read_hdd_main_partition_table()
 XboxPartitionTable App::read_hdd_backup_partition_table()
 {
     XboxPartitionTable table;
+    memset(&table, 0, sizeof(table));
 
-    if (g_TotalHDDSectors > 0)
+    if (m_TotalHddSectors > 0)
     {
         table = read_hdd_partition_table(get_backup_partition_offset_bytes());
     }
 
     return table;
-}
-
-void App::DisplayHelp()
-{
-    // Create some DirectX text buffers
-    LPDIRECT3DSURFACE8 m_pFrontBuffer, m_pBackBuffer;
-    g_pD3DDevice->GetBackBuffer(-1, D3DBACKBUFFER_TYPE_MONO, &m_pFrontBuffer);
-    g_pD3DDevice->GetBackBuffer(0, D3DBACKBUFFER_TYPE_MONO, &m_pBackBuffer);
-
-    LD_LAUNCH_DASHBOARD LaunchDashData = {XLD_LAUNCH_DASHBOARD_MAIN_MENU};
-
-    g_pD3DDevice->Clear(0, NULL, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, D3DCOLOR_XRGB(0, 0, 0), 1.0f, 0);
-
-    int ypos = 1;
-
-    DisplayText(L"XBpartitioner Help", 319, 20 * ypos++, COLOR_WHITE, XFONT_CENTER);
-    ypos++;
-    DisplayText(L"A...................................", 50, 20 * ypos, COLOR_GREEN);
-    DisplayText(L"cycle through standard setup schemes", 240, 20 * ypos++, COLOR_WHITE);
-    DisplayText(L"B...................................", 50, 20 * ypos, COLOR_RED);
-    DisplayText(L"does nothing", 240, 20 * ypos++, COLOR_WHITE);
-    DisplayText(L"X...................................", 50, 20 * ypos, COLOR_BLUE);
-    DisplayText(L"toggle change size \\ change start sector", 240, 20 * ypos++, COLOR_WHITE);
-    DisplayText(L"Y...................................", 50, 20 * ypos, COLOR_YELLOW);
-    DisplayText(L"cycle kernel\\hdd\\hdd backup partition tables", 240, 20 * ypos++, COLOR_WHITE);
-    DisplayText(L"L Trigger.......................", 50, 20 * ypos, COLOR_YELLOW);
-    DisplayText(L"decrease partition size", 240, 20 * ypos++, COLOR_WHITE);
-    DisplayText(L"R Trigger.......................", 50, 20 * ypos, COLOR_GREEN);
-    DisplayText(L"increase partition size", 240, 20 * ypos++, COLOR_WHITE);
-    DisplayText(L"D-Pad-Left....................", 50, 20 * ypos, COLOR_RED);
-    DisplayText(L"increase partition size by 1GB", 240, 20 * ypos++, COLOR_WHITE);
-    DisplayText(L"D-Pad-Right..................", 50, 20 * ypos, COLOR_BLUE);
-    DisplayText(L"decrease partition size by 1GB", 240, 20 * ypos++, COLOR_WHITE);
-    DisplayText(L"L Thumb Stick...............", 50, 20 * ypos, COLOR_YELLOW);
-    DisplayText(L"partition size fine control", 240, 20 * ypos++, COLOR_WHITE);
-    DisplayText(L"R Thumb Button............", 50, 20 * ypos, COLOR_GREEN);
-    DisplayText(L"enable \\ disable current partition", 240, 20 * ypos++, COLOR_WHITE);
-    DisplayText(L"L+R Thumb Buttons......", 50, 20 * ypos, COLOR_RED);
-    DisplayText(L"undo all changes since last write", 240, 20 * ypos++, COLOR_WHITE);
-    DisplayText(L"Black.............................", 50, 20 * ypos, COLOR_BLUE);
-    DisplayText(L"erase the partition table from the disk", 240, 20 * ypos++, COLOR_WHITE);
-    DisplayText(L"White.............................", 50, 20 * ypos, COLOR_YELLOW);
-    DisplayText(L"select Start Button action", 240, 20 * ypos++, COLOR_WHITE);
-    DisplayText(L"Start..............................", 50, 20 * ypos, COLOR_GREEN);
-    DisplayText(L"write & format changed \\ write only \\ format", 240, 20 * ypos++, COLOR_WHITE);
-    ypos++;
-    DisplayText(L"Actions which write to disk require confirmation.", 50, 4 + 20 * ypos++, COLOR_YELLOW);
-    DisplayText(L"Press Back to exit XBpartitioner, any other button to go back.", 50, 4 + 20 * ypos++, COLOR_YELLOW);
-
-    g_pD3DDevice->Present(NULL, NULL, NULL, NULL);
-
-    XInputGetStateAny(&aButton, &aButtonVal, &tButton, &aLThumbY);
-    XInputGetStateAny(&aButton, &aButtonVal, &tButton, &aLThumbY);
-
-    if (tButton & XINPUT_GAMEPAD_BACK)
-    {
-        for (ULONG rect_color = 0x00000000; rect_color != 0xfe000000; rect_color += 0x02000000)
-        {
-            g_pD3DDevice->CopyRects(m_pFrontBuffer, 0, 0, m_pBackBuffer, 0);
-            DrawRect(0, 0, 639, 479, rect_color, rect_color);
-            g_pD3DDevice->Present(NULL, NULL, NULL, NULL);
-        }
-
-        DisplayText(L"Quitting...", 50, 20 * ypos++, COLOR_GREEN);
-        CleanUpD3D();
-        XLaunchNewImage(NULL, (LAUNCH_DATA *)&LaunchDashData);
-    }
-}
-
-bool App::PreparePartitionInfoStrings(const int partition_number, wchar_t * partno_str, wchar_t * size_string, wchar_t * cluster_string, wchar_t * lba_start_str, wchar_t * lba_end_str)
-{
-    const ULONGLONG lba_start = tableManipulator->GetPartitionStart(partition_number);
-    const ULONGLONG lba_size = tableManipulator->GetPartitionSize(partition_number);
-
-    const ULONG start_low = (ULONG)(lba_start & LBA_LOWER_BITS);
-    const ULONG start_high = (WORD)(lba_start >> 32);
-    const ULONG size_low = (ULONG)(lba_size & LBA_LOWER_BITS);
-    const ULONG size_high = (WORD)(lba_size >> 32);
-
-    swprintf(partno_str, L"%d", partition_number + 1);
-    swprintf(lba_start_str, L"%.04X%.08X", start_high, start_low);
-    swprintf(lba_end_str, L"%.04X%.08X", size_high, size_low);
-
-    // Use gigabytes for extended partitions
-    if (partition_number > 4)
-    {
-        swprintf(size_string, L"%.2f GB", (double)((ULONGLONG)tableManipulator->GetPartitionSizeInBytes(partition_number) / SCALE_GIGABYTE));
-    }
-    else
-    {
-        swprintf(size_string, L"%.2f MB", (double)((ULONGLONG)tableManipulator->GetPartitionSizeInBytes(partition_number) / SCALE_MEGABYTE));
-    }
-
-    const int cluster_size = get_cluster_size_from_partition(partition_str[partition_number]);
-
-    if (cluster_size > 0)
-    {
-        // Use the same rule the formatter uses, so boundaries match exactly
-        if ((unsigned int)cluster_size < tableManipulator->CalculateClusterSize(lba_size))
-        {
-            swprintf(cluster_string, L"ERROR");
-        }
-        else
-        {
-            swprintf(cluster_string, L"%dKB", cluster_size);
-        }
-    }
-    else
-    {
-        swprintf(cluster_string, L"");
-    }
-
-    return (cluster_size != 0 && lba_size > 0);
-}
-
-// Draws main screen showing the partition table
-void App::DrawTable()
-{
-    int offset = 3;
-    int ypos = 4;
-
-    const float table_start_x = 37;
-    const float table_end_x = 603;
-
-    DisplayText(L"Standard partitions. Custom sizes here might lead to problems", 40, 56, COLOR_WHITE);
-    DrawRect(table_start_x, 80, table_end_x, 183.0, D3DCOLOR_XRGB(0, 55, 55), D3DCOLOR_XRGB(0, 130, 168));
-
-    DisplayText(L"Extended partitions", 40, 188, COLOR_WHITE);
-    DrawRect(table_start_x, 210, table_end_x, 392, D3DCOLOR_XRGB(155, 0, 168), D3DCOLOR_XRGB(51, 0, 55));
-
-    for (int i = 0; i < XboxPartitionTableEntryCount; i++)
-    {
-        // Push extended partitions position
-        if (i == 5)
-        {
-            offset += 30;
-        }
-
-        wchar_t partition_size_display_buffer[20];
-        wchar_t cluster_size_display_buffer[10];
-        wchar_t partno_str[3];
-        wchar_t lba_start_str[16];
-        wchar_t lba_end_str[16];
-        bool draw_cluster = PreparePartitionInfoStrings(i, &partno_str[0], &partition_size_display_buffer[0], &cluster_size_display_buffer[0], &lba_start_str[0], &lba_end_str[0]);
-
-        const int y_pos = 20 * ypos + offset;
-
-        Color text_color = tableManipulator->isPartitionEnabled(i) ? COLOR_WHITE : COLOR_GREY;
-        Color text_color_start = text_color;
-        Color text_color_size = text_color;
-
-        if (g_iCurrentPart == i)
-        {
-            // Selection rectangle
-            DrawRect(table_start_x, (float)(y_pos - 3), table_end_x, (float)(y_pos + 20), D3DCOLOR_XRGB(51, 0, 55), D3DCOLOR_XRGB(51, 0, 55));
-
-            // Highlights the current value being edited
-            if (g_start_size_selector)
-            {
-                text_color_start = COLOR_YELLOW;
-            }
-            else
-            {
-                text_color_size = COLOR_YELLOW;
-            }
-        }
-
-        // Index
-        DisplayTableText(partno_str, 50, y_pos, text_color);
-        // LBA Start
-        DisplayTableText(lba_start_str, 84, y_pos, text_color_start);
-        // Separator
-        DisplayText(L":", 230, y_pos, text_color);
-        // LBA Size
-        DisplayTableText(lba_end_str, 238, y_pos, text_color_size);
-        // Cluster
-        if (draw_cluster)
-        {
-            DisplayTableText(cluster_size_display_buffer, 400, y_pos, text_color);
-        }
-        // Size in MB/GB
-        DisplayTableText(partition_size_display_buffer, 592, y_pos, text_color, XFONT_RIGHT);
-
-        ypos++;
-    }
-}
-
-void App::DrawAvailableTables()
-{
-    // TODO
-}
-
-void App::DrawInfo()
-{
-    switch (g_iFunction)
-    {
-    case FUNCTION_WRITE_TABLE:
-        DisplayText(L"Press Start to write partition table. Press Back for help.", 60, 448, COLOR_WHITE);
-        break;
-    case FUNCTION_WRITE_TABLE_FORMAT:
-        DisplayText(L"Press Start write table and format. Press Back for help.", 60, 448, COLOR_WHITE);
-        break;
-    case FUNCTION_FORMAT_CURRENT_PARTITION:
-        DisplayText(L"Press Start to format current partition. Press Back for help.", 60, 448, COLOR_WHITE);
-        break;
-    default:
-        DisplayText(L"Noop. Press Back for help.", 60, 448, COLOR_WHITE);
-        break;
-    }
-}
-
-void App::DrawScreen(int g_iCurrentPart)
-{
-    g_pD3DDevice->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
-    g_pD3DDevice->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
-    g_pD3DDevice->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
-
-    g_pD3DDevice->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_SELECTARG1);
-    g_pD3DDevice->SetTextureStageState(0, D3DTSS_ALPHAARG1, D3DTA_TEXTURE);
-    g_pD3DDevice->SetTextureStageState(0, D3DTSS_ALPHAARG2, D3DTA_TFACTOR);
-    g_pD3DDevice->SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_MODULATE);
-    g_pD3DDevice->SetRenderState(D3DRS_TEXTUREFACTOR, D3DCOLOR_ARGB(255, 255, 255, 255));
-
-    // Title
-    wchar_t header[100];
-    swprintf(header, L"XBpartitioner 1.4 - LBA48 patch v%d", g_lba48_version);
-    DisplayText(header, 52, 20, COLOR_WHITE, XFONT_LEFT);
-
-    DrawTable();
-    DrawAvailableTables();
-}
-
-void App::DrawFreeSpace()
-{
-    uint64_t usable_lbas = tableManipulator->GetUsableLBAs();
-    uint64_t available_lbas = tableManipulator->GetAvailableLBAs();
-
-    wchar_t freespace_str1[150];
-    wchar_t freespace_str2[150];
-
-    swprintf(freespace_str1, L"Usable free space: %.0f of %.0f GB", (float)available_lbas / 0x200000, (float)usable_lbas / 0x200000);
-    swprintf(freespace_str2, L"Usable LBAs: %llu, available LBAs %llu", usable_lbas, available_lbas);
-    DisplayText(freespace_str1, 60, 394, COLOR_WHITE);
-    DisplayText(freespace_str2, 60, 414, COLOR_WHITE);
-}
-
-void App::DrawFormatCluster()
-{
-    if (g_iFunction == FUNCTION_FORMAT_CURRENT_PARTITION)
-    {
-        int cluster_size = tableManipulator->CalculateClusterSizeForPartition(g_iCurrentPart);
-        wchar_t cluster_str[50];
-        swprintf(cluster_str, L"Will use %d KB clusters", cluster_size);
-        DisplayText(cluster_str, 380, 394, COLOR_WHITE);
-    }
-}
-
-void App::CheckTableStatus()
-{
-    // Check if we should report that main and backup dont match up
-    if (memcmp(&tableHDD, &tableHDDBackup, sizeof(XboxPartitionTable)) != 0) {
-        // Mismatch between partition tables
-        // Create some DirectX text buffers
-        LPDIRECT3DSURFACE8 pFrontBuffer;
-
-        // InitialiseFonts
-        g_pD3DDevice->GetBackBuffer(0, D3DBACKBUFFER_TYPE_MONO, &pFrontBuffer);
-
-        // Display our text.
-        g_pD3DDevice->Clear(0, NULL, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, D3DCOLOR_XRGB(0, 0, 0), 1.0f, 0);
-        g_pArial32BitmapFont->SetTextAlignment(XFONT_CENTER | XFONT_TOP);
-        g_pArial32BitmapFont->SetTextColor(D3DCOLOR_XRGB(255, 30, 20));
-        g_pArial32BitmapFont->TextOut(pFrontBuffer, L"!!!!!!!! WARNING !!!!!!!!", -1, 320, 80);
-
-        g_pArial18BitmapFont->SetTextColor(D3DCOLOR_XRGB(240, 240, 240));
-        g_pArial18BitmapFont->SetTextAlignment(XFONT_LEFT | XFONT_TOP);
-
-        g_pArial18BitmapFont->TextOut(pFrontBuffer, L"Main and backup partition tables dont match!", -1, 60, 200);
-
-        g_pArial18BitmapFont->TextOut(pFrontBuffer, L"Press", -1, 60, 240);
-        g_pArial18BitmapFont->SetTextColor(D3DCOLOR_XRGB(240, 240, 0));
-        g_pArial18BitmapFont->TextOut(pFrontBuffer, L"Y", -1, 110, 240);
-        g_pArial18BitmapFont->SetTextColor(D3DCOLOR_XRGB(240, 240, 240));
-        g_pArial18BitmapFont->TextOut(pFrontBuffer, L"Carefully check which one is correct before doing anything!", -1, 128, 240);
-
-        g_pD3DDevice->Present(NULL, NULL, NULL, NULL);
-
-        pFrontBuffer->Release();
-    }
-}
-
-void App::DrawLastLoadedTable(const int table_id) {
-    wchar_t trailer[100];
-    switch (table_id)
-    {
-        case 0:
-            swprintf(trailer, L"Current table [Kernel]", g_lba48_version);
-            break;
-        case 1:
-            swprintf(trailer, L"Current table [HDD]", g_lba48_version);
-            break;
-        case 2:
-            swprintf(trailer, L"Current table [Backup]", g_lba48_version);
-            break;
-        default:
-            break;
-    }
-    DisplayText(trailer, 400, 20, COLOR_WHITE, XFONT_LEFT);
-}
-
-void App::DoFormatAll()
-{
-    int i;
-
-    DisplayWarning();
-    XInputGetStateAny(&aButton, &aButtonVal, &tButton, &aLThumbY);
-    XInputGetStateAny(&aButton, &aButtonVal, &tButton, &aLThumbY);
-
-    if (aButton == 3)
-    {
-        XboxPartitionTable table = tableManipulator->GetPartitionTable();
-        if (write_partition_tables(table))
-        {
-            g_pD3DDevice->Clear(0, NULL, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, D3DCOLOR_XRGB(0, 0, 0), 1.0f, 0);
-            DrawScreen(g_iCurrentPart);
-            DisplayText(L"Partition table written...", 60, 428, COLOR_GREEN);
-            g_pD3DDevice->Present(NULL, NULL, NULL, NULL);
-            Sleep(500);
-
-            int ypos = 14;
-
-            // Format modified partitions
-            for (i = 0; i < XboxPartitionTableEntryCount; i++)
-            {
-                ULONGLONG new_partition_start = tableManipulator->GetPartitionStart(i);
-                ULONGLONG new_partition_size = tableManipulator->GetPartitionSize(i);
-
-                ULONGLONG existing_partition_start = tableManipulatorOriginal->GetPartitionStart(i);
-                ULONGLONG existing_partition_size = tableManipulatorOriginal->GetPartitionSize(i);
-
-                // Check if partition actually changed
-                if (tableManipulator->isPartitionEnabled(i) &&
-                    (existing_partition_size != new_partition_size || existing_partition_start != new_partition_start))
-                {
-                    int cluster_size = tableManipulator->CalculateClusterSizeForPartition(i);
-                    g_pD3DDevice->Clear(0, NULL, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, D3DCOLOR_XRGB(0, 0, 0), 1.0f, 0);
-                    DrawScreen(g_iCurrentPart);
-                    wchar_t format_str[50];
-                    swprintf(format_str, L"Formatting partition %d with %dk clusters...", i + 1, cluster_size);
-                    DisplayText(format_str, 60, 428, COLOR_GREEN);
-                    g_pD3DDevice->Present(NULL, NULL, NULL, NULL);
-                    format_partition(i);
-                }
-            }
-
-            // Update the original table since we saved a new copy
-            tableManipulatorOriginal->LoadNewTable(table);
-        }
-    }
-}
-
-void App::DoWriteTable()
-{
-    g_pD3DDevice->Clear(0, NULL, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, D3DCOLOR_XRGB(0, 0, 0), 1.0f, 0);
-
-    DrawScreen(g_iCurrentPart);
-    DisplayText(L"Partition table will be written to hard drive!", 60, 428, COLOR_WHITE);
-    DisplayText(L"Press", 60, 448, COLOR_WHITE);
-    DisplayText(L"Y", 110, 448, COLOR_YELLOW);
-    DisplayText(L"to continue or any other button to abort.", 128, 448, COLOR_WHITE);
-
-    g_pD3DDevice->Present(NULL, NULL, NULL, NULL);
-
-    XInputGetStateAny(&aButton, &aButtonVal, &tButton, &aLThumbY);
-    XInputGetStateAny(&aButton, &aButtonVal, &tButton, &aLThumbY);
-
-    if (aButton == 3)
-    {
-
-        XboxPartitionTable table = tableManipulator->GetPartitionTable();
-        if (write_partition_tables(table))
-        {
-            g_pD3DDevice->Clear(0, NULL, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, D3DCOLOR_XRGB(0, 0, 0), 1.0f, 0);
-            DrawScreen(g_iCurrentPart);
-            DisplayText(L"Partition table written...", 60, 428, COLOR_GREEN);
-            DisplayText(L"Press any button to continue.", 60, 448, COLOR_WHITE);
-            g_pD3DDevice->Present(NULL, NULL, NULL, NULL);
-            XInputGetStateAny(&aButton, &aButtonVal, &tButton, &aLThumbY);
-        }
-        else
-        {
-            g_pD3DDevice->Clear(0, NULL, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, D3DCOLOR_XRGB(0, 0, 0), 1.0f, 0);
-            DrawScreen(g_iCurrentPart);
-            DisplayText(L"Partition table write failed!", 60, 428, COLOR_RED);
-            DisplayText(L"Press any button to continue.", 60, 448, COLOR_WHITE);
-            g_pD3DDevice->Present(NULL, NULL, NULL, NULL);
-            XInputGetStateAny(&aButton, &aButtonVal, &tButton, &aLThumbY);
-            XInputGetStateAny(&aButton, &aButtonVal, &tButton, &aLThumbY);
-        }
-    }
-}
-
-void App::DoFormatOne()
-{
-    int cluster_size = tableManipulator->CalculateClusterSizeForPartition(g_iCurrentPart);
-    DisplayWarning();
-    XInputGetStateAny(&aButton, &aButtonVal, &tButton, &aLThumbY);
-    XInputGetStateAny(&aButton, &aButtonVal, &tButton, &aLThumbY);
-
-    if (aButton == 3)
-    {
-        // Update kernel partition table if changed, else we might format a partition with wrong start/size
-        if (CheckIfPartitionTableChanged() && KernelPartTblAdd)
-        {
-            XboxPartitionTable table = tableManipulator->GetPartitionTable();
-            memcpy(KernelPartTblAdd, &table, sizeof(XboxPartitionTable));
-        }
-
-        g_pD3DDevice->Clear(0, NULL, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, D3DCOLOR_XRGB(0, 0, 0), 1.0f, 0);
-        DrawScreen(g_iCurrentPart);
-        wchar_t format_str[50];
-        swprintf(format_str, L"formatting partition %d with %dk clusters...", g_iCurrentPart + 1, cluster_size);
-        DisplayText(format_str, 60, 428, COLOR_GREEN);
-        g_pD3DDevice->Present(NULL, NULL, NULL, NULL);
-
-        format_partition(g_iCurrentPart);
-    }
-}
-
-void App::DoStart()
-{
-    switch (g_iFunction)
-    {
-    case FUNCTION_WRITE_TABLE:
-        DoWriteTable();
-        break;
-    case FUNCTION_WRITE_TABLE_FORMAT:
-        DoFormatAll();
-        break;
-    case FUNCTION_FORMAT_CURRENT_PARTITION:
-        if (tableManipulator->isPartitionEnabled(g_iCurrentPart))
-        {
-            DoFormatOne();
-        }
-        break;
-    default:
-        break;
-    }
-}
-
-void App::part_change_size(int TrigValue, int change_start, int Direction, bool fine)
-{
-    int lba_delta;
-
-    if (fine)
-    {
-        // Aligned to 4k boundaries
-        lba_delta = 8;
-    }
-    else if (TrigValue < 0x60)
-    {
-        lba_delta = 64;
-        Sleep(250);
-    }
-    else if (TrigValue > 0xf0)
-    {
-        lba_delta = SECTORS_PER_CLUSTER * 0x20000;
-        Sleep(250);
-    }
-    else
-    {
-        TrigValue >>= 4;
-        lba_delta = SECTORS_PER_CLUSTER * 2 << (TrigValue - 4);
-    }
-
-    int ops = change_start * 2 + (Direction < 0);
-    switch (ops)
-    {
-    case 0:
-        tableManipulator->PartitionIncreaseSizeBy(g_iCurrentPart, lba_delta);
-        break;
-    case 1:
-        tableManipulator->PartitionDecreaseSizeBy(g_iCurrentPart, lba_delta);
-        break;
-    case 2:
-        tableManipulator->PartitionMoveForward(g_iCurrentPart, lba_delta);
-        break;
-    case 3:
-        tableManipulator->PartitionMoveBack(g_iCurrentPart, lba_delta);
-        break;
-    default:
-        break;
-    }
-}
-
-App::App() {
-    tableManipulator = NULL;
-    tableManipulatorOriginal = NULL;
-
-    g_start_size_selector = 0;
-    g_iFunction = FUNCTION_WRITE_TABLE;
-
-    SCREEN_SIZE_X = 640;
-    SCREEN_SIZE_Y = 480;
-
-    g_pD3D = NULL;
-    g_pD3DDevice = NULL;
-    g_pBackTexture = NULL;
-    g_iFunction = FUNCTION_WRITE_TABLE;
-
-    // no static asserts in vc++ from this vintage
-    if (XboxPartitionTableSize != HDD_SECTOR_SIZE || XboxPartitionTableSize != sizeof(XboxPartitionTable))
-    {
-        return;
-    }
-
-    for (int i = 0; i < XboxPartitionTableEntryCount; i++)
-    {
-        RtlInitAnsiString(&partition_str[i], partStr[i]);
-    }
-
-    LD_LAUNCH_DASHBOARD LaunchDashData = {XLD_LAUNCH_DASHBOARD_MAIN_MENU};
-
-    InitialiseD3D();
-
-    XDEVICE_PREALLOC_TYPE deviceTypes[] =
-        {
-            {XDEVICE_TYPE_GAMEPAD, 4},
-        };
-
-    XInitDevices(sizeof(deviceTypes) / sizeof(XDEVICE_PREALLOC_TYPE), deviceTypes);
-
-    Sleep(2000);
-
-    g_Controller[0] = XInputOpen(XDEVICE_TYPE_GAMEPAD, XDEVICE_PORT0, XDEVICE_NO_SLOT, 0);
-    g_Controller[1] = XInputOpen(XDEVICE_TYPE_GAMEPAD, XDEVICE_PORT1, XDEVICE_NO_SLOT, 0);
-    g_Controller[2] = XInputOpen(XDEVICE_TYPE_GAMEPAD, XDEVICE_PORT2, XDEVICE_NO_SLOT, 0);
-    g_Controller[3] = XInputOpen(XDEVICE_TYPE_GAMEPAD, XDEVICE_PORT3, XDEVICE_NO_SLOT, 0);
-
-    g_TotalHDDSectors = get_hdd_size();
-
-    // Read kernel patch info + kernel reported partition table
-    if (!reload_lba48())
-    {
-        DisplayNoInfo();
-    }
-
-    // Read partition table from HDD
-    tableHDD = read_hdd_main_partition_table();
-    tableHDDBackup = read_hdd_backup_partition_table();
-
-    if (!XboxPartitionTableManipulator::HasMagic(tableHDD) && XboxPartitionTableManipulator::HasMagic(tableHDDBackup))
-    {
-        DisplayWarningBackupAvailable();
-    }
-
-    // save a copy so we can check if partitions changed
-    tableManipulatorOriginal->LoadNewTable(tableKernel);
-
-    g_iCurrentPart = tableManipulator->GetLastAvailablePartitionSlot();
-
-    for (int i = 0x0ff; i > 0x06; i -= 0x06)
-    {
-        ULONG rect_color = i << 24;
-
-        g_pD3DDevice->Clear(0, NULL, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, D3DCOLOR_XRGB(0, 0, 0), 1.0f, 0);
-        DrawScreen(g_iCurrentPart);
-        DrawInfo();
-        DrawFreeSpace();
-        g_pD3DDevice->Present(NULL, NULL, NULL, NULL);
-    }
-}
-
-App::~App() {
-    if (tableManipulatorOriginal)
-    {
-        delete (tableManipulatorOriginal);
-    }
-    if (tableManipulator)
-    {
-        delete (tableManipulator);
-    }
-
-    CleanUpD3D();
-}
-
-void App::MainLoop() {
-    int iCurrentScheme = 0;
-    int iCurrentHddScheme = 0;
-    int iWaitRelease = 0;
-
-    CheckTableStatus();
-    
-    while (true)
-    {
-        g_pD3DDevice->Clear(0, NULL, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, D3DCOLOR_XRGB(0, 0, 0), 1.0f, 0);
-        DrawScreen(g_iCurrentPart);
-        DrawInfo();
-        DrawFreeSpace();
-        DrawFormatCluster();
-        DrawLastLoadedTable(iCurrentHddScheme);
-
-        g_pD3DDevice->Present(NULL, NULL, NULL, NULL);
-
-        if (iWaitRelease)
-        {
-            XInputGetStateAny(&aButton, &aButtonVal, &tButton, &aLThumbY);
-        }
-
-        XInputGetStateAny(&aButton, &aButtonVal, &tButton, &aLThumbY, 0);
-
-        iWaitRelease = 0;
-
-        if (!tButton && !aLThumbY)
-        {
-            switch (aButton)
-            {
-            case XINPUT_GAMEPAD_A:
-                // Cycle standard partition schemes
-                switch (iCurrentScheme)
-                {
-                case 0:
-                    tableManipulator->SetupPartitionsStock();
-                    iCurrentScheme++;
-                    break;
-                case 1:
-                    tableManipulator->SetupPartitionsFOnly();
-                    iCurrentScheme++;
-                    break;
-                case 2:
-                    tableManipulator->SetupPartitionsFGSplit();
-                    iCurrentScheme = 0;
-                    break;
-                default:
-                    iCurrentScheme = 0;
-                }
-                iWaitRelease = 1;
-                break;
-
-            case XINPUT_GAMEPAD_B:
-                // No-op
-                iWaitRelease = 1;
-                break;
-
-            case XINPUT_GAMEPAD_X:
-                // Toggle change lba size/start
-                g_start_size_selector = !g_start_size_selector;
-                iWaitRelease = 1;
-                break;
-
-            case XINPUT_GAMEPAD_Y:
-                // Cycle through available partition tables
-                if (iCurrentHddScheme == 2)
-                {
-                    iCurrentHddScheme = 0;
-                }
-                else
-                {
-                    iCurrentHddScheme++;
-                }
-
-                switch (iCurrentHddScheme)
-                {
-                case 0:
-                    tableManipulator->LoadNewTable(tableManipulatorOriginal->GetPartitionTable());
-                    break;
-
-                case 1:
-                    tableManipulator->LoadNewTable(tableHDD);
-                    break;
-
-                case 2:
-                    tableManipulator->LoadNewTable(tableHDDBackup);
-                    break;
-
-                default:
-                    break;
-                }
-                iWaitRelease = 1;
-                break;
-
-            case XINPUT_GAMEPAD_BLACK:
-                g_pD3DDevice->Clear(0, NULL, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, D3DCOLOR_XRGB(0, 0, 0), 1.0f, 0);
-                DrawScreen(g_iCurrentPart);
-                DisplayText(L"Partition table will be erased!", 60, 428, COLOR_WHITE);
-                DisplayText(L"Press", 60, 448, COLOR_WHITE);
-                DisplayText(L"Y", 110, 448, COLOR_YELLOW);
-                DisplayText(L"to continue or any other key to abort!", 128, 448, COLOR_WHITE);
-                g_pD3DDevice->Present(NULL, NULL, NULL, NULL);
-
-                XInputGetStateAny(&aButton, &aButtonVal, &tButton, &aLThumbY);
-                XInputGetStateAny(&aButton, &aButtonVal, &tButton, &aLThumbY);
-                if (aButton == 3)
-                {
-                    if (erase_partition_tables())
-                    {
-                        g_pD3DDevice->Clear(0, NULL, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, D3DCOLOR_XRGB(0, 0, 0), 1.0f, 0);
-                        DrawScreen(g_iCurrentPart);
-                        DisplayText(L"Partition table erased.", 60, 428, COLOR_GREEN);
-                        DisplayText(L"Press any button to continue.", 60, 448, COLOR_WHITE);
-                        g_pD3DDevice->Present(NULL, NULL, NULL, NULL);
-                        XInputGetStateAny(&aButton, &aButtonVal, &tButton, &aLThumbY);
-                    }
-                    else
-                    {
-                        g_pD3DDevice->Clear(0, NULL, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, D3DCOLOR_XRGB(0, 0, 0), 1.0f, 0);
-                        DrawScreen(g_iCurrentPart);
-                        DisplayText(L"Partition table erasure failed!", 60, 428, COLOR_RED);
-                        DisplayText(L"Press any button to continue.", 60, 448, COLOR_WHITE);
-                        g_pD3DDevice->Present(NULL, NULL, NULL, NULL);
-                        XInputGetStateAny(&aButton, &aButtonVal, &tButton, &aLThumbY);
-                    }
-                }
-                break;
-
-            case XINPUT_GAMEPAD_WHITE:
-                // Flip between current functions
-                if (g_iFunction < 2)
-                {
-                    g_iFunction++;
-                }
-                else
-                {
-                    g_iFunction = FUNCTION_WRITE_TABLE;
-                }
-                iWaitRelease = 1;
-                break;
-
-            case XINPUT_GAMEPAD_LEFT_TRIGGER: // smaller
-                if (tableManipulator->isPartitionEnabled(g_iCurrentPart))
-                {
-                    part_change_size(aButtonVal, g_start_size_selector, -1, false);
-                }
-                break;
-
-            case XINPUT_GAMEPAD_RIGHT_TRIGGER: // bigger
-                if (!tableManipulator->isPartitionEnabled(g_iCurrentPart))
-                {
-                    tableManipulator->EnablePartition(g_iCurrentPart);
-                }
-                else
-                {
-                    part_change_size(aButtonVal, g_start_size_selector, 1, false);
-                }
-                break;
-
-            default:
-                break;
-            }
-        }
-        else
-        {
-            if (aLThumbY > 28671)
-            {
-                part_change_size(aButtonVal, g_start_size_selector, 1, true);
-                continue;
-            }
-            if (aLThumbY < -28672)
-            {
-                part_change_size(aButtonVal, g_start_size_selector, -1, true);
-                continue;
-            }
-            if (tButton & XINPUT_GAMEPAD_LEFT_THUMB && tButton & XINPUT_GAMEPAD_RIGHT_THUMB)
-            {
-                tableManipulator->LoadNewTable(tableManipulatorOriginal->GetPartitionTable());
-                g_iCurrentPart = tableManipulator->GetLastAvailablePartitionSlot();
-                iWaitRelease = 1;
-                continue;
-            }
-            else if (tButton & XINPUT_GAMEPAD_RIGHT_THUMB)
-            {
-                if (tableManipulator->isPartitionEnabled(g_iCurrentPart))
-                {
-                    tableManipulator->DisablePartition(g_iCurrentPart);
-                    if (g_iCurrentPart)
-                    {
-                        g_iCurrentPart--;
-                    }
-                }
-                else
-                {
-                    tableManipulator->EnablePartition(g_iCurrentPart);
-                }
-
-                iWaitRelease = 1;
-            }
-            else if (tButton & XINPUT_GAMEPAD_DPAD_RIGHT && tableManipulator->isPartitionEnabled(g_iCurrentPart))
-            {
-                if (g_start_size_selector)
-                {
-                    tableManipulator->PartitionMoveForward(g_iCurrentPart, 0x200000);
-                }
-                else
-                {
-                    tableManipulator->PartitionIncreaseSizeBy(g_iCurrentPart, 0x200000);
-                }
-                Sleep(250);
-            }
-            else if (tButton & XINPUT_GAMEPAD_DPAD_LEFT && tableManipulator->isPartitionEnabled(g_iCurrentPart))
-            {
-                if (g_start_size_selector)
-                {
-                    tableManipulator->PartitionMoveBack(g_iCurrentPart, 0x200000);
-                }
-                else
-                {
-                    tableManipulator->PartitionDecreaseSizeBy(g_iCurrentPart, 0x200000);
-                }
-                Sleep(250);
-            }
-            else if (tButton & XINPUT_GAMEPAD_DPAD_UP && g_iCurrentPart > 0)
-            {
-                if (!tableManipulator->GetPartitionSize(g_iCurrentPart))
-                {
-                    tableManipulator->DisablePartition(g_iCurrentPart);
-                }
-                g_iCurrentPart--;
-                Sleep(150);
-            }
-            else if (tButton & XINPUT_GAMEPAD_DPAD_DOWN && g_iCurrentPart < (XboxPartitionTableEntryCount - 1))
-            {
-                if (!tableManipulator->GetPartitionSize(g_iCurrentPart))
-                {
-                    tableManipulator->DisablePartition(g_iCurrentPart);
-                }
-                g_iCurrentPart++;
-                Sleep(150);
-            }
-            else if (tButton & XINPUT_GAMEPAD_BACK)
-            {
-                DisplayHelp();
-            }
-            else if (tButton & XINPUT_GAMEPAD_START)
-            {
-                DoStart();
-            }
-        }
-    }
 }
 
 //-----------------------------------------------------------------------------

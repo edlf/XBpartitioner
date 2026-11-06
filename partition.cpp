@@ -137,7 +137,7 @@ void XboxPartitionTableManipulator::SortPartitions(uint64_t *starts, uint64_t *e
 
     // Sort
     uint64_t temp;
-    for (int i = 5; i < (XboxPartitionTableEntryCount - 1); i++)
+    for (int i = 0; i < (XboxPartitionTableEntryCount - 1); i++)
     {
         if (starts[i] > starts[i + 1])
         {
@@ -197,6 +197,12 @@ uint64_t XboxPartitionTableManipulator::GetFirstFreeStart() const
 uint64_t XboxPartitionTableManipulator::GetAvailableFreeSpaceForPartition(const int partition_number) const
 {
     if (partition_number >= XboxPartitionTableEntryCount)
+    {
+        return 0;
+    }
+
+    // A partition that was never placed must not grow from LBA 0
+    if (GetPartitionStart(partition_number) == 0)
     {
         return 0;
     }
@@ -283,6 +289,12 @@ void XboxPartitionTableManipulator::EnablePartition(const int partition_number)
         return;
     }
 
+    // A new (never placed) partition starts at LBA 0, move it to the first free spot
+    if (GetPartitionStart(partition_number) == 0)
+    {
+        SetPartitionStart(partition_number, GetFirstFreeStart());
+    }
+
     m_table.TableEntries[partition_number].Flags = PE_PARTFLAGS_IN_USE;
 }
 
@@ -341,7 +353,9 @@ uint64_t XboxPartitionTableManipulator::GetAvailableFreeSpaceForPartitionBefore(
         return 0;
     }
 
-    if (GetPartitionStart(partition_number) == XBOX_SWAPPART1_LBA_START)
+    const uint64_t part_start = GetPartitionStart(partition_number);
+
+    if (part_start <= XBOX_SWAPPART1_LBA_START)
     {
         return 0;
     }
@@ -356,14 +370,15 @@ uint64_t XboxPartitionTableManipulator::GetAvailableFreeSpaceForPartitionBefore(
             continue;
         }
 
-        uint64_t part_start = GetPartitionStart(partition_number);
         if (ends[i] <= part_start)
         {
-            return AlignStartTo4k(part_start - ends[i]);
+            // Round the gap down so moving back never overlaps the previous partition
+            return AlignTo4k(part_start - ends[i]);
         }
     }
 
-    return AlignStartTo4k(starts[0] - XBOX_SWAPPART1_LBA_START);
+    // Nothing in front of this partition, it can move back to the first usable LBA
+    return AlignTo4k(part_start - XBOX_SWAPPART1_LBA_START);
 }
 
 void XboxPartitionTableManipulator::PartitionMoveBack(const int partition_number, uint64_t delta)
@@ -437,6 +452,11 @@ void XboxPartitionTableManipulator::SetupPartitionsStock()
     // Magic bit, TODO figure out what this is
     m_table.Reserved[0] = 0x01;
 
+    for (int i = 0; i < XboxPartitionTableFooterSize; i++)
+    {
+        m_table.Footer[i] = 0;
+    }
+
     for (int i = 0; i < XboxPartitionTableEntryCount; i++)
     {
         ErasePartition(i);
@@ -468,6 +488,12 @@ void XboxPartitionTableManipulator::SetupPartitionsFOnly()
 {
     SetupPartitionsStock();
 
+    // Stock sized drive, no room for F
+    if (m_last_usable_lba <= XBOX_PART6_LBA_START)
+    {
+        return;
+    }
+
     // Only F, capped to the max partition size (16TB)
     SetPartitionStart(5, XBOX_PART6_LBA_START);
     // Check max partition size (both sides in LBAs)
@@ -487,6 +513,12 @@ void XboxPartitionTableManipulator::SetupPartitionsFOnly()
 void XboxPartitionTableManipulator::SetupPartitionsFGSplit()
 {
     SetupPartitionsStock();
+
+    // Stock sized drive, no room for F and G
+    if (m_last_usable_lba <= XBOX_PART6_LBA_START + (2 * LBA_ALIGNMENT))
+    {
+        return;
+    }
 
     // F and G split over the free space
     SetPartitionStart(5, XBOX_PART6_LBA_START);
