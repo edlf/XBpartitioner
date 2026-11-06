@@ -47,6 +47,9 @@ const uint32_t XBOX_DATAPART_LBA_SIZE = 0x9896b0;
 const uint32_t XBOX_PART6_LBA_START = (XBOX_DATAPART_LBA_START + XBOX_DATAPART_LBA_SIZE);
 const uint32_t XBOX_STANDARD_MAX_LBA = (XBOX_DATAPART_LBA_START + XBOX_DATAPART_LBA_SIZE);
 
+// Partitions 1-5 (E, C, X, Y, Z) are the stock ones, 6-14 are extended (F, G, ...)
+const int XBOX_STANDARD_PARTITION_COUNT = 5;
+
 const uint32_t PE_PARTFLAGS_EMPTY = 0x0;
 const uint32_t PE_PARTFLAGS_IN_USE = 0x80000000;
 
@@ -121,15 +124,19 @@ public:
     XboxPartitionTableManipulator(const uint64_t total_hdd_lba, const bool lbav4, const bool physical_4k);
     XboxPartitionTableManipulator(const XboxPartitionTable& part_table, const uint64_t total_hdd_lba, const bool lbav4, const bool physical_4k);
 
-    // Sector holding the backup partition table, 0 if the disk size is unknown.
+    // Sector holding the backup partition table. 0 if there is none: the disk
+    // size is unknown, or there is no room after the stock partitions (8GB drive).
     // Partitions always end before it.
     uint64_t GetBackupTableLba() const;
     // Last addressable sector (capped for pre v4 lba48), where older builds put the backup
     uint64_t GetLastSectorLba() const;
     // True if a partition in use reaches the backup table sector. Writing the
-    // backup would then overwrite the end of that partition. Happens with tables
-    // made before the backup moved to the last 4K block on 512e drives.
+    // backup would then overwrite the end of that partition, so it is skipped;
+    // reading it would read partition data. Happens with tables made before the
+    // backup moved to the last 4K block on 512e drives.
     bool OverlapsBackupTable() const;
+    // True if a partition in use covers this sector
+    bool OverlapsSector(const uint64_t lba) const;
 
     void SetupPartitionsStock();
     void SetupPartitionsFOnly();
@@ -162,12 +169,22 @@ public:
     unsigned int CalculateClusterSize(const uint64_t lba_size) const;
 
     XboxPartitionTableEntry getPartitionEntry(const int partition_number) const;
+    // Same partitions enabled, at the same start with the same size (names and
+    // the unused fields of disabled entries are ignored)
+    bool HasSameLayout(const XboxPartitionTableManipulator& other) const;
+    // Puts back a saved entry (e.g. from the last written table). Refuses, and
+    // returns false, if other partitions have since moved into its range.
+    bool RestorePartitionEntry(const int partition_number, const XboxPartitionTableEntry& entry);
 
     // Partition table methods
     bool HasMagic() const;
     static bool HasMagic(const XboxPartitionTable& part_table);
     // True if a partition in use has LBAs above 32 bits (lba48 v4 only)
     static bool HasHighLbaBits(const XboxPartitionTable& part_table);
+    // True if the table has the magic and its partitions make sense: at least
+    // one in use, each with a size, after the first usable sector, inside the
+    // disk (when total_sectors is known) and not overlapping each other.
+    static bool IsTableUsable(const XboxPartitionTable& part_table, const uint64_t total_sectors);
     void WriteMagic();
 
     int GetLastAvailablePartitionSlot() const;
@@ -191,9 +208,22 @@ public:
     void PartitionIncreaseSizeBy(const int partition_number, const uint64_t delta);
     void PartitionDecreaseSizeBy(const int partition_number, const uint64_t delta);
 
-    // Moves partitions
+    // Moves partitions (start and end, the size stays the same)
     void PartitionMoveBack(const int partition_number, const uint64_t delta);
     void PartitionMoveForward(const int partition_number, const uint64_t delta);
+
+    // Moves only the start, the end stays where it is: forward shrinks the
+    // partition (down to one 4K block), back grows it into the free space before.
+    // The start is 4K aligned and the size rounded down to 4K, so an end that
+    // isn't 4K aligned (tables from other tools) moves back to the boundary.
+    // A zero size partition has no end to keep and moves instead.
+    void PartitionStartForward(const int partition_number, const uint64_t delta);
+    void PartitionStartBack(const int partition_number, const uint64_t delta);
+
+    // Typed in values, through the functions above: clamped to the free space
+    // and 4K aligned the same way. Moving the start keeps the end.
+    void MovePartitionStartTo(const int partition_number, const uint64_t start);
+    void ResizePartitionTo(const int partition_number, const uint64_t size);
 
     uint64_t AlignStartTo4k(const uint64_t value) const;
     uint64_t AlignTo4k(const uint64_t value) const;
@@ -205,6 +235,9 @@ private:
 
     void SetupMaxSize();
     void DropHighLbaBitsIfNotV4();
+    bool IsRangeFree(const uint64_t start, const uint64_t end) const;
+    bool IsNameBlank(const int partition_number) const;
+    void MarkEnabled(const int partition_number);
 
     XboxPartitionTable m_table;
     uint64_t m_hdd_lba_size;

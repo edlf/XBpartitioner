@@ -24,4 +24,4 @@ tools\makefonts.bat
 
 ## Video modes
 
-The video mode follows the dashboard settings and the AV cable: 720p with a component (HDTV) cable and 720p enabled, 480p with a component or VGA cable and 480p enabled, otherwise 480i. In 720p the 4:3 layout is scaled 1.5x and centered (960x720). The help screen (Back) shows the active mode.
+The video mode follows the dashboard settings and the AV cable: 720p with a component (HDTV) cable and 720p enabled, 480p with a component or VGA cable and 480p enabled, otherwise 480i. In 720p the 4:3 layout is scaled 1.5x and centered (960x720). Start > System information shows the active mode.
