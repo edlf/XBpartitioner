@@ -1,0 +1,173 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|Win32">
+      <Configuration>Debug</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|Win32">
+      <Configuration>Release</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <VCProjectVersion>17.0</VCProjectVersion>
+    <Keyword>Win32Proj</Keyword>
+    <ProjectGuid>{B7CC27F3-279B-40B1-BF36-DB193FD17584}</ProjectGuid>
+    <RootNamespace>XBpartitioner</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+    <ProjectName>XBpartitioner</ProjectName>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <PlatformToolset Condition="'$(VisualStudioVersion)' == '16.0'">v142</PlatformToolset>
+    <PlatformToolset Condition="'$(VisualStudioVersion)' == '17.0'">v143</PlatformToolset>
+    <PlatformToolset Condition="'$(VisualStudioVersion)' == '18.0'">v145</PlatformToolset>
+    <PlatformToolset Condition="'$(PlatformToolset)' == ''">v143</PlatformToolset>
+    <CharacterSet>NotSet</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)'=='Debug'" Label="Configuration">
+    <UseDebugLibraries>true</UseDebugLibraries>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)'=='Release'" Label="Configuration">
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="PropertySheets">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <!-- XDK headers and libraries only, none of the Windows SDK ones. The XDK
+       include folder comes first so the C runtime headers (stdio.h, ...) are
+       the XDK's, matching its libcmt.lib, not the Windows UCRT's. -->
+  <PropertyGroup>
+    <IncludePath>$(RXDK_LIBS)include;$(VC_IncludePath)</IncludePath>
+    <ExternalIncludePath>$(RXDK_LIBS)include</ExternalIncludePath>
+    <LibraryWPath />
+    <SourcePath />
+    <ExcludePath>$(CommonExcludePath);$(VC_ExecutablePath_x86);$(RXDK_LIBS)lib</ExcludePath>
+    <ReferencePath>$(RXDK_LIBS)lib</ReferencePath>
+    <LibraryPath>$(RXDK_LIBS)lib</LibraryPath>
+    <OutDir>$(ProjectDir)build\$(Configuration)\</OutDir>
+    <IntDir>$(ProjectDir)build\$(Configuration)\obj\</IntDir>
+    <TargetName>XBpartitioner</TargetName>
+    <LinkIncremental>false</LinkIncremental>
+  </PropertyGroup>
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <BufferSecurityCheck>false</BufferSecurityCheck>
+      <!-- The XDK's 2003 runtime can't run code that needs these newer
+           runtime helpers: C++ exception tables (__CxxFrameHandler3, the
+           code has no try/catch), thread safe statics (_Init_thread_*) and
+           sized delete. _ftol2_sse is in src\rxdk_compat.cpp. -->
+      <ExceptionHandling>false</ExceptionHandling>
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <AdditionalOptions>/arch:SSE /Zc:threadSafeInit- /Zc:sizedDealloc- %(AdditionalOptions)</AdditionalOptions>
+      <SupportJustMyCode>false</SupportJustMyCode>
+      <ControlFlowGuard>false</ControlFlowGuard>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <EnableEnhancedInstructionSet>StreamingSIMDExtensions</EnableEnhancedInstructionSet>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+    </ClCompile>
+    <Link>
+      <SubSystem>Console</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <IgnoreAllDefaultLibraries>true</IgnoreAllDefaultLibraries>
+      <GenerateMapFile>true</GenerateMapFile>
+      <FixedBaseAddress>false</FixedBaseAddress>
+      <ImageHasSafeExceptionHandlers>false</ImageHasSafeExceptionHandlers>
+      <AdditionalOptions>/ignore:4254 %(AdditionalOptions)</AdditionalOptions>
+    </Link>
+    <!-- Xbox subsystem, then the .xbe; a default.xbe folder (with Media, if
+         any) to copy to the console, and an ISO of it -->
+    <PostBuildEvent>
+      <Message>Creating Xbox Image...</Message>
+      <Command>"$(RXDK_LIBS)bin\patchsubsystem.exe" -i="$(OutDir)$(TargetFileName)" -s=0x000E
+"$(RXDK_LIBS)bin\imagebld.exe" /in:"$(OutDir)$(TargetFileName)" /out:"$(OutDir)$(TargetName).xbe" /nologo /stack:65536 /testname:"XBpartitioner" $(ImageBldOptions) /nolibwarn
+if not exist "$(OutDir)Build\$(ProjectName)" mkdir "$(OutDir)Build\$(ProjectName)"
+copy /Y "$(OutDir)$(TargetName).xbe" "$(OutDir)Build\$(ProjectName)\default.xbe"
+if exist "$(ProjectDir)Media\*" xcopy /I /E /S /Y /F "$(ProjectDir)Media\*" "$(OutDir)Build\$(ProjectName)"
+if not exist "$(OutDir)XISO" mkdir "$(OutDir)XISO"
+"$(RXDK_LIBS)bin\xdvdfs.exe" pack "$(OutDir)Build\$(ProjectName)" "$(OutDir)XISO\$(ProjectName).iso"</Command>
+    </PostBuildEvent>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)'=='Debug'">
+    <ClCompile>
+      <PreprocessorDefinitions>XBOX;_XBOX;_DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <Optimization>Disabled</Optimization>
+    </ClCompile>
+    <Link>
+      <AdditionalDependencies>xboxkrnl.lib;libcmtd.lib;xapilibd.lib;d3d8d.lib;d3dx8d.lib;xgraphicsd.lib</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)'=='Release'">
+    <ClCompile>
+      <PreprocessorDefinitions>XBOX;_XBOX;NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+    </ClCompile>
+    <Link>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <OptimizeReferences>true</OptimizeReferences>
+      <AdditionalDependencies>xboxkrnl.lib;libcmt.lib;xapilib.lib;d3d8.lib;d3dx8.lib;xgraphics.lib</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+  <!-- Debug images carry the symbol path for the kernel debugger -->
+  <PropertyGroup Condition="'$(Configuration)'=='Debug'">
+    <ImageBldOptions>/debug</ImageBldOptions>
+  </PropertyGroup>
+  <ItemGroup>
+    <ClCompile Include="src\background.cpp" />
+    <ClCompile Include="src\layout.cpp" />
+    <ClCompile Include="src\partition.cpp" />
+    <ClCompile Include="src\prometheos_code.cpp" />
+    <!-- Library helpers can't be built with whole program optimization -->
+    <ClCompile Include="src\rxdk_compat.cpp">
+      <WholeProgramOptimization>false</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="src\stdafx.cpp" />
+    <ClCompile Include="src\themes.cpp" />
+    <ClCompile Include="src\ui.cpp" />
+    <ClCompile Include="src\app_actions.cpp" />
+    <ClCompile Include="src\app_checks.cpp" />
+    <ClCompile Include="src\app_disk.cpp" />
+    <ClCompile Include="src\app_editor.cpp" />
+    <ClCompile Include="src\app_info.cpp" />
+    <ClCompile Include="src\app_input.cpp" />
+    <ClCompile Include="src\app_mainscreen.cpp" />
+    <ClCompile Include="src\app_menus.cpp" />
+    <ClCompile Include="src\app_numberpad.cpp" />
+    <ClCompile Include="src\app_settings.cpp" />
+    <ClCompile Include="src\app_util.cpp" />
+    <ClCompile Include="src\app_windows.cpp" />
+    <ClCompile Include="src\XBpartitioner.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="src\app_internal.h" />
+    <ClInclude Include="src\background.h" />
+    <ClInclude Include="src\font_table.h" />
+    <ClInclude Include="src\font_table_720.h" />
+    <ClInclude Include="src\font_text.h" />
+    <ClInclude Include="src\font_text_720.h" />
+    <ClInclude Include="src\font_title.h" />
+    <ClInclude Include="src\font_title_720.h" />
+    <ClInclude Include="src\layout.h" />
+    <ClInclude Include="src\partition.hpp" />
+    <ClInclude Include="src\prometheos_code.h" />
+    <ClInclude Include="src\stdafx.h" />
+    <ClInclude Include="src\themes.h" />
+    <ClInclude Include="src\Undocumented.h" />
+    <ClInclude Include="src\ui.h" />
+    <ClInclude Include="src\winioctl.h" />
+    <ClInclude Include="src\xbpartitioner.h" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <Target Name="CheckRxdk" BeforeTargets="PrepareForBuild">
+    <Error Condition="'$(RXDK_LIBS)' == '' Or !Exists('$(RXDK_LIBS)')" Text="The RXDK is not installed: RXDK_LIBS must point to its xbox folder (e.g. C:\Program Files (x86)\RXDK\xbox\)." />
+  </Target>
+</Project>

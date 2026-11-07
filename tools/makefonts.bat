@@ -15,19 +15,20 @@ if "%MAKEFONT%"=="" set MAKEFONT=makefont.exe
 
 set ROOT=%~dp0..
 set FONTS=%ROOT%\fonts
+set SRC=%ROOT%\src
 set CHARS=%~dp0fontchars.txt
 
 rem -e 3F: draw '?' for characters that are not in the font
 
 rem 480i/480p (640x480)
-"%MAKEFONT%" -f "%FONTS%\DejaVuSans.ttf"          -h 18 -a 2 -e 3F -c font_text  "%CHARS%" "%ROOT%\font_text.h"  || goto :error
-"%MAKEFONT%" -f "%FONTS%\DejaVuSans-Bold.ttf"     -h 32 -a 2 -e 3F -c font_title "%CHARS%" "%ROOT%\font_title.h" || goto :error
-"%MAKEFONT%" -f "%FONTS%\DejaVuSansMono.ttf" -h 18 -a 2 -e 3F -c font_table "%CHARS%" "%ROOT%\font_table.h" || goto :error
+"%MAKEFONT%" -f "%FONTS%\DejaVuSans.ttf"          -h 18 -a 2 -e 3F -c font_text  "%CHARS%" "%SRC%\font_text.h"  || goto :error
+"%MAKEFONT%" -f "%FONTS%\DejaVuSans-Bold.ttf"     -h 32 -a 2 -e 3F -c font_title "%CHARS%" "%SRC%\font_title.h" || goto :error
+"%MAKEFONT%" -f "%FONTS%\DejaVuSansMono.ttf" -h 18 -a 2 -e 3F -c font_table "%CHARS%" "%SRC%\font_table.h" || goto :error
 
 rem 720p (1280x720): 1.5x the 480 line sizes, since 720 = 480 * 1.5
-"%MAKEFONT%" -f "%FONTS%\DejaVuSans.ttf"          -h 27 -a 2 -e 3F -c font_text_720  "%CHARS%" "%ROOT%\font_text_720.h"  || goto :error
-"%MAKEFONT%" -f "%FONTS%\DejaVuSans-Bold.ttf"     -h 48 -a 2 -e 3F -c font_title_720 "%CHARS%" "%ROOT%\font_title_720.h" || goto :error
-"%MAKEFONT%" -f "%FONTS%\DejaVuSansMono.ttf" -h 27 -a 2 -e 3F -c font_table_720 "%CHARS%" "%ROOT%\font_table_720.h" || goto :error
+"%MAKEFONT%" -f "%FONTS%\DejaVuSans.ttf"          -h 27 -a 2 -e 3F -c font_text_720  "%CHARS%" "%SRC%\font_text_720.h"  || goto :error
+"%MAKEFONT%" -f "%FONTS%\DejaVuSans-Bold.ttf"     -h 48 -a 2 -e 3F -c font_title_720 "%CHARS%" "%SRC%\font_title_720.h" || goto :error
+"%MAKEFONT%" -f "%FONTS%\DejaVuSansMono.ttf" -h 27 -a 2 -e 3F -c font_table_720 "%CHARS%" "%SRC%\font_table_720.h" || goto :error
 
 echo Fonts generated.
 exit /b 0

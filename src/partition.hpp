@@ -1,7 +1,7 @@
 #ifndef PARTITION_H_
 #define PARTITION_H_
 
-#include <string>
+#include <stddef.h>
 
 typedef unsigned short uint16_t;
 typedef unsigned int uint32_t;
@@ -56,7 +56,6 @@ const uint32_t PE_PARTFLAGS_IN_USE = 0x80000000;
 #define LBA48_MAX_LBA 0xFFFFFFFFFFFF
 // Align to 4k sector boundaries (4096/512=8)
 #define LBA_ALIGNMENT 0x8
-// Clears the low 3 bits (0xFFFFFFFFFFF8)
 #define LBA_ALIGNMENT_MASK (LBA48_MAX_LBA - (LBA_ALIGNMENT - 1))
 
 #define SECTORS_PER_CLUSTER 32
@@ -65,14 +64,15 @@ const uint32_t PE_PARTFLAGS_IN_USE = 0x80000000;
 #define SCALE_GIGABYTE 0x40000000
 
 #define LBA_LOWER_BITS   0xFFFFFFFF
-// Largest partition the presets make (FATX and the cluster sizes go up to 16TB)
+// Largest partition the presets make
 #define LBASIZE_16TB    0x800000000
+// v3 kernels only mount FATX clusters up to 64 KB: partitions at most 1TB
+#define LBA48_V3_MAX_CLUSTER_KB  64
+#define LBASIZE_LBA48_V3_MAX     0x80000000
 
-// The backup partition table is kept at the end of the disk:
-//   512n drives (512 byte physical sectors): the last sector
-//   512e drives (4K physical, 512 byte logical): the first 512 byte sector of
-//   the last full 4K block, so the write is aligned (same place as Fatxplorer)
-// Partitions end before it. See XboxPartitionTableManipulator::GetBackupTableLba().
+// The backup table is at the end of the disk: the last sector, or on 512e
+// drives the first sector of the last 4K block (aligned, like Fatxplorer).
+// Partitions end before it.
 #define RESERVED_SPACE_END_LBA 0x1
 #define MAX_HDD_SIZE_LBA48_V3  0xFFFFFFFF
 
@@ -97,7 +97,7 @@ const uint32_t XboxPartitionTableFooterSize = 0x10;
 const uint32_t XboxPartitionTableSize = XboxPartitionTableMagicSize + XboxPartitionTableHeaderReservedSize + (XboxPartitionTableEntryCount * XboxPartitionTableEntrySize) + XboxPartitionTableFooterSize;
 
 
-// static_assert(sizeof(XboxPartitionTableEntry) ==  XboxPartitionTableEntrySize, "XboxPartitionTableEntry size is wrong!");
+static_assert(sizeof(XboxPartitionTableEntry) == XboxPartitionTableEntrySize, "XboxPartitionTableEntry size is wrong!");
 
 typedef struct
 {
@@ -107,27 +107,24 @@ typedef struct
     unsigned char Footer[XboxPartitionTableFooterSize];
 } XboxPartitionTable;
 
-// static_assert(sizeof(XboxPartitionTable) ==  XboxPartitionTableSize, "XboxPartitionTable size is wrong!");
+// The table is read and written as exactly one 512 byte sector
+static_assert(sizeof(XboxPartitionTable) == XboxPartitionTableSize, "XboxPartitionTable size is wrong!");
+static_assert(XboxPartitionTableSize == HDD_SECTOR_SIZE, "XboxPartitionTable must fill one sector!");
 
 class XboxPartitionTableManipulator {
 
 public:
-    // physical_4k: the drive has 4K physical sectors (512e), see GetBackupTableLba()
+    // physical_4k: 512e drive, see GetBackupTableLba()
     XboxPartitionTableManipulator(const uint64_t total_hdd_lba, const bool lbav4, const bool physical_4k);
     XboxPartitionTableManipulator(const XboxPartitionTable& part_table, const uint64_t total_hdd_lba, const bool lbav4, const bool physical_4k);
 
-    // Sector holding the backup partition table. 0 if there is none: the disk
-    // size is unknown, or there is no room after the stock partitions (8GB drive).
-    // Partitions always end before it.
+    // 0 if there is none (unknown size, or no room after the stock partitions)
     uint64_t GetBackupTableLba() const;
-    // Last addressable sector (capped for pre v4 lba48), where older builds put the backup
+    // Capped for pre v4; where older builds put the backup
     uint64_t GetLastSectorLba() const;
-    // True if a partition in use reaches the backup table sector. Writing the
-    // backup would then overwrite the end of that partition, so it is skipped;
-    // reading it would read partition data. Happens with tables made before the
-    // backup moved to the last 4K block on 512e drives.
+    // Writing the backup would then overwrite that partition, so it's skipped
+    // (tables made before the backup moved on 512e drives)
     bool OverlapsBackupTable() const;
-    // True if a partition in use covers this sector
     bool OverlapsSector(const uint64_t lba) const;
 
     void SetupPartitionsStock();
@@ -138,18 +135,16 @@ public:
 
     void LoadNewTable(const XboxPartitionTable& part_table);
 
-    // Individual Partition Methods
-    void SetPartitionName(const uint16_t partition_number, const std::string& name);
+    // Up to XboxPartitionNameMaxLength characters, space padded
+    void SetPartitionName(const uint16_t partition_number, const char *name);
     void SetPartitionStart(const int partition_number, const uint64_t value);
     void SetPartitionSize(const int partition_number, const uint64_t value);
 
     uint64_t GetPartitionSize(const int partition_number) const;
     uint64_t GetPartitionStart(const int partition_number) const;
 
-    // Wipes partition entry and disables partition
     void ErasePartition(const int partition_number);
 
-    // Sets or unsets enabled bit
     void EnablePartition(const int partition_number);
     void DisablePartition(const int partition_number);
     bool isPartitionEnabled(const int partition_number) const;
@@ -158,57 +153,57 @@ public:
     unsigned int CalculateClusterSize(const uint64_t lba_size) const;
 
     XboxPartitionTableEntry getPartitionEntry(const int partition_number) const;
-    // Same partitions enabled, at the same start with the same size (names and
-    // the unused fields of disabled entries are ignored)
+    // Names and the unused fields of disabled entries are ignored
     bool HasSameLayout(const XboxPartitionTableManipulator& other) const;
-    // Puts back a saved entry (e.g. from the last written table). Refuses, and
-    // returns false, if other partitions have since moved into its range.
+    // False if other partitions have moved into its range since
     bool RestorePartitionEntry(const int partition_number, const XboxPartitionTableEntry& entry);
 
-    // Partition table methods
     bool HasMagic() const;
     static bool HasMagic(const XboxPartitionTable& part_table);
-    // True if a partition in use has LBAs above 32 bits (lba48 v4 only)
+    // lba48 v4 only
     static bool HasHighLbaBits(const XboxPartitionTable& part_table);
-    // True if the table has the magic and its partitions make sense: at least
-    // one in use, each with a size, after the first usable sector, inside the
-    // disk (when total_sectors is known) and not overlapping each other.
+    // Magic, at least one partition in use, each with a size, after the first
+    // usable sector, inside the disk (if total_sectors is known), no overlaps
     static bool IsTableUsable(const XboxPartitionTable& part_table, const uint64_t total_sectors);
-    // True if two partitions in use overlap or start at the same sector (also
-    // when one of them is empty); *first and *second are their table indexes.
-    // Such a table must not be written.
+    // Overlapping or sharing a start (also when one is empty): must not be written
     bool FindConflict(int *first, int *second) const;
+    // Starts in the reserved area before XBOX_SWAPPART1_LBA_START (damaged or
+    // foreign kernel tables): must not be written or formatted
+    bool FindPartitionBeforeUsableStart(int *partition) const;
     void WriteMagic();
 
     int GetFirstAvailablePartitionSlot() const;
     int GetActivePartitionCount() const;
     uint64_t GetUsableLBAs() const;
 
-    // Gets first free lba for a new partition, 0 if the disk is full
+    // 0 if the disk is full
     uint64_t GetFirstFreeStart() const;
 
-    // Gets available free space
     uint64_t GetAvailableLBAs() const;
 
-    // Free space after a partition, up to the next one or the end of the disk
+    // Up to the next partition or the end of the disk
     uint64_t GetAvailableFreeSpaceForPartition(const int partition_number) const;
 
-    // Free space before a partition, back to the previous one or the first usable sector
+    // Back to the previous partition or the first usable sector
     uint64_t GetAvailableFreeSpaceForPartitionBefore(const int partition_number) const;
+
+    // No limit with v4 (the presets stop at 16TB), 1TB with v3 (64 KB clusters)
+    uint64_t GetMaxPartitionSize() const;
+    // 0 for no limit
+    unsigned int GetMaxClusterSize() const;
+    // The free space after (or before) it, up to GetMaxPartitionSize()
+    uint64_t GetGrowthLimit(const int partition_number) const;
+    uint64_t GetGrowthLimitBefore(const int partition_number) const;
 
     void PartitionIncreaseSizeBy(const int partition_number, const uint64_t delta);
     void PartitionDecreaseSizeBy(const int partition_number, const uint64_t delta);
 
-    // Moves only the start, the end stays where it is: forward shrinks the
-    // partition (down to one 4K block), back grows it into the free space before.
-    // The start is 4K aligned and the size rounded down to 4K, so an end that
-    // isn't 4K aligned (tables from other tools) moves back to the boundary.
-    // A zero size partition has no end to keep and moves instead.
+    // The end stays: forward shrinks (down to one 4K block), back grows. A zero
+    // size partition moves instead.
     void PartitionStartForward(const int partition_number, const uint64_t delta);
     void PartitionStartBack(const int partition_number, const uint64_t delta);
 
-    // Typed in values, through the functions above: clamped to the free space
-    // and 4K aligned the same way. Moving the start keeps the end.
+    // Typed values: clamped and aligned like the steps above
     void MovePartitionStartTo(const int partition_number, const uint64_t start);
     void ResizePartitionTo(const int partition_number, const uint64_t size);
 
@@ -218,9 +213,10 @@ public:
 
 private:
     void SortPartitions(uint64_t *starts, uint64_t *ends) const;
+    // The presets' size cap: 16TB, or GetMaxPartitionSize() if smaller
+    uint64_t PresetMaxPartitionSize() const;
 
-    // Moves partitions (start and end, the size stays the same); the start
-    // functions above use them for zero size partitions
+    // For zero size partitions: the whole partition moves
     void PartitionMoveBack(const int partition_number, const uint64_t delta);
     void PartitionMoveForward(const int partition_number, const uint64_t delta);
 
@@ -232,8 +228,7 @@ private:
 
     XboxPartitionTable m_table;
     uint64_t m_hdd_lba_size;
-    // Includes padding at the start and end of the disk
-    // Both for stock config data and lba48 partition table backup
+    // Without the space before the first usable sector and the backup
     uint64_t m_usable_lba_size;
     // Last position where a partition can land
     uint64_t m_last_usable_lba;
@@ -259,6 +254,13 @@ typedef struct _FAT_VOLUME_METADATA {
     unsigned char OnlineData[FAT_ONLINE_DATA_LENGTH];
     // Unused space in the block is filled with 0xFF bytes.
 } FAT_VOLUME_METADATA, * PFAT_VOLUME_METADATA;
+
+// On disk layout: the fix-up writes SectorsPerCluster in place
+static_assert(offsetof(FAT_VOLUME_METADATA, Signature) == 0, "FAT_VOLUME_METADATA layout is wrong!");
+static_assert(offsetof(FAT_VOLUME_METADATA, SectorsPerCluster) == 8, "FAT_VOLUME_METADATA layout is wrong!");
+static_assert(offsetof(FAT_VOLUME_METADATA, VolumeName) == 16, "FAT_VOLUME_METADATA layout is wrong!");
+static_assert(sizeof(FAT_VOLUME_METADATA) == 0x850, "FAT_VOLUME_METADATA layout is wrong!");
+static_assert(sizeof(FAT_VOLUME_METADATA) <= HDD_SECTOR_SIZE * 8, "FAT_VOLUME_METADATA must fit the 4 KB read buffer!");
 
 #define ROUND_TO_PAGES(Size)  (((ULONG_PTR)(Size) + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1))
 // Theft over

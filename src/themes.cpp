@@ -1,10 +1,8 @@
 #include "stdafx.h"
 #include "themes.h"
 
-// The themes, the first one (Outrun) is the default. Only colors: the layout and the
-// fonts are the same in all of them. The text roles keep their meaning (red
-// for errors, green for success, COLOR_YELLOW for the selected item) even
-// when the hue is different.
+// The first one (Outrun) is the default. The text roles keep their meaning
+// (red errors, green success, COLOR_YELLOW selected) in every theme.
 const Theme g_Themes[] = {
     {
         L"Outrun",

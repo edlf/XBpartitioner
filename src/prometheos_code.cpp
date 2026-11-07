@@ -5,14 +5,20 @@
 #include "partition.hpp"
 
 // Code stolen from PrometheOS
-USHORT WINAPI FindFirstSetRightMember(ULONG Set)
+
+// Lowest set bit, e.g. 9 for 512. Plain C: the original "bsf eax" __asm
+// returned through EAX with no return statement.
+static ULONG FindFirstSetRightMember(ULONG Set)
 {
-    __asm {
-        bsf     eax, Set
+    ULONG index = 0;
+    while (Set != 0 && (Set & 1) == 0)
+    {
+        Set >>= 1;
+        index++;
     }
+    return index;
 }
 
-// Fixes volume metadata
 bool largePartitionFixup(PANSI_STRING partitionString, const ULONG clusterSize)
 {
     NTSTATUS status;
@@ -46,10 +52,8 @@ bool largePartitionFixup(PANSI_STRING partitionString, const ULONG clusterSize)
 
     SectorShift = FindFirstSetRightMember(DiskGeometry.BytesPerSector);
 
-    // partitionString is the partition device itself (\Device\Harddisk0\PartitionN),
-    // so offsets are relative to the start of the partition: the FATX volume
-    // metadata lives at offset 0. (The original PrometheOS code computed the
-    // offset from the partition's LBA start because it opened the whole disk.)
+    // partitionString is the partition itself, so the metadata is at offset 0
+    // (PrometheOS opened the whole disk)
     Offset.QuadPart = 0;
 
     // Non-buffered I/O: use a page aligned buffer

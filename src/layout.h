@@ -1,10 +1,7 @@
 #ifndef LAYOUT_H_
 #define LAYOUT_H_
 
-// Screen layout in real screen pixels, one per video mode (g_Layout480,
-// g_Layout720 in layout.cpp). Both describe a 4:3 area; the renderer
-// centers it on the screen (720p: 960x720 with side bars) and draws 1:1, so
-// nothing is scaled or rounded.
+// In screen pixels of the 4:3 area, one per video mode (layout.cpp)
 struct Layout
 {
     int width;  // 4:3 area
@@ -20,9 +17,8 @@ struct Layout
     int status_y;       // Progress messages
     int prompt_y;       // Controls hint
 
-    // Partition table: one menu style panel. Its rows ("slots", all
-    // table_row_height apart) are the column headers, a line, "Standard
-    // partitions", partitions 1-5, "Extended partitions", partitions 6-14.
+    // Rows ("slots", table_row_height apart): headers, a line, "Standard
+    // partitions", 1-5, "Extended partitions", 6-14
     int table_left;
     int table_right;
     int table_top;          // Panel top; the same space is left below the last row
@@ -31,9 +27,9 @@ struct Layout
     int table_row_height;   // Row pitch
     int table_row_padding;  // Above and below the text in a row's selection bar
 
-    // Legend for the table's markers, right aligned under the table
+    // Under the table, right aligned
     int legend_y;
-    // Disk map above the table: the partitions to scale across the whole drive
+    // Above the table
     int map_y;
     int map_height;
 

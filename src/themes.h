@@ -3,7 +3,7 @@
 
 #include "ui.h"
 
-// The color themes (themes.cpp), the first one is the default
+// The first one is the default
 extern const Theme g_Themes[];
 extern const int g_ThemeCount;
 

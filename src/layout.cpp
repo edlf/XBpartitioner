@@ -1,11 +1,7 @@
 #include "stdafx.h"
 #include "layout.h"
 
-//-----------------------------------------------------------------------------
-// Screen layouts (see struct Layout), in screen pixels. 720p uses 1.5x the 480
-// values, rounded where needed so things still line up (rows inside their boxes,
-// the table centered).
-//-----------------------------------------------------------------------------
+// 720p uses 1.5x the 480 values, rounded where needed so things line up.
 
 const Layout g_Layout480 = {
     640, 480, // width, height

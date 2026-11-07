@@ -1,5 +1,5 @@
 #include "partition.hpp"
-#include <cstring>
+#include <string.h>
 
 XboxPartitionTableManipulator::XboxPartitionTableManipulator(const uint64_t total_hdd_lba, const bool lbav4, const bool physical_4k) : m_hdd_lba_size(total_hdd_lba), m_lba_v4(lbav4), m_physical_4k(physical_4k)
 {
@@ -22,10 +22,8 @@ XboxPartitionTableManipulator::XboxPartitionTableManipulator(const XboxPartition
     }
 }
 
-// Pre v4 lba48 patches only know 32 bit LBAs: the fields v4 uses for the high
-// 16 bits are reserved there and ignored by the kernel. Clear them so the
-// editor (and anything written back) matches what the kernel actually uses.
-// Callers can check HasHighLbaBits() on the original table to warn about it.
+// Pre v4 patches ignore the high LBA bits: cleared so the editor matches the
+// kernel. HasHighLbaBits() on the original table tells whether to warn.
 void XboxPartitionTableManipulator::DropHighLbaBitsIfNotV4()
 {
     if (m_lba_v4)
@@ -117,13 +115,27 @@ bool XboxPartitionTableManipulator::FindConflict(int *first, int *second) const
     return false;
 }
 
+bool XboxPartitionTableManipulator::FindPartitionBeforeUsableStart(int *partition) const
+{
+    for (int i = 0; i < XboxPartitionTableEntryCount; i++)
+    {
+        if (isPartitionEnabled(i) && GetPartitionStart(i) < XBOX_SWAPPART1_LBA_START)
+        {
+            *partition = i;
+            return true;
+        }
+    }
+
+    return false;
+}
+
 bool XboxPartitionTableManipulator::HasHighLbaBits(const XboxPartitionTable &part_table)
 {
     for (int i = 0; i < XboxPartitionTableEntryCount; i++)
     {
         const XboxPartitionTableEntry &entry = part_table.TableEntries[i];
 
-        // Only partitions in use matter, the kernel skips the others
+        // The kernel skips the others
         if (entry.Flags == PE_PARTFLAGS_IN_USE && (entry.LBAStart_high != 0 || entry.LBASize_high != 0))
         {
             return true;
@@ -135,7 +147,7 @@ bool XboxPartitionTableManipulator::HasHighLbaBits(const XboxPartitionTable &par
 
 void XboxPartitionTableManipulator::SetupMaxSize()
 {
-    // Cap to what lba48 v3 and earlier can address (32 bit LBAs)
+    // v3 and earlier address 32 bit LBAs
     uint64_t total = m_hdd_lba_size;
     if (!m_lba_v4 && total > (uint64_t)MAX_HDD_SIZE_LBA48_V3)
     {
@@ -144,7 +156,7 @@ void XboxPartitionTableManipulator::SetupMaxSize()
 
     m_last_sector_lba = (total >= RESERVED_SPACE_END_LBA) ? total - RESERVED_SPACE_END_LBA : 0;
 
-    // Backup table location, see the comment at RESERVED_SPACE_END_LBA
+    // See RESERVED_SPACE_END_LBA
     uint64_t backup_lba;
     if (m_physical_4k)
     {
@@ -158,15 +170,13 @@ void XboxPartitionTableManipulator::SetupMaxSize()
 
     if (backup_lba >= XBOX_STANDARD_MAX_LBA)
     {
-        // Partitions end before the backup table
         m_backup_table_lba = backup_lba;
         m_last_usable_lba = backup_lba;
     }
     else
     {
-        // No room after the stock partitions (a stock 8GB drive ends exactly at
-        // XBOX_STANDARD_MAX_LBA), or the disk size is unknown: no backup table,
-        // the backup sector would be the last sector of E
+        // Stock 8GB drive (it ends at XBOX_STANDARD_MAX_LBA) or unknown size: no
+        // backup, it would be E's last sector
         m_backup_table_lba = 0;
         m_last_usable_lba = total;
     }
@@ -186,7 +196,6 @@ uint64_t XboxPartitionTableManipulator::GetLastSectorLba() const
 
 bool XboxPartitionTableManipulator::OverlapsBackupTable() const
 {
-    // 0: no backup table on this disk
     return m_backup_table_lba != 0 && OverlapsSector(m_backup_table_lba);
 }
 
@@ -203,23 +212,18 @@ bool XboxPartitionTableManipulator::OverlapsSector(const uint64_t lba) const
     return false;
 }
 
-void XboxPartitionTableManipulator::SetPartitionName(const uint16_t partition_number, const std::string &name)
+void XboxPartitionTableManipulator::SetPartitionName(const uint16_t partition_number, const char *name)
 {
     if (partition_number >= XboxPartitionTableEntryCount)
     {
         return;
     }
 
+    // Space padded, cut at XboxPartitionNameMaxLength
+    const size_t length = strlen(name);
     for (size_t i = 0; i < XboxPartitionNameMaxLength; i++)
     {
-        if (i < name.size())
-        {
-            m_table.TableEntries[partition_number].Name[i] = name[i];
-        }
-        else
-        {
-            m_table.TableEntries[partition_number].Name[i] = ' ';
-        }
+        m_table.TableEntries[partition_number].Name[i] = (i < length) ? name[i] : ' ';
     }
 }
 
@@ -291,8 +295,7 @@ unsigned int XboxPartitionTableManipulator::CalculateClusterSize(const uint64_t 
 
 void XboxPartitionTableManipulator::SortPartitions(uint64_t *starts, uint64_t *ends) const
 {
-    // Disabled entries keep their old start/size but don't occupy any space:
-    // treat them like empty slots (0), which sort to the front and are skipped
+    // Disabled entries take no space: 0, so they sort first and are skipped
     for (int i = 0; i < XboxPartitionTableEntryCount; i++)
     {
         if (isPartitionEnabled(i))
@@ -350,9 +353,7 @@ uint64_t XboxPartitionTableManipulator::GetFirstFreeStart() const
 
     SortPartitions(starts, ends);
 
-    // First gap between partitions with room for at least one 4KB block once the
-    // start is aligned. A gap of a few sectors would put the aligned start inside
-    // the next partition.
+    // First gap with room for a 4 KB block once the start is aligned
     for (int i = 0; i < (XboxPartitionTableEntryCount - 1); i++)
     {
         if (!starts[i])
@@ -367,14 +368,12 @@ uint64_t XboxPartitionTableManipulator::GetFirstFreeStart() const
         }
     }
 
-    // After the last partition, if the disk is not full
     const uint64_t candidate = AlignStartTo4k(ends[(XboxPartitionTableEntryCount - 1)]);
     if (candidate + LBA_ALIGNMENT <= m_last_usable_lba)
     {
         return candidate;
     }
 
-    // No free space
     return 0;
 }
 
@@ -385,16 +384,14 @@ uint64_t XboxPartitionTableManipulator::GetAvailableFreeSpaceForPartition(const 
         return 0;
     }
 
-    // A disabled partition takes no space, so it has nothing to grow into, and
-    // one that was never placed must not grow from LBA 0
+    // Disabled: no space to grow into. Never placed (0): must not grow from LBA 0.
     const uint64_t part_start = GetPartitionStart(partition_number);
     if (!isPartitionEnabled(partition_number) || part_start == 0)
     {
         return 0;
     }
 
-    // Up to the next partition, or the end of the disk. Compared against the
-    // others by index, so one sharing this start is never mistaken for it.
+    // Compared by index, so one sharing this start is never mistaken for it
     const uint64_t part_end = part_start + GetPartitionSize(partition_number);
     uint64_t next_start = m_last_usable_lba;
     for (int i = 0; i < XboxPartitionTableEntryCount; i++)
@@ -412,7 +409,7 @@ uint64_t XboxPartitionTableManipulator::GetAvailableFreeSpaceForPartition(const 
         }
         if (other_start < part_end || other_start < part_start)
         {
-            // Overlaps this one: no room to grow until that is fixed
+            // Overlapping: no room until that is fixed
             return 0;
         }
         if (other_start < next_start)
@@ -424,6 +421,37 @@ uint64_t XboxPartitionTableManipulator::GetAvailableFreeSpaceForPartition(const 
     return (next_start > part_end) ? AlignTo4k(next_start - part_end) : 0;
 }
 
+uint64_t XboxPartitionTableManipulator::GetMaxPartitionSize() const
+{
+    return m_lba_v4 ? ~(uint64_t)0 : (uint64_t)LBASIZE_LBA48_V3_MAX;
+}
+
+unsigned int XboxPartitionTableManipulator::GetMaxClusterSize() const
+{
+    return m_lba_v4 ? 0 : LBA48_V3_MAX_CLUSTER_KB;
+}
+
+// 0 when at or over it (a v4 table on v3 can only shrink)
+static uint64_t room_below_max(uint64_t size, uint64_t max_size)
+{
+    return (size < max_size) ? max_size - size : 0;
+}
+
+uint64_t XboxPartitionTableManipulator::GetGrowthLimit(const int partition_number) const
+{
+    const uint64_t free_after = GetAvailableFreeSpaceForPartition(partition_number);
+    const uint64_t room = room_below_max(GetPartitionSize(partition_number), GetMaxPartitionSize());
+    return (free_after < room) ? free_after : room;
+}
+
+uint64_t XboxPartitionTableManipulator::GetGrowthLimitBefore(const int partition_number) const
+{
+    const uint64_t free_before = GetAvailableFreeSpaceForPartitionBefore(partition_number);
+    // Both 4K aligned, so moving the start back by this keeps it aligned
+    const uint64_t room = AlignTo4k(room_below_max(GetPartitionSize(partition_number), GetMaxPartitionSize()));
+    return (free_before < room) ? free_before : room;
+}
+
 void XboxPartitionTableManipulator::PartitionIncreaseSizeBy(const int partition_number, uint64_t delta)
 {
     if (partition_number >= XboxPartitionTableEntryCount)
@@ -431,7 +459,7 @@ void XboxPartitionTableManipulator::PartitionIncreaseSizeBy(const int partition_
         return;
     }
 
-    uint64_t max = GetAvailableFreeSpaceForPartition(partition_number);
+    uint64_t max = GetGrowthLimit(partition_number);
 
     if (delta > max)
     {
@@ -472,9 +500,8 @@ void XboxPartitionTableManipulator::EnablePartition(const int partition_number)
         return;
     }
 
-    // A new (never placed) partition starts at LBA 0. A disabled one keeps its
-    // old range, but other partitions may have been moved into it since.
-    // Either way, place it at the first free spot (empty, to be grown by the user).
+    // Never placed (0), or its old range was taken since: placed empty at the
+    // first free spot
     const uint64_t start = GetPartitionStart(partition_number);
     const uint64_t end = start + GetPartitionSize(partition_number);
     if (start == 0 || !IsRangeFree(start, end))
@@ -482,7 +509,7 @@ void XboxPartitionTableManipulator::EnablePartition(const int partition_number)
         const uint64_t free_start = GetFirstFreeStart();
         if (free_start == 0)
         {
-            // Disk is full, leave the slot disabled
+            // Disk full: stays disabled
             return;
         }
         SetPartitionStart(partition_number, free_start);
@@ -492,15 +519,15 @@ void XboxPartitionTableManipulator::EnablePartition(const int partition_number)
     // Extended partitions made here get the same style of name as the presets
     if (partition_number >= XBOX_STANDARD_PARTITION_COUNT && IsNameBlank(partition_number))
     {
-        std::string name = "XBOX EXTRA ";
-        name += (char)('F' + (partition_number - XBOX_STANDARD_PARTITION_COUNT));
+        char name[] = "XBOX EXTRA F";
+        name[sizeof(name) - 2] = (char)('F' + (partition_number - XBOX_STANDARD_PARTITION_COUNT));
         SetPartitionName(partition_number, name);
     }
 
     m_table.TableEntries[partition_number].Flags = PE_PARTFLAGS_IN_USE;
 }
 
-// True if [start, end) is inside the usable area and no enabled partition uses any of it
+// Inside the usable area and not used by an enabled partition
 bool XboxPartitionTableManipulator::IsRangeFree(const uint64_t start, const uint64_t end) const
 {
     if (start < XBOX_SWAPPART1_LBA_START || end > m_last_usable_lba || end < start)
@@ -526,7 +553,7 @@ bool XboxPartitionTableManipulator::IsRangeFree(const uint64_t start, const uint
     return true;
 }
 
-// Sets the in use flag without any placement logic, for the fixed preset layouts
+// For the presets' fixed layouts: no placement
 void XboxPartitionTableManipulator::MarkEnabled(const int partition_number)
 {
     m_table.TableEntries[partition_number].Flags = PE_PARTFLAGS_IN_USE;
@@ -608,8 +635,7 @@ uint64_t XboxPartitionTableManipulator::GetAvailableFreeSpaceForPartitionBefore(
         return 0;
     }
 
-    // Back to the end of the previous partition, or the first usable LBA. The
-    // previous one is the latest end among those starting before this one.
+    // The previous partition is the latest end among those starting before
     uint64_t previous_end = XBOX_SWAPPART1_LBA_START;
     for (int i = 0; i < XboxPartitionTableEntryCount; i++)
     {
@@ -631,7 +657,7 @@ uint64_t XboxPartitionTableManipulator::GetAvailableFreeSpaceForPartitionBefore(
         }
         if (other_end > part_start)
         {
-            // Overlaps this one: moving back would only make that worse
+            // Overlapping: moving back would make it worse
             return 0;
         }
         if (other_end > previous_end)
@@ -640,7 +666,7 @@ uint64_t XboxPartitionTableManipulator::GetAvailableFreeSpaceForPartitionBefore(
         }
     }
 
-    // Round the gap down so moving back never overlaps the previous partition
+    // Rounded down, so it never overlaps the previous partition
     return (part_start > previous_end) ? AlignTo4k(part_start - previous_end) : 0;
 }
 
@@ -658,8 +684,7 @@ void XboxPartitionTableManipulator::PartitionMoveBack(const int partition_number
         delta = free_space;
     }
 
-    // The new start is aligned up, which for an unaligned start with little or
-    // no room before it would land after the old one: then it stays put
+    // Aligning an unaligned start up with no room before would move it forward
     const uint64_t part_start = GetPartitionStart(partition_number);
     const uint64_t new_start = AlignStartTo4k(part_start - delta);
     if (new_start < part_start)
@@ -682,9 +707,7 @@ void XboxPartitionTableManipulator::PartitionMoveForward(const int partition_num
         delta = max;
     }
 
-    // SetPartitionStart rounds up to 4K, which for an unaligned start (tables
-    // from other tools) could go past the free space and into the next
-    // partition. Round down in that case instead.
+    // Rounding an unaligned start up could pass the free space: round down then
     const uint64_t part_start = GetPartitionStart(partition_number);
     uint64_t new_start = AlignStartTo4k(part_start + delta);
     if (new_start - part_start > max)
@@ -713,15 +736,15 @@ void XboxPartitionTableManipulator::PartitionStartForward(const int partition_nu
         return;
     }
 
-    // Nothing to shrink: a zero size partition moves instead
+    // A zero size partition moves instead
     if (part_size == 0)
     {
         PartitionMoveForward(partition_number, delta);
         return;
     }
 
-    // Keep at least one 4K block. The start is aligned up and the size down, so
-    // the end never goes past where it was.
+    // Keeps at least one 4K block. Start aligned up and size down, so the end
+    // never moves out.
     const uint64_t part_end = part_start + part_size;
     if (part_size <= LBA_ALIGNMENT)
     {
@@ -755,14 +778,15 @@ void XboxPartitionTableManipulator::PartitionStartBack(const int partition_numbe
         return;
     }
 
-    // Like forward: a zero size partition has no end to keep, it moves
+    // A zero size partition moves instead
     if (GetPartitionSize(partition_number) == 0)
     {
         PartitionMoveBack(partition_number, delta);
         return;
     }
 
-    const uint64_t free_space = GetAvailableFreeSpaceForPartitionBefore(partition_number);
+    // Grows: limited by the free space before and the maximum size
+    const uint64_t free_space = GetGrowthLimitBefore(partition_number);
     if (delta > free_space)
     {
         delta = free_space;
@@ -833,7 +857,6 @@ void XboxPartitionTableManipulator::SetupPartitionsStock()
 {
     WriteMagic();
 
-    // Wipe reserved section
     for (int i = 0; i < XboxPartitionTableHeaderReservedSize; i++)
     {
         m_table.Reserved[i] = 0;
@@ -874,6 +897,12 @@ void XboxPartitionTableManipulator::SetupPartitionsStock()
     MarkEnabled(4);
 }
 
+uint64_t XboxPartitionTableManipulator::PresetMaxPartitionSize() const
+{
+    const uint64_t max = GetMaxPartitionSize();
+    return (max < (uint64_t)LBASIZE_16TB) ? max : (uint64_t)LBASIZE_16TB;
+}
+
 void XboxPartitionTableManipulator::SetupPartitionsFOnly()
 {
     SetupPartitionsStock();
@@ -884,17 +913,11 @@ void XboxPartitionTableManipulator::SetupPartitionsFOnly()
         return;
     }
 
-    // Only F, capped to the max partition size (16TB)
+    // Capped at 16TB, 1TB on v3
     SetPartitionStart(5, XBOX_PART6_LBA_START);
-    // Check max partition size (both sides in LBAs)
-    if ((m_last_usable_lba - GetPartitionStart(5)) > (uint64_t)LBASIZE_16TB)
-    {
-        SetPartitionSize(5, LBASIZE_16TB);
-    }
-    else
-    {
-        SetPartitionSize(5, (m_last_usable_lba - GetPartitionStart(5)));
-    }
+    const uint64_t cap = PresetMaxPartitionSize();
+    const uint64_t space = m_last_usable_lba - GetPartitionStart(5);
+    SetPartitionSize(5, (space > cap) ? cap : space);
 
     SetPartitionName(5, LBA48_Partition_Name_F);
     MarkEnabled(5);
@@ -910,31 +933,18 @@ void XboxPartitionTableManipulator::SetupPartitionsFGSplit()
         return;
     }
 
-    // F and G split over the free space (max 16TB per partition)
-    uint64_t free_space = (m_last_usable_lba - GetPartitionStart(5)) / 2;
+    // F gets half the space after the stock partitions, G the rest, each capped
+    const uint64_t cap = PresetMaxPartitionSize();
+    const uint64_t half = (m_last_usable_lba - XBOX_PART6_LBA_START) / 2;
 
-
-    // F
     SetPartitionStart(5, XBOX_PART6_LBA_START);
-    if (free_space > (uint64_t)LBASIZE_16TB) {
-        SetPartitionSize(5, LBASIZE_16TB);
-    }
-    else
-    {
-        SetPartitionSize(5, (m_last_usable_lba - GetPartitionStart(5)) / 2);
-    }
+    SetPartitionSize(5, (half > cap) ? cap : half);
     SetPartitionName(5, LBA48_Partition_Name_F);
     MarkEnabled(5);
 
-    // G
     SetPartitionStart(6, GetPartitionStart(5) + GetPartitionSize(5));
-    if (free_space > (uint64_t)LBASIZE_16TB) {
-        SetPartitionSize(6, LBASIZE_16TB);
-    }
-    else
-    {
-        SetPartitionSize(6, m_last_usable_lba - GetPartitionStart(6));
-    }
+    const uint64_t rest = m_last_usable_lba - GetPartitionStart(6);
+    SetPartitionSize(6, (rest > cap) ? cap : rest);
     SetPartitionName(6, LBA48_Partition_Name_G);
     MarkEnabled(6);
 }
@@ -1041,7 +1051,7 @@ uint64_t XboxPartitionTableManipulator::AlignStartTo4k(const uint64_t value) con
     const uint64_t mask = LBA_ALIGNMENT_MASK;
     uint64_t aligned = value & mask;
 
-    // If we aligned it backwards, we need to move it foward to prevent overlap
+    // Rounded up, so it never moves into the partition before
     if (value != aligned)
     {
         aligned += LBA_ALIGNMENT;
