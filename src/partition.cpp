@@ -38,6 +38,17 @@ void XboxPartitionTableManipulator::DropHighLbaBitsIfNotV4()
     }
 }
 
+bool XboxPartitionTableManipulator::HasUnknownVersion(const XboxPartitionTable &part_table)
+{
+    return HasMagic(part_table) && part_table.Version != XBOX_TABLE_VERSION_LBA48_V3 &&
+           part_table.Version != XBOX_TABLE_VERSION_LBA48_V4 && part_table.Version != XBOX_TABLE_VERSION_TITAN;
+}
+
+unsigned char XboxPartitionTableManipulator::VersionFor(const bool lbav4)
+{
+    return lbav4 ? XBOX_TABLE_VERSION_LBA48_V4 : XBOX_TABLE_VERSION_LBA48_V3;
+}
+
 bool XboxPartitionTableManipulator::IsTableUsable(const XboxPartitionTable &part_table, const uint64_t total_sectors)
 {
     if (!HasMagic(part_table))
@@ -857,13 +868,11 @@ void XboxPartitionTableManipulator::SetupPartitionsStock()
 {
     WriteMagic();
 
+    m_table.Version = VersionFor(m_lba_v4);
     for (int i = 0; i < XboxPartitionTableHeaderReservedSize; i++)
     {
         m_table.Reserved[i] = 0;
     }
-
-    // Magic bit, TODO figure out what this is
-    m_table.Reserved[0] = 0x01;
 
     for (int i = 0; i < XboxPartitionTableFooterSize; i++)
     {

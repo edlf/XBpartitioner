@@ -69,3 +69,11 @@ void format_table_lba(ULONGLONG lba, wchar_t *out)
 {
     swprintf(out, L"%.04X%.08X", (ULONG)(WORD)(lba >> 32), (ULONG)(lba & LBA_LOWER_BITS));
 }
+
+bool same_table_but_version(const XboxPartitionTable &a, const XboxPartitionTable &b)
+{
+    XboxPartitionTable x = a;
+    XboxPartitionTable y = b;
+    x.Version = y.Version = 0;
+    return memcmp(&x, &y, sizeof(XboxPartitionTable)) == 0;
+}

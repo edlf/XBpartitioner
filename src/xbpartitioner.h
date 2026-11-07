@@ -121,11 +121,18 @@ private:
     void AnimatePanel(int left, int top, int right, int bottom, bool opening);
     bool ConfirmWarning(const LPCWSTR *lines, int line_count, LPCWSTR ok_label);
     void ShowWarning(const LPCWSTR *lines, int line_count);
+    void ShowError(const LPCWSTR* lines, int line_count);
     void FadeIn();
     void FadeOut();
 
     void ShowStatus(LPCWSTR message, Color color);
     void ShowMessage(LPCWSTR title, Color title_color, LPCWSTR message);
+    // A one line window ("Saving settings...") around slow work: open it, do
+    // the work, close it with what OpenBusyWindow returned
+    DWORD OpenBusyWindow(LPCWSTR message);
+    void CloseBusyWindow(LPCWSTR message, DWORD opened);
+    void DrawBusyWindow(LPCWSTR message);
+    void BusyWindowBox(int *top, int *bottom);
     void DisplaySystemInfo();
     bool SystemInfoNeedsAttention();
     void DisplayAbout();
@@ -146,6 +153,8 @@ private:
 
     int XInputGetStateAny(int *analog, int *buttons, int wait = 2);
     void UpdateControllers();
+    bool CheckStellar();
+    void WarnStellarDetected();
     // False (with an empty state) if the pad is gone or the read failed
     bool ReadController(int port, XINPUT_STATE *state);
     // False while m_WaitForRelease is set, until everything is released, so a
@@ -200,6 +209,9 @@ private:
     bool RefuseUnwritableTable(const XboxPartitionTable &table);
     // what: the end of the advice, e.g. "before writing."
     void ShowReservedAreaWarning(int partition, LPCWSTR what);
+    void CheckTableVersions();
+    // Only a backup table on disk: a Titan BIOS, or restore it as the main one
+    void OfferTitanOrRestore();
     void DoWriteTable();
     void DoFormatAll();
     void DoFormatOne();
@@ -215,7 +227,8 @@ private:
     int GetChangedPartitions(bool changed[XboxPartitionTableEntryCount], bool existing_only);
     void FormatPartitionList(const bool marked[XboxPartitionTableEntryCount], wchar_t *out, size_t out_count);
     LARGE_INTEGER get_backup_partition_offset_bytes();
-    bool write_partition_tables(const XboxPartitionTable table, bool *backup_written = NULL);
+    // With a Titan BIOS, asks whether to write sector 0 too (*main_written)
+    bool write_partition_tables(const XboxPartitionTable table, bool *backup_written = NULL, bool *main_written = NULL);
     bool erase_partition_tables();
     XboxPartitionTable read_hdd_partition_table(LARGE_INTEGER offset);
     XboxPartitionTable read_hdd_main_partition_table();
@@ -267,6 +280,9 @@ private:
     bool m_Animations;
     // force_lba48_v3= in the settings, see read_lba48_info()
     bool m_ForceLba48V3;
+    // Titan patched BIOS (it only uses the backup table): the user said so
+    // (OfferTitanOrRestore), or the backup has Titan's version
+    bool m_TitanBios;
 
     bool m_FullLba48;
     ULONGLONG m_TotalHddSectors;

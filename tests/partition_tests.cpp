@@ -377,6 +377,65 @@ TEST(Editing, UnalignedStartNeverMovesForward)
     EXPECT_FALSE(HasConflict(t));
 }
 
+// Table version: 0x00 v3, 0x01 v4, 0x03 Titan
+
+namespace
+{
+XboxPartitionTable StockTableWithVersion(unsigned char version)
+{
+    XboxPartitionTableManipulator stock(DISK_128GB, true, false);
+    XboxPartitionTable table = stock.GetPartitionTable();
+    table.Version = version;
+    return table;
+}
+} // namespace
+
+TEST(TableVersion, StockPresetMatchesMode)
+{
+    XboxPartitionTableManipulator v4(DISK_1TB, true, false);
+    EXPECT_EQ(v4.GetPartitionTable().Version, XBOX_TABLE_VERSION_LBA48_V4);
+
+    XboxPartitionTableManipulator v3(DISK_1TB, false, false);
+    EXPECT_EQ(v3.GetPartitionTable().Version, XBOX_TABLE_VERSION_LBA48_V3);
+
+    // The rest of the header stays zero (the old "magic bit" was the version)
+    const XboxPartitionTable table = v4.GetPartitionTable();
+    for (uint32_t i = 0; i < XboxPartitionTableHeaderReservedSize; i++)
+    {
+        EXPECT_EQ(table.Reserved[i], 0) << "Reserved[" << i << "]";
+    }
+
+    EXPECT_EQ(XboxPartitionTableManipulator::VersionFor(true), XBOX_TABLE_VERSION_LBA48_V4);
+    EXPECT_EQ(XboxPartitionTableManipulator::VersionFor(false), XBOX_TABLE_VERSION_LBA48_V3);
+}
+
+TEST(TableVersion, KnownVersions)
+{
+    for (unsigned char v : {XBOX_TABLE_VERSION_LBA48_V3, XBOX_TABLE_VERSION_LBA48_V4, XBOX_TABLE_VERSION_TITAN})
+    {
+        const XboxPartitionTable table = StockTableWithVersion(v);
+        EXPECT_FALSE(XboxPartitionTableManipulator::HasUnknownVersion(table)) << (int)v;
+        EXPECT_TRUE(XboxPartitionTableManipulator::IsTableUsable(table, DISK_128GB)) << (int)v;
+    }
+}
+
+TEST(TableVersion, UnknownVersionIsUsableButFlagged)
+{
+    for (unsigned char v : {(unsigned char)0x02, (unsigned char)0x04, (unsigned char)0xFF})
+    {
+        const XboxPartitionTable table = StockTableWithVersion(v);
+        EXPECT_TRUE(XboxPartitionTableManipulator::HasUnknownVersion(table)) << (int)v;
+        EXPECT_TRUE(XboxPartitionTableManipulator::IsTableUsable(table, DISK_128GB)) << (int)v;
+    }
+}
+
+TEST(TableVersion, NoMagicNoVersion)
+{
+    XboxPartitionTable table = StockTableWithVersion(0x02);
+    table.Magic[0] = 0;
+    EXPECT_FALSE(XboxPartitionTableManipulator::HasUnknownVersion(table));
+}
+
 // LBA48 v3 (also force_lba48_v3): partitions at most 1TB, 64 KB clusters
 
 namespace

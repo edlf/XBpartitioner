@@ -355,12 +355,20 @@ LARGE_INTEGER App::get_backup_partition_offset_bytes()
 }
 
 // The main table and, when possible, the backup (*backup_written)
-bool App::write_partition_tables(const XboxPartitionTable table, bool *backup_written)
+bool App::write_partition_tables(const XboxPartitionTable table_in, bool *backup_written, bool *main_written)
 {
     if (backup_written != NULL)
     {
         *backup_written = false;
     }
+    if (main_written != NULL)
+    {
+        *main_written = false;
+    }
+
+    // Sector 0 says how its LBAs are stored: v4, or v3 (also with force_lba48_v3)
+    XboxPartitionTable table = table_in;
+    table.Version = XboxPartitionTableManipulator::VersionFor(m_FullLba48);
 
     // Without a known disk size the layout can't be trusted
     if (m_TotalHddSectors == 0)
@@ -382,12 +390,33 @@ bool App::write_partition_tables(const XboxPartitionTable table, bool *backup_wr
     }
     const bool write_backup = (m_pKernelTable != NULL) && (m_pTable->GetBackupTableLba() != 0) && !to_write.OverlapsBackupTable();
 
+    // A Titan BIOS only uses the backup, in its own version; sector 0 only if
+    // the user wants it there too, for Cerbios
+    XboxPartitionTable backup = table;
+    bool write_main = true;
+    if (m_TitanBios)
+    {
+        backup.Version = XBOX_TABLE_VERSION_TITAN;
+        static const LPCWSTR lines[] = {
+            L"Titan patched BIOSes only use the backup table.",
+            L"Also write it to sector 0, for compatibility with",
+            L"Cerbios and other BIOSes that use the table there?",
+        };
+        write_main = RunDialog(L"Titan BIOS", COLOR_WHITE, lines, ARRAY_COUNT(lines), L"Sector 0 too", L"Backup only");
+        if (!write_backup && !write_main)
+        {
+            return false; // Nothing the BIOS would see
+        }
+    }
+
     LARGE_INTEGER RWOffset;
     RWOffset.QuadPart = 0;
     LARGE_INTEGER RWOffset_backup = get_backup_partition_offset_bytes();
 
     BYTE PartSector[HDD_SECTOR_SIZE]; // One sector, see partition.hpp
+    BYTE BackupSector[HDD_SECTOR_SIZE];
     memcpy(PartSector, &table, HDD_SECTOR_SIZE);
+    memcpy(BackupSector, &backup, HDD_SECTOR_SIZE);
 
     // From here D: may no longer match its partition
     if (m_LaunchPartition < 0 || MovesLaunchPartition(table))
@@ -406,19 +435,20 @@ bool App::write_partition_tables(const XboxPartitionTable table, bool *backup_wr
     // Backup first: if it fails nothing has been touched yet
     if (status == 0 && write_backup)
     {
-        status = NtWriteFile(hDisk, NULL, NULL, NULL, &IoStatusBlock, (PVOID)PartSector, HDD_SECTOR_SIZE, &RWOffset_backup);
+        status = NtWriteFile(hDisk, NULL, NULL, NULL, &IoStatusBlock, (PVOID)BackupSector, HDD_SECTOR_SIZE, &RWOffset_backup);
     }
 
-    if (status == 0)
+    if (status == 0 && write_main)
     {
         status = NtWriteFile(hDisk, NULL, NULL, NULL, &IoStatusBlock, (PVOID)PartSector, HDD_SECTOR_SIZE, &RWOffset);
     }
 
-    // The kernel and the editor need the new table too
+    // The kernel and the editor need the new table too (Titan: the one it reads)
     if (status == 0 && m_pKernelTable)
     {
-        memcpy(m_pKernelTable, &table, sizeof(XboxPartitionTable));
-        memcpy(&m_TableKernel, &table, sizeof(XboxPartitionTable));
+        const XboxPartitionTable &kernel = m_TitanBios ? backup : table;
+        memcpy(m_pKernelTable, &kernel, sizeof(XboxPartitionTable));
+        memcpy(&m_TableKernel, &kernel, sizeof(XboxPartitionTable));
     }
 
     if (hDisk != NULL)
@@ -434,6 +464,10 @@ bool App::write_partition_tables(const XboxPartitionTable table, bool *backup_wr
     if (backup_written != NULL)
     {
         *backup_written = write_backup;
+    }
+    if (main_written != NULL)
+    {
+        *main_written = write_main;
     }
 
     if (m_pKernelTable)

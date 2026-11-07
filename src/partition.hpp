@@ -89,19 +89,26 @@ typedef struct
 } XboxPartitionTableEntry;
 
 const uint32_t XboxPartitionTableMagicSize = 0x10;
-const uint32_t XboxPartitionTableHeaderReservedSize = 0x20;
+const uint32_t XboxPartitionTableHeaderVersionSize = 0x1;
+const uint32_t XboxPartitionTableHeaderReservedSize = 0x1F;
 const uint32_t XboxPartitionTableEntrySize = 0x20;
 const uint32_t XboxPartitionTableEntryCount = 14;
 const uint32_t XboxPartitionTableFooterSize = 0x10;
 
-const uint32_t XboxPartitionTableSize = XboxPartitionTableMagicSize + XboxPartitionTableHeaderReservedSize + (XboxPartitionTableEntryCount * XboxPartitionTableEntrySize) + XboxPartitionTableFooterSize;
+const uint32_t XboxPartitionTableSize = XboxPartitionTableMagicSize + XboxPartitionTableHeaderVersionSize + XboxPartitionTableHeaderReservedSize + (XboxPartitionTableEntryCount * XboxPartitionTableEntrySize) + XboxPartitionTableFooterSize;
 
 
 static_assert(sizeof(XboxPartitionTableEntry) == XboxPartitionTableEntrySize, "XboxPartitionTableEntry size is wrong!");
 
+// XboxPartitionTable::Version: how the LBAs are stored
+const unsigned char XBOX_TABLE_VERSION_LBA48_V3 = 0x00; // 32 bit LBAs
+const unsigned char XBOX_TABLE_VERSION_LBA48_V4 = 0x01; // 48 bit LBAs (the _high fields)
+const unsigned char XBOX_TABLE_VERSION_TITAN = 0x03;    // Titan patched BIOSes (only use the backup table)
+
 typedef struct
 {
     unsigned char Magic[XboxPartitionTableMagicSize];
+    unsigned char Version;
     unsigned char Reserved[XboxPartitionTableHeaderReservedSize];
     XboxPartitionTableEntry    TableEntries[XboxPartitionTableEntryCount];
     unsigned char Footer[XboxPartitionTableFooterSize];
@@ -110,6 +117,9 @@ typedef struct
 // The table is read and written as exactly one 512 byte sector
 static_assert(sizeof(XboxPartitionTable) == XboxPartitionTableSize, "XboxPartitionTable size is wrong!");
 static_assert(XboxPartitionTableSize == HDD_SECTOR_SIZE, "XboxPartitionTable must fill one sector!");
+// The version right after the magic, the entries where they always were
+static_assert(offsetof(XboxPartitionTable, Version) == 0x10, "XboxPartitionTable::Version is misplaced!");
+static_assert(offsetof(XboxPartitionTable, TableEntries) == 0x30, "XboxPartitionTable::TableEntries is misplaced!");
 
 class XboxPartitionTableManipulator {
 
@@ -162,6 +172,10 @@ public:
     static bool HasMagic(const XboxPartitionTable& part_table);
     // lba48 v4 only
     static bool HasHighLbaBits(const XboxPartitionTable& part_table);
+    // Has the magic and a version other than v3, v4 or Titan
+    static bool HasUnknownVersion(const XboxPartitionTable& part_table);
+    // The version a table written in this mode gets
+    static unsigned char VersionFor(const bool lbav4);
     // Magic, at least one partition in use, each with a size, after the first
     // usable sector, inside the disk (if total_sectors is known), no overlaps
     static bool IsTableUsable(const XboxPartitionTable& part_table, const uint64_t total_sectors);

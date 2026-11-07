@@ -16,6 +16,9 @@ wchar_t partition_letter(int index);
 void format_human_size(ULONGLONG sectors, wchar_t *out);
 // A start or end sector, 48 bits as 12 hex digits
 void format_table_lba(ULONGLONG lba, wchar_t *out);
+// Equal apart from the version: with a Titan BIOS the backup is 0x03 and a
+// copy in sector 0 is v4 or v3
+bool same_table_but_version(const XboxPartitionTable &a, const XboxPartitionTable &b);
 
 // Number pad units, in sectors. Sectors can be typed in decimal or hex.
 enum InputUnit

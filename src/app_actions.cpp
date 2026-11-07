@@ -221,10 +221,15 @@ void App::DoWriteTable()
     }
 
     bool backup_written = false;
-    if (write_partition_tables(m_pTable->GetPartitionTable(), &backup_written))
+    bool main_written = false;
+    if (write_partition_tables(m_pTable->GetPartitionTable(), &backup_written, &main_written))
     {
         LPCWSTR result = L"The partition table was written.";
-        if (m_pKernelTable == NULL)
+        if (!main_written)
+        {
+            result = L"Written to the backup table only (Titan BIOS).";
+        }
+        else if (m_pKernelTable == NULL)
         {
             result = L"Table written (no backup without an LBA48 BIOS).";
         }

@@ -12,6 +12,11 @@ void App::RunStartupChecks()
         QuitToDashboard();
     }
 
+    if (CheckStellar()) {
+        WarnStellarDetected();
+        QuitToDashboard();
+    }
+
     // The overview first, the specific warnings after it
     if (SystemInfoNeedsAttention())
     {
@@ -19,18 +24,116 @@ void App::RunStartupChecks()
     }
 
     // Before anything offers to write
+    CheckTableVersions();
     CheckForV4TableOnOldBios();
 
-    // On an older BIOS a restored v4 backup would be used at the wrong place
+    // A backup in Titan's version was written for a Titan BIOS (by it, or here
+    // with a copy in sector 0): keep writing it that way
+    m_TitanBios = IsBackupTableUsable() && m_TableHddBackup.Version == XBOX_TABLE_VERSION_TITAN;
+
+    // On an older BIOS a restored v4 backup would be used at the wrong place.
+    // Only a backup (sector 0 empty) may be a Titan BIOS's: asked first.
     const bool backup_needs_v4 = !m_FullLba48 && XboxPartitionTableManipulator::HasHighLbaBits(m_TableHddBackup);
-    if (!IsMainTableUsable() && IsBackupTableUsable() && !backup_needs_v4)
+    if (IsBackupTableUsable() && !backup_needs_v4)
     {
-        OfferBackupRestore();
+        if (!XboxPartitionTableManipulator::HasMagic(m_TableHdd))
+        {
+            OfferTitanOrRestore();
+        }
+        else if (!IsMainTableUsable())
+        {
+            OfferBackupRestore();
+        }
     }
 
     WarnUnalignedPartitions();
     WarnBackupOverlapped();
     CheckTableStatus();
+}
+
+// "kernel, hdd" for the tables that match
+static void list_tables(const XboxPartitionTable *const *tables, const LPCWSTR *names, int count,
+                        bool (*match)(const XboxPartitionTable &), wchar_t *out)
+{
+    out[0] = L'\0';
+    for (int i = 0; i < count; i++)
+    {
+        if (tables[i] != NULL && match(*tables[i]))
+        {
+            if (out[0] != L'\0')
+            {
+                wcscat(out, L", ");
+            }
+            wcscat(out, names[i]);
+        }
+    }
+}
+
+// A version other than v3, v4 or Titan is only warned about
+void App::CheckTableVersions()
+{
+    const XboxPartitionTable *tables[] = {m_pKernelTable != NULL ? &m_TableKernel : NULL, &m_TableHdd, &m_TableHddBackup};
+    static const LPCWSTR names[] = {L"kernel", L"hdd", L"hdd backup"};
+
+    wchar_t found_in[40];
+    list_tables(tables, names, ARRAY_COUNT(tables), XboxPartitionTableManipulator::HasUnknownVersion, found_in);
+    if (found_in[0] == L'\0')
+    {
+        return;
+    }
+
+    // The first unknown one's version, for the message
+    unsigned char version = 0;
+    for (int i = ARRAY_COUNT(tables) - 1; i >= 0; i--)
+    {
+        if (tables[i] != NULL && XboxPartitionTableManipulator::HasUnknownVersion(*tables[i]))
+        {
+            version = tables[i]->Version;
+        }
+    }
+
+    wchar_t line1[80];
+    wchar_t line2[80];
+    swprintf(line1, L"Unknown partition table version 0x%02X.", version);
+    swprintf(line2, L"Found in: %s.", found_in);
+    const LPCWSTR lines[] = {
+        line1,
+        line2,
+        L"Known are 0x00 (LBA48 v3), 0x01 (v4) and 0x03 (Titan):",
+        L"this one may be read wrong. Check it before writing.",
+    };
+    ShowWarning(lines, ARRAY_COUNT(lines));
+}
+
+// Sector 0 is empty and the backup is fine. Titan patched BIOSes only use the
+// backup table: with one, the backup is just written again (and from then on
+// every write asks about sector 0, see write_partition_tables). Otherwise the
+// usual restore question.
+void App::OfferTitanOrRestore()
+{
+    static const LPCWSTR lines[] = {
+        L"There is no partition table in sector 0, only the",
+        L"backup one. Titan patched BIOSes only use the backup.",
+        L"Do you have a Titan patched BIOS?",
+    };
+    if (!RunDialog(L"Warning", COLOR_WARNING, lines, ARRAY_COUNT(lines), L"Titan BIOS", L"No"))
+    {
+        m_TitanBios = false;
+        OfferBackupRestore();
+        return;
+    }
+
+    m_TitanBios = true;
+    bool main_written = false;
+    if (write_partition_tables(m_TableHddBackup, NULL, &main_written))
+    {
+        ShowMessage(L"Done", COLOR_GREEN, main_written ? L"Written as the backup and the main table."
+                                                       : L"The backup partition table was written.");
+    }
+    else
+    {
+        ShowMessage(L"Error", COLOR_RED, L"The backup partition table could not be written.");
+    }
 }
 
 // Without the patch the size is the 28 bit one: ends aren't checked (0)
@@ -104,6 +207,17 @@ void App::WarnUnalignedPartitions()
         L"it then needs formatting, and its data is lost.",
     };
     ShowWarning(lines, ARRAY_COUNT(lines));
+}
+
+void App::WarnStellarDetected()
+{
+    const LPCWSTR lines[] = {
+        L"You are currently running Stellar.",
+        L"This tool has not been tested with it.",
+        L"",
+        L"Returning you to your launcher.",
+    };
+    ShowError(lines, ARRAY_COUNT(lines));
 }
 
 // Pre v4 patches only use the low 32 bits of each LBA: a table with v4
@@ -184,8 +298,7 @@ void App::CheckTableStatus()
 {
     // Only when both are usable: a broken main gets the restore question,
     // and no backup is normal with other tools
-    if (IsMainTableUsable() && IsBackupTableUsable() &&
-        memcmp(&m_TableHdd, &m_TableHddBackup, sizeof(XboxPartitionTable)) != 0)
+    if (IsMainTableUsable() && IsBackupTableUsable() && !same_table_but_version(m_TableHdd, m_TableHddBackup))
     {
         static const LPCWSTR lines[] = {
             L"The main and backup partition tables don't match!",

@@ -112,10 +112,23 @@ void App::DisplaySystemInfo()
     ADD_INFO_ROW(L"Usable", COLOR_WHITE);
 
     const bool main_valid = IsMainTableUsable();
-    if (main_valid)
+    if (main_valid && XboxPartitionTableManipulator::HasUnknownVersion(m_TableHdd))
     {
-        swprintf(rows[row_count].value, L"valid (sector 0)");
+        swprintf(rows[row_count].value, L"valid, unknown version 0x%02X (sector 0)", m_TableHdd.Version);
+        ADD_INFO_ROW(L"Partition table", COLOR_YELLOW);
+    }
+    else if (main_valid)
+    {
+        swprintf(rows[row_count].value, L"valid, %s (sector 0)",
+                 (m_TableHdd.Version == XBOX_TABLE_VERSION_TITAN)    ? L"Titan"
+                 : (m_TableHdd.Version == XBOX_TABLE_VERSION_LBA48_V4) ? L"v4"
+                                                                       : L"v3");
         ADD_INFO_ROW(L"Partition table", COLOR_GREEN);
+    }
+    else if (m_TitanBios && !XboxPartitionTableManipulator::HasMagic(m_TableHdd))
+    {
+        swprintf(rows[row_count].value, L"none, Titan BIOS uses the backup");
+        ADD_INFO_ROW(L"Partition table", COLOR_GREY);
     }
     else
     {
@@ -133,10 +146,10 @@ void App::DisplaySystemInfo()
             swprintf(value, L"damaged (sector %I64u)", m_pTable->GetBackupTableLba());
             backup_color = COLOR_RED;
         }
-        else if (!main_valid || memcmp(&m_TableHdd, &m_TableHddBackup, sizeof(XboxPartitionTable)) == 0)
+        else if (!main_valid || same_table_but_version(m_TableHdd, m_TableHddBackup))
         {
             swprintf(value, L"valid (sector %I64u)", m_pTable->GetBackupTableLba());
-            backup_color = main_valid ? COLOR_GREEN : COLOR_YELLOW;
+            backup_color = (main_valid || m_TitanBios) ? COLOR_GREEN : COLOR_YELLOW;
         }
         else
         {

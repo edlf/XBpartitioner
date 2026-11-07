@@ -121,13 +121,17 @@ void App::SaveSettings()
     length += sprintf(text + length, "\r\n%s=%d\r\n%s=%d\r\n", SETTING_ANIMATIONS, m_Animations ? 1 : 0,
                       SETTING_FORCE_LBA48_V3, m_ForceLba48V3 ? 1 : 0);
 
+    // The drive can take a while (spinning up): without this the screen just stops
+    static const LPCWSTR busy = L"Saving settings...";
+    const DWORD opened = OpenBusyWindow(busy);
+
     HANDLE file = CreateFile(SETTINGS_PATH, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-    if (file == INVALID_HANDLE_VALUE)
+    if (file != INVALID_HANDLE_VALUE)
     {
-        return;
+        DWORD written = 0;
+        WriteFile(file, text, (DWORD)length, &written, NULL);
+        CloseHandle(file);
     }
 
-    DWORD written = 0;
-    WriteFile(file, text, (DWORD)length, &written, NULL);
-    CloseHandle(file);
+    CloseBusyWindow(busy, opened);
 }

@@ -39,7 +39,7 @@ App::App()
       m_FullLba48(false), m_TotalHddSectors(0), m_Physical4k(false), m_BackupStatus(BACKUP_NOT_USED), m_Lba48Version(0),
       m_CurrentPart(0), m_SelectionBarY(0.0f), m_SelectionBarPlaced(false), m_SelectionBarTick(0),
       m_LoadedTable(LOADED_TABLE_KERNEL), m_pActiveEditView(NULL), m_WaitForRelease(false),
-      m_LaunchPartition(-1), m_ThemeSaveBlocked(false), m_Animations(true), m_ForceLba48V3(false)
+      m_LaunchPartition(-1), m_ThemeSaveBlocked(false), m_Animations(true), m_ForceLba48V3(false), m_TitanBios(false)
 {
     memset(m_ClusterSizes, 0, sizeof(m_ClusterSizes));
     memset(&m_TableKernel, 0, sizeof(m_TableKernel));
@@ -187,6 +187,23 @@ bool App::ConfirmExit()
         L"Exit XBpartitioner and return to the dashboard?",
     };
     return RunDialog(L"Exit", COLOR_WHITE, lines, ARRAY_COUNT(lines), L"Exit", L"Cancel");
+}
+
+bool App::CheckStellar()
+{
+    const char* stellarSignature = "stellar";
+    size_t stellarSignatureLen = strlen(stellarSignature);
+    BYTE* stellarScanStart = (BYTE*)0x80010000;
+    BYTE* stellarScanEnd = (BYTE*)0x80026800; // 90kb
+
+    for (BYTE* scanPtr = stellarScanStart; scanPtr < stellarScanEnd - stellarSignatureLen; scanPtr++)
+    {
+        if (_memicmp(scanPtr, stellarSignature, stellarSignatureLen) == 0) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 // Does not return

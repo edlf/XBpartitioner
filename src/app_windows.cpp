@@ -111,6 +111,11 @@ void App::ShowWarning(const LPCWSTR *lines, int line_count)
     RunDialog(L"Warning", COLOR_WARNING, lines, line_count, L"OK", NULL);
 }
 
+void App::ShowError(const LPCWSTR* lines, int line_count)
+{
+    RunDialog(L"Error", COLOR_WARNING, lines, line_count, L"OK", NULL);
+}
+
 void App::FadeIn()
 {
     for (int alpha = 0xff; alpha > 0x06; alpha -= 0x06)
@@ -150,6 +155,55 @@ void App::ShowStatus(LPCWSTR message, Color color)
 void App::ShowMessage(LPCWSTR title, Color title_color, LPCWSTR message)
 {
     RunDialog(title, title_color, &message, 1, L"OK", NULL);
+}
+
+// Shown at least this long, so a fast save doesn't just flicker
+static const DWORD BUSY_MIN_MS = 300;
+
+// One centered line in a dialog wide panel
+void App::BusyWindowBox(int *top, int *bottom)
+{
+    const int height = m_Ui.TextBoxHeight(FONT_TEXT, m_Layout->dialog_padding);
+    *top = (m_Layout->height - height) / 2;
+    *bottom = *top + height;
+}
+
+void App::DrawBusyWindow(LPCWSTR message)
+{
+    int top, bottom;
+    BusyWindowBox(&top, &bottom);
+
+    m_Ui.BeginFrame();
+    DrawMainScreen();
+    m_Ui.Rect((FLOAT)m_Layout->dialog_left, (FLOAT)top, (FLOAT)m_Layout->dialog_right, (FLOAT)bottom, Colors().panel,
+              Colors().panel);
+    m_Ui.Outline((FLOAT)m_Layout->dialog_left, (FLOAT)top, (FLOAT)m_Layout->dialog_right, (FLOAT)bottom,
+                 Colors().panel_border);
+    m_Ui.Text(FONT_TEXT, message, m_Layout->width / 2, m_Ui.TextYCentered(FONT_TEXT, top, bottom), COLOR_WHITE,
+              XFONT_CENTER);
+    m_Ui.EndFrame();
+}
+
+// Drawn before the slow work starts, so it stays on screen however long it takes
+DWORD App::OpenBusyWindow(LPCWSTR message)
+{
+    int top, bottom;
+    BusyWindowBox(&top, &bottom);
+    AnimatePanelOpen(m_Layout->dialog_left, top, m_Layout->dialog_right, bottom);
+    DrawBusyWindow(message);
+    return GetTickCount();
+}
+
+void App::CloseBusyWindow(LPCWSTR message, DWORD opened)
+{
+    while (GetTickCount() - opened < BUSY_MIN_MS)
+    {
+        DrawBusyWindow(message);
+    }
+
+    int top, bottom;
+    BusyWindowBox(&top, &bottom);
+    AnimatePanelClose(m_Layout->dialog_left, top, m_Layout->dialog_right, bottom);
 }
 
 void App::ShowInfoPanel(LPCWSTR title, const InfoRow *rows, int row_count)
