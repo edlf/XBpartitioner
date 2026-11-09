@@ -185,11 +185,8 @@ bool FatxBuildReclustered(FatxDevice &original, uint64_t lba_size, uint32_t new_
     {
         return fail(result, FATX_RECLUSTER_BAD_SIZE);
     }
-    if (new_cluster_bytes == result->old_cluster_bytes)
-    {
-        return fail(result, FATX_RECLUSTER_SAME);
-    }
-    if (new_cluster_bytes / 1024 < ClusterSizeKbFor(lba_size))
+    // Keeping the size (defragmenting) is fine whatever the size is
+    if (new_cluster_bytes != result->old_cluster_bytes && new_cluster_bytes / 1024 < ClusterSizeKbFor(lba_size))
     {
         return fail(result, FATX_RECLUSTER_TOO_SMALL);
     }

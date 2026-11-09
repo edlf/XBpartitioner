@@ -98,7 +98,16 @@ enum FatxCheckStatus
     FATX_CHECK_NO_MEMORY
 };
 
-// About 10 KB, so allocate it rather than using the Xbox's 64 KB stack
+// The most fragmented files the check keeps, most pieces first
+const int FATX_CHECK_WORST_FILES = 5;
+
+typedef struct
+{
+    uint32_t pieces; // Runs of consecutive clusters
+    char path[FATX_CHECK_MESSAGE_LENGTH];
+} FatxFragmentedFile;
+
+// About 11 KB, so allocate it rather than using the Xbox's 64 KB stack
 typedef struct
 {
     FatxCheckStatus status;
@@ -111,6 +120,13 @@ typedef struct
     uint64_t used_clusters; // Not free and not bad
     uint64_t bad_clusters;
     uint64_t lost_clusters; // Marked used, but no file uses them
+
+    // Fragmentation: files whose clusters aren't all in one run, and how many
+    // runs more than one each that adds up to
+    uint64_t fragmented_files;
+    uint64_t extra_pieces;
+    uint32_t worst_count;
+    FatxFragmentedFile worst[FATX_CHECK_WORST_FILES];
 
     // Everything is counted, but only the first FATX_CHECK_MAX_MESSAGES are kept
     uint32_t errors;

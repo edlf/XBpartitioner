@@ -58,6 +58,11 @@ void usage()
             "      the new file system in <image>.recluster.tmp, then copies it back.\n"
             "      --resume repeats the copy after a power cut. Images only.\n"
             "\n"
+            "  fatxtool defrag <image> [--partition N] [--write]\n"
+            "  fatxtool defrag <image> --resume [--partition N]\n"
+            "      Defragments: recluster to the cluster size it has, so every file\n"
+            "      ends up unfragmented. check shows how fragmented it is.\n"
+            "\n"
             "  fatxtool trim <disk> [--partition N] [--list] [--write]\n"
             "      TRIMs the free clusters of every FATX partition that checks clean.\n"
             "      <disk> is \\\\.\\PhysicalDriveN (run as administrator), or a disk\n"
@@ -141,6 +146,28 @@ enum Mode
     MODE_REPAIR_WRITE
 };
 
+// How many files are fragmented, and the worst ones
+void print_fragmentation(const FatxCheckResult *result)
+{
+    if (result->files == 0)
+    {
+        return;
+    }
+    if (result->fragmented_files == 0)
+    {
+        printf("  Fragmentation: none, no file is fragmented.\n");
+        return;
+    }
+    printf("  Fragmentation: %I64u of %I64u files fragmented (%I64u extra fragments). Most:\n",
+           result->fragmented_files,
+           result->files,
+           result->extra_pieces);
+    for (uint32_t i = 0; i < result->worst_count; i++)
+    {
+        printf("    %u fragments: %s\n", result->worst[i].pieces, result->worst[i].path);
+    }
+}
+
 // Prints a check's result and returns its exit code
 int print_check(const FatxCheckResult *result)
 {
@@ -176,6 +203,7 @@ int print_check(const FatxCheckResult *result)
                result->layout.cluster_limit - 1,
                result->lost_clusters,
                result->bad_clusters);
+        print_fragmentation(result);
         break;
     }
 
@@ -847,7 +875,8 @@ int copy_reclustered(FILE *image, uint64_t partition_offset, uint64_t lba_size, 
     return check_resized(partition, lba_size, progress);
 }
 
-int command_recluster(int argc, char **argv)
+// defrag: argv[1] is ignored, the cluster size stays what it is
+int command_recluster(int argc, char **argv, bool defrag)
 {
     if (argc < 2)
     {
@@ -856,7 +885,7 @@ int command_recluster(int argc, char **argv)
     }
     const std::string path = argv[0];
     const bool resume = strcmp(argv[1], "--resume") == 0;
-    const uint32_t new_cluster_bytes = resume ? 0 : (uint32_t)atoi(argv[1]) * 1024;
+    uint32_t new_cluster_bytes = (resume || defrag) ? 0 : (uint32_t)atoi(argv[1]) * 1024;
     int only = 0;
     bool write = false;
     for (int i = 2; i < argc; i++)
@@ -877,7 +906,7 @@ int command_recluster(int argc, char **argv)
     }
     if (DiskTarget::IsDrivePath(path))
     {
-        fprintf(stderr, "recluster needs an image: it builds the new file system as a full copy first.\n");
+        fprintf(stderr, "%s needs an image: it builds the new file system as a full copy first.\n", defrag ? "defrag" : "recluster");
         return EXIT_FAILED;
     }
     const std::string plan_path = path + ".recluster";
@@ -951,11 +980,36 @@ int command_recluster(int argc, char **argv)
         return code;
     }
 
+    FileDevice device(file, start * HDD_SECTOR_SIZE);
+    if (defrag)
+    {
+        uint32_t sectors_per_cluster = 0;
+        device.Read(FATX_SECTORS_PER_CLUSTER_OFFSET, &sectors_per_cluster, sizeof(sectors_per_cluster));
+        new_cluster_bytes = sectors_per_cluster * HDD_SECTOR_SIZE;
+    }
+
     print_mb("", lba_size);
-    printf(", to %u KB clusters\n", new_cluster_bytes / 1024);
+    printf(defrag ? ", defragmenting (%u KB clusters)\n" : ", to %u KB clusters\n", new_cluster_bytes / 1024);
     fflush(stdout);
 
-    FileDevice device(file, start * HDD_SECTOR_SIZE);
+    // Rebuilding a partition with no file fragmented would change nothing
+    if (defrag)
+    {
+        FatxCheckResult *before = new FatxCheckResult;
+        FatxCheck(device, lba_size * HDD_SECTOR_SIZE, before, &progress);
+        const bool nothing = before->status == FATX_CHECK_DONE && before->errors == 0 && before->fragmented_files == 0;
+        if (nothing)
+        {
+            print_fragmentation(before);
+            printf("  Nothing to defragment.\n");
+        }
+        delete before;
+        if (nothing)
+        {
+            fclose(file);
+            return EXIT_CLEAN;
+        }
+    }
     FatxReclusterResult *result = new FatxReclusterResult;
     FILE *build_file = NULL;
     FileDevice *build = NULL;
@@ -974,6 +1028,10 @@ int command_recluster(int argc, char **argv)
         recorder = new FatxRangeRecorder(*build);
     }
     FatxBuildReclustered(device, lba_size, new_cluster_bytes, recorder, result, &progress);
+    if (defrag && result->check.status == FATX_CHECK_DONE)
+    {
+        print_fragmentation(&result->check);
+    }
 
     int code = EXIT_ERRORS;
     if (result->status == FATX_RECLUSTER_PLANNED || result->status == FATX_RECLUSTER_DONE || result->status == FATX_RECLUSTER_NO_ROOM)
@@ -995,9 +1053,6 @@ int command_recluster(int argc, char **argv)
         code = EXIT_CLEAN;
         break;
     case FATX_RECLUSTER_DONE:
-        break;
-    case FATX_RECLUSTER_SAME:
-        printf("  It already has %u KB clusters.\n", new_cluster_bytes / 1024);
         break;
     case FATX_RECLUSTER_BAD_SIZE:
         printf("  The cluster size must be a power of two from 16 to 1024 KB.\n");
@@ -1321,7 +1376,29 @@ int main(int argc, char **argv)
     }
     if (argc >= 2 && strcmp(argv[1], "recluster") == 0)
     {
-        return command_recluster(argc - 2, argv + 2);
+        return command_recluster(argc - 2, argv + 2, false);
+    }
+    if (argc >= 3 && strcmp(argv[1], "defrag") == 0)
+    {
+        // As recluster, with a placeholder where the cluster size would go
+        static char resume_arg[] = "--resume";
+        static char keep_arg[] = "-";
+        std::vector<char *> args;
+        args.push_back(argv[2]);
+        bool resume = false;
+        for (int i = 3; i < argc; i++)
+        {
+            resume = resume || strcmp(argv[i], "--resume") == 0;
+        }
+        args.push_back(resume ? resume_arg : keep_arg);
+        for (int i = 3; i < argc; i++)
+        {
+            if (strcmp(argv[i], "--resume") != 0)
+            {
+                args.push_back(argv[i]);
+            }
+        }
+        return command_recluster((int)args.size(), args.data(), true);
     }
     if (argc >= 2 && strcmp(argv[1], "resize") == 0)
     {

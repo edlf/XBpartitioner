@@ -46,7 +46,6 @@ enum FatxReclusterStatus
 {
     FATX_RECLUSTER_DONE = 0,
     FATX_RECLUSTER_PLANNED,      // Dry run; it fits
-    FATX_RECLUSTER_SAME,         // Already that cluster size
     FATX_RECLUSTER_BAD_SIZE,     // Not a power of two from 16 KB to 1 MB
     FATX_RECLUSTER_TOO_SMALL,    // Below XBpartitioner's size for the partition
     FATX_RECLUSTER_NOT_FATX,
@@ -71,7 +70,8 @@ typedef struct
     FatxCheckResult check;       // The original's check
 } FatxReclusterResult;
 
-// Step 1. Pass a NULL build for a dry run.
+// Step 1. Pass a NULL build for a dry run. The same cluster size as now
+// defragments: every file is written unfragmented.
 bool FatxBuildReclustered(FatxDevice &original, uint64_t lba_size, uint32_t new_cluster_bytes, FatxRangeRecorder *build, FatxReclusterResult *result,
                           FatxProgress *progress = NULL);
 

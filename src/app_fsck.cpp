@@ -358,6 +358,13 @@ bool App::ShowCheckResult(int partition, const FatxCheckResult &result, LPCWSTR 
             {
                 swprintf(line_counts, L"No errors, %u warnings.", result.warnings);
             }
+            // The dialog's lines are all spoken for: fragmentation goes here
+            if (result.fragmented_files > 0)
+            {
+                wchar_t fragmented[40];
+                swprintf(fragmented, L" %I64u files fragmented.", result.fragmented_files);
+                wcscat(line_counts, fragmented);
+            }
             lines[line_count++] = line_counts;
         }
         else

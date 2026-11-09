@@ -519,15 +519,21 @@ class Checker
     // Marks a chain's clusters as used and, for a folder, reads its entries.
     // Problems are reported and end the walk; it only returns false on read
     // or memory failures. *clean is set if the chain ended normally.
-    bool FollowChain(uint32_t first, const char *path, bool dir, uint64_t *count, bool *clean = NULL)
+    // *pieces: runs of consecutive clusters (1 for an unfragmented chain).
+    bool FollowChain(uint32_t first, const char *path, bool dir, uint64_t *count, bool *clean = NULL, uint64_t *pieces = NULL)
     {
         const uint32_t limit = (uint32_t)m_result->layout.cluster_limit;
         bool dir_ended = false;
         uint32_t cluster = first;
+        uint32_t previous = 0;
         *count = 0;
         if (clean != NULL)
         {
             *clean = false;
+        }
+        if (pieces != NULL)
+        {
+            *pieces = 0;
         }
 
         while (true)
@@ -544,6 +550,11 @@ class Checker
             }
             MarkReferenced(cluster);
             (*count)++;
+            if (pieces != NULL && cluster != previous + 1)
+            {
+                (*pieces)++;
+            }
+            previous = cluster;
 
             if (dir && !dir_ended && !ReadDirectoryCluster(cluster, path, &dir_ended))
             {
@@ -680,7 +691,12 @@ class Checker
         {
             uint64_t count;
             bool clean;
-            ok = FollowChain(entry.first_cluster, full, false, &count, &clean);
+            uint64_t pieces;
+            ok = FollowChain(entry.first_cluster, full, false, &count, &clean, &pieces);
+            if (ok && pieces > 1)
+            {
+                NoteFragmented(full, pieces);
+            }
             if (ok && count < needed)
             {
                 Report(true, "%s: %u bytes need %I64u clusters, the chain has %I64u.", full, entry.file_size, needed, count);
@@ -697,6 +713,36 @@ class Checker
         }
         free(full);
         return ok;
+    }
+
+    // Counts a fragmented file, and keeps the worst ones
+    void NoteFragmented(const char *path, uint64_t pieces)
+    {
+        m_result->fragmented_files++;
+        m_result->extra_pieces += pieces - 1;
+
+        const uint32_t capped = pieces > 0xFFFFFFFFULL ? 0xFFFFFFFFU : (uint32_t)pieces;
+        FatxFragmentedFile *worst = m_result->worst;
+        uint32_t &count = m_result->worst_count;
+        if (count == FATX_CHECK_WORST_FILES && capped <= worst[count - 1].pieces)
+        {
+            return;
+        }
+        // Into place, most pieces first; the last one drops off when full
+        uint32_t at = (count < FATX_CHECK_WORST_FILES) ? count++ : count - 1;
+        while (at > 0 && worst[at - 1].pieces < capped)
+        {
+            worst[at] = worst[at - 1];
+            at--;
+        }
+        worst[at].pieces = capped;
+        size_t length = 0;
+        while (path[length] != '\0' && length < sizeof(worst[at].path) - 1)
+        {
+            worst[at].path[length] = path[length];
+            length++;
+        }
+        worst[at].path[length] = '\0';
     }
 
     // Reports duplicate names (the Xbox ignores case)

@@ -168,7 +168,6 @@ TEST(FatxRecluster, Refusals)
     MakeOriginal(device, lba);
     FatxReclusterResult *result = new FatxReclusterResult;
 
-    EXPECT_EQ(Convert(device, lba, 16 * 1024, result), FATX_RECLUSTER_SAME);
     EXPECT_EQ(Convert(device, lba, 8 * 1024, result), FATX_RECLUSTER_BAD_SIZE);
     EXPECT_EQ(Convert(device, lba, 24 * 1024, result), FATX_RECLUSTER_BAD_SIZE);
     EXPECT_EQ(Convert(device, lba, 2048 * 1024, result), FATX_RECLUSTER_BAD_SIZE);
@@ -299,4 +298,151 @@ TEST(FatxRecluster, PowerCutWhileCopyingBack)
             return;
         }
     }
+}
+
+namespace
+{
+
+// Small files placed in the way, then two files allocated across them:
+// "two" in 2 pieces, "three" in 3 (allocation skips used clusters)
+void MakeFragmented(SparseDevice &device, uint64_t lba_size)
+{
+    FatxWriter writer(device, lba_size * HDD_SECTOR_SIZE, CLUSTER);
+    ASSERT_TRUE(writer.Format(SERIAL));
+    const uint32_t root = writer.RootCluster();
+    std::vector<unsigned char> one(CLUSTER, 1);
+    writer.SetNextFree(12);
+    ASSERT_TRUE(writer.AddFile(root, "block12", one.data(), CLUSTER));
+    writer.SetNextFree(22);
+    ASSERT_TRUE(writer.AddFile(root, "block22", one.data(), CLUSTER));
+    writer.SetNextFree(24);
+    ASSERT_TRUE(writer.AddFile(root, "block24", one.data(), CLUSTER));
+
+    std::vector<unsigned char> data(6 * CLUSTER);
+    for (size_t i = 0; i < data.size(); i++)
+    {
+        data[i] = (unsigned char)(i * 13);
+    }
+    writer.SetNextFree(10); // 10, 11, then 13 to 15
+    ASSERT_TRUE(writer.AddFile(root, "two", data.data(), 5 * CLUSTER));
+    writer.SetNextFree(20); // 20, 21, 23, then 25 to 27
+    ASSERT_TRUE(writer.AddFile(root, "three", data.data(), 6 * CLUSTER));
+    ASSERT_TRUE(writer.Flush());
+}
+
+} // namespace
+
+TEST(FatxFragmentation, CheckCountsThePieces)
+{
+    const uint64_t lba = 64 * MB / HDD_SECTOR_SIZE;
+    SparseDevice device;
+    MakeFragmented(device, lba);
+
+    FatxCheckResult *result = new FatxCheckResult;
+    ASSERT_TRUE(FatxCheck(device, lba * HDD_SECTOR_SIZE, result));
+    EXPECT_EQ(result->errors, 0u);
+    EXPECT_EQ(result->files, 5u);
+    EXPECT_EQ(result->fragmented_files, 2u);
+    EXPECT_EQ(result->extra_pieces, 3u); // 1 + 2
+    ASSERT_EQ(result->worst_count, 2u);
+    EXPECT_EQ(result->worst[0].pieces, 3u);
+    EXPECT_STREQ(result->worst[0].path, "\\three");
+    EXPECT_EQ(result->worst[1].pieces, 2u);
+    EXPECT_STREQ(result->worst[1].path, "\\two");
+    delete result;
+}
+
+TEST(FatxFragmentation, KeepsTheWorstFive)
+{
+    const uint64_t lba = 64 * MB / HDD_SECTOR_SIZE;
+    SparseDevice device;
+    FatxWriter writer(device, lba * HDD_SECTOR_SIZE, CLUSTER);
+    ASSERT_TRUE(writer.Format(SERIAL));
+    const uint32_t root = writer.RootCluster();
+    std::vector<unsigned char> data(10 * CLUSTER, 7);
+
+    // File n (1 to 8) gets n + 1 pieces: blockers every other cluster
+    uint32_t at = 100;
+    for (int n = 1; n <= 8; n++)
+    {
+        for (int b = 0; b < n; b++)
+        {
+            writer.SetNextFree(at + 1 + 2 * b);
+            ASSERT_TRUE(writer.AddFile(root, ("b" + std::to_string(n) + "_" + std::to_string(b)).c_str(), data.data(), CLUSTER));
+        }
+        writer.SetNextFree(at);
+        ASSERT_TRUE(writer.AddFile(root, ("file" + std::to_string(n)).c_str(), data.data(), (uint32_t)(n + 1) * CLUSTER));
+        at += 100;
+    }
+    ASSERT_TRUE(writer.Flush());
+
+    FatxCheckResult *result = new FatxCheckResult;
+    ASSERT_TRUE(FatxCheck(device, lba * HDD_SECTOR_SIZE, result));
+    EXPECT_EQ(result->fragmented_files, 8u);
+    ASSERT_EQ(result->worst_count, (uint32_t)FATX_CHECK_WORST_FILES);
+    for (int i = 0; i < FATX_CHECK_WORST_FILES; i++)
+    {
+        EXPECT_EQ(result->worst[i].pieces, (uint32_t)(9 - i)) << i;
+        EXPECT_EQ(std::string(result->worst[i].path), "\\file" + std::to_string(8 - i)) << i;
+    }
+    delete result;
+}
+
+// Defragmenting: a recluster to the size it has, no file fragmented
+TEST(FatxFragmentation, SameClusterSizeDefragments)
+{
+    const uint64_t lba = 64 * MB / HDD_SECTOR_SIZE;
+    SparseDevice device;
+    MakeFragmented(device, lba);
+    const std::vector<unsigned char> header = Header(device);
+
+    FatxReclusterResult *result = new FatxReclusterResult;
+    EXPECT_EQ(Convert(device, lba, CLUSTER, result), FATX_RECLUSTER_DONE);
+    delete result;
+
+    FatxCheckResult *check = new FatxCheckResult;
+    ASSERT_TRUE(FatxCheck(device, lba * HDD_SECTOR_SIZE, check));
+    EXPECT_EQ(check->errors, 0u);
+    EXPECT_EQ(check->warnings, 0u);
+    EXPECT_EQ(check->files, 5u);
+    EXPECT_EQ(check->fragmented_files, 0u);
+    EXPECT_EQ(check->cluster_bytes, CLUSTER);
+    delete check;
+    ExpectSameHeader(header, Header(device));
+
+    // The contents came along
+    FatxWriter reader(device, lba * HDD_SECTOR_SIZE);
+    ASSERT_TRUE(reader.Load());
+    FatxDirent entry;
+    bool found = false;
+    for (uint32_t i = 0; reader.GetEntry(reader.RootCluster(), i, &entry); i++)
+    {
+        if (entry.name_length == 5 && memcmp(entry.name, "three", 5) == 0)
+        {
+            found = true;
+            std::vector<unsigned char> data(6 * CLUSTER);
+            for (uint32_t c = 0; c < 6; c++)
+            {
+                ASSERT_TRUE(device.Read(reader.ClusterOffset(entry.first_cluster + c), data.data() + c * CLUSTER, CLUSTER));
+            }
+            for (size_t b = 0; b < data.size(); b++)
+            {
+                ASSERT_EQ(data[b], (unsigned char)(b * 13)) << "at byte " << b;
+            }
+        }
+    }
+    EXPECT_TRUE(found);
+}
+
+// Past 256 GB XBpartitioner would want bigger clusters, but keeping the
+// size it has is still allowed: that's a defragment, not a change
+TEST(FatxFragmentation, DefragmentsSmallerClustersThanXBpartitionerWouldUse)
+{
+    SparseDevice device;
+    const uint64_t lba = 64 * MB / HDD_SECTOR_SIZE;
+    MakeOriginal(device, lba, 16 * 1024);
+    FatxReclusterResult *result = new FatxReclusterResult;
+    // Only the header and FAT of the first 64 MB are there; the size just has to pass the size rules
+    EXPECT_NE(Convert(device, 0x30000000, 16 * 1024, result), FATX_RECLUSTER_TOO_SMALL);
+    delete result;
 }

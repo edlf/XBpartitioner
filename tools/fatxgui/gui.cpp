@@ -567,6 +567,28 @@ void scan_drives()
 
 // ---- Logging results, like fatxtool prints them
 
+// How many files are fragmented, and the worst ones
+void log_fragmentation(const FatxCheckResult &result)
+{
+    if (result.files == 0)
+    {
+        return;
+    }
+    if (result.fragmented_files == 0)
+    {
+        log_line(TONE_TEXT, "  Fragmentation: none, no file is fragmented.");
+        return;
+    }
+    log_line(
+        TONE_TEXT,
+        format(
+            "  Fragmentation: %llu of %llu files fragmented (%llu extra fragments). Most:", result.fragmented_files, result.files, result.extra_pieces));
+    for (uint32_t i = 0; i < result.worst_count; i++)
+    {
+        log_line(TONE_DIM, format("    %u fragments: %s", result.worst[i].pieces, result.worst[i].path));
+    }
+}
+
 void log_check(const FatxCheckResult &result)
 {
     switch (result.status)
@@ -598,6 +620,7 @@ void log_check(const FatxCheckResult &result)
                         result.layout.cluster_limit - 1,
                         result.lost_clusters,
                         result.bad_clusters));
+        log_fragmentation(result);
         break;
     }
 
@@ -966,9 +989,6 @@ void log_recluster(const FatxReclusterResult &result, uint32_t new_cluster_bytes
     case FATX_RECLUSTER_DONE:
         log_line(TONE_GOOD, "  Built and checked.");
         break;
-    case FATX_RECLUSTER_SAME:
-        log_line(TONE_WARN, format("  It already has %u KB clusters.", new_cluster_bytes / 1024));
-        break;
     case FATX_RECLUSTER_BAD_SIZE:
         log_line(TONE_ERROR, "  The cluster size must be a power of two from 16 to 1024 KB.");
         break;
@@ -1000,15 +1020,17 @@ void log_recluster(const FatxReclusterResult &result, uint32_t new_cluster_bytes
     }
 }
 
+// The cluster size it has now defragments: every file is rewritten unfragmented
 void do_recluster(const Part part, uint32_t new_cluster_bytes)
 {
     const Source src = g_src;
-    log_line(TONE_TITLE, partition_name(part.index) + format(": change to %u KB clusters", new_cluster_bytes / 1024));
+    const bool defrag = new_cluster_bytes == part.usage.cluster_bytes;
+    log_line(TONE_TITLE, partition_name(part.index) + (defrag ? ": defragment" : format(": change to %u KB clusters", new_cluster_bytes / 1024)));
     auto planned = std::make_shared<bool>(false);
     start_job(
         "Checking " + partition_name(part.index),
         false,
-        [src, part, new_cluster_bytes, planned](Job &job) {
+        [src, part, new_cluster_bytes, planned, defrag](Job &job) {
             SourceIo io;
             std::string error;
             if (!io.Open(src, false, false, &error))
@@ -1019,81 +1041,93 @@ void do_recluster(const Part part, uint32_t new_cluster_bytes)
             FatxOffsetDevice device(io.Disk(), part.start * HDD_SECTOR_SIZE);
             auto result = std::make_unique<FatxReclusterResult>();
             FatxBuildReclustered(device, part.sectors, new_cluster_bytes, nullptr, result.get(), &job);
+            if (defrag && result->check.status == FATX_CHECK_DONE)
+            {
+                log_fragmentation(result->check);
+            }
+            // No file fragmented: nothing to rebuild
+            if (defrag && result->status == FATX_RECLUSTER_PLANNED && result->check.fragmented_files == 0)
+            {
+                log_line(TONE_GOOD, "  Nothing to defragment.");
+                return;
+            }
             log_recluster(*result, new_cluster_bytes, part.sectors);
             *planned = result->status == FATX_RECLUSTER_PLANNED;
         },
-        [src, part, new_cluster_bytes, planned]() {
+        [src, part, new_cluster_bytes, planned, defrag]() {
             if (!*planned)
             {
                 return;
             }
             const fs::path build_path = recluster_build_path(src.path);
-            ask("Change the cluster size",
-                {format("%s gets %u KB clusters. Every file is kept,", partition_name(part.index).c_str(), new_cluster_bytes / 1024),
+            const std::string first = defrag
+                                          ? format("Every file of %s is rewritten unfragmented and kept,", partition_name(part.index).c_str())
+                                          : format("%s gets %u KB clusters. Every file is kept,", partition_name(part.index).c_str(), new_cluster_bytes / 1024);
+            ask(defrag ? "Defragment" : "Change the cluster size",
+                {first,
                  "but every byte of the partition is rewritten.",
                  "The new file system is built in " + utf8(build_path.filename().wstring()) + " next to",
                  "the image first: that needs free space for the files on it."},
-                "Change it",
-                [src, part, new_cluster_bytes]() {
-                    start_job(
-                        "Changing the cluster size of " + partition_name(part.index),
-                        true,
-                        [src, part, new_cluster_bytes](Job &job) {
-                            const fs::path plan_path = recluster_plan_path(src.path);
-                            const fs::path build_path = recluster_build_path(src.path);
-                            SourceIo io;
-                            std::string error;
-                            if (!io.Open(src, true, false, &error))
-                            {
-                                log_line(TONE_ERROR, "  " + error);
-                                return;
-                            }
-                            FILE *build_file = nullptr;
-                            if (_wfopen_s(&build_file, build_path.c_str(), L"w+b") != 0 || build_file == nullptr)
-                            {
-                                log_line(TONE_ERROR, "  Can't create " + utf8(build_path.wstring()));
-                                return;
-                            }
-                            make_sparse(build_file);
-                            FatxOffsetDevice device(io.Disk(), part.start * HDD_SECTOR_SIZE);
-                            std::vector<FatxRange> ranges;
-                            bool built = false;
-                            {
-                                FileDevice build(build_file, 0);
-                                FatxRangeRecorder recorder(build);
-                                auto result = std::make_unique<FatxReclusterResult>();
-                                SubProgress build_progress(job, 0, 60);
-                                FatxBuildReclustered(device, part.sectors, new_cluster_bytes, &recorder, result.get(), &build_progress);
-                                log_recluster(*result, new_cluster_bytes, part.sectors);
-                                built = result->status == FATX_RECLUSTER_DONE;
-                                if (built)
-                                {
-                                    ranges = recorder.Ranges();
-                                }
-                            }
-                            fclose(build_file);
-                            if (!built)
-                            {
-                                remove_recluster_files(plan_path, build_path);
-                                return;
-                            }
+                defrag ? "Defragment" : "Change it",
+                [src, part, new_cluster_bytes, defrag]() {
+                    start_job((defrag ? "Defragmenting " : "Changing the cluster size of ") + partition_name(part.index),
+                              true,
+                              [src, part, new_cluster_bytes](Job &job) {
+                                  const fs::path plan_path = recluster_plan_path(src.path);
+                                  const fs::path build_path = recluster_build_path(src.path);
+                                  SourceIo io;
+                                  std::string error;
+                                  if (!io.Open(src, true, false, &error))
+                                  {
+                                      log_line(TONE_ERROR, "  " + error);
+                                      return;
+                                  }
+                                  FILE *build_file = nullptr;
+                                  if (_wfopen_s(&build_file, build_path.c_str(), L"w+b") != 0 || build_file == nullptr)
+                                  {
+                                      log_line(TONE_ERROR, "  Can't create " + utf8(build_path.wstring()));
+                                      return;
+                                  }
+                                  make_sparse(build_file);
+                                  FatxOffsetDevice device(io.Disk(), part.start * HDD_SECTOR_SIZE);
+                                  std::vector<FatxRange> ranges;
+                                  bool built = false;
+                                  {
+                                      FileDevice build(build_file, 0);
+                                      FatxRangeRecorder recorder(build);
+                                      auto result = std::make_unique<FatxReclusterResult>();
+                                      SubProgress build_progress(job, 0, 60);
+                                      FatxBuildReclustered(device, part.sectors, new_cluster_bytes, &recorder, result.get(), &build_progress);
+                                      log_recluster(*result, new_cluster_bytes, part.sectors);
+                                      built = result->status == FATX_RECLUSTER_DONE;
+                                      if (built)
+                                      {
+                                          ranges = recorder.Ranges();
+                                      }
+                                  }
+                                  fclose(build_file);
+                                  if (!built)
+                                  {
+                                      remove_recluster_files(plan_path, build_path);
+                                      return;
+                                  }
 
-                            ReclusterPlanHeader plan = {};
-                            memcpy(plan.magic, RECLUSTER_MAGIC, sizeof(RECLUSTER_MAGIC));
-                            plan.partition_offset = part.start * HDD_SECTOR_SIZE;
-                            plan.lba_size = part.sectors;
-                            plan.new_cluster_bytes = new_cluster_bytes;
-                            plan.range_count = (uint32_t)ranges.size();
-                            if (!save_recluster_plan(plan_path, plan, ranges))
-                            {
-                                log_line(TONE_ERROR, "  Couldn't write the plan file. The image wasn't changed.");
-                                remove_recluster_files(plan_path, build_path);
-                                return;
-                            }
-                            SubProgress copy_progress(job, 60, 100);
-                            copy_reclustered(io.File(), part, plan_path, build_path, ranges, copy_progress);
-                        },
-                        reload);
+                                  ReclusterPlanHeader plan = {};
+                                  memcpy(plan.magic, RECLUSTER_MAGIC, sizeof(RECLUSTER_MAGIC));
+                                  plan.partition_offset = part.start * HDD_SECTOR_SIZE;
+                                  plan.lba_size = part.sectors;
+                                  plan.new_cluster_bytes = new_cluster_bytes;
+                                  plan.range_count = (uint32_t)ranges.size();
+                                  if (!save_recluster_plan(plan_path, plan, ranges))
+                                  {
+                                      log_line(TONE_ERROR, "  Couldn't write the plan file. The image wasn't changed.");
+                                      remove_recluster_files(plan_path, build_path);
+                                      return;
+                                  }
+                                  SubProgress copy_progress(job, 60, 100);
+                                  copy_reclustered(io.File(), part, plan_path, build_path, ranges, copy_progress);
+                              },
+                              reload);
                 });
         });
 }
@@ -1653,6 +1687,10 @@ void draw_part_menu_items(int i)
     {
         g_resize_window = i;
     }
+    if (g_src.CanRecluster() && ImGui::MenuItem("Defragment...", nullptr, false, can_resize(part) && !g_src.recluster_pending))
+    {
+        do_recluster(part, part.usage.cluster_bytes);
+    }
     if (part.resizing && g_src.Writable() && ImGui::MenuItem("Finish resize"))
     {
         do_resume_resize(part);
@@ -1722,6 +1760,16 @@ void draw_recluster(const Part &part)
         ImGui::SameLine();
         ImGui::TextDisabled("(current)");
     }
+
+    // Rebuilt at the size it has: no file fragmented
+    ImGui::BeginDisabled(g_src.recluster_pending);
+    if (ImGui::Button("Defragment..."))
+    {
+        do_recluster(part, part.usage.cluster_bytes);
+    }
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    ImGui::TextDisabled("Check shows how fragmented it is.");
 }
 
 void draw_selected()
@@ -1796,14 +1844,14 @@ void draw_selected()
     ImGui::SeparatorText("Resize, keeping the data");
     draw_resize(part);
     ImGui::Spacing();
-    ImGui::SeparatorText("Cluster size, keeping the data");
+    ImGui::SeparatorText("Cluster size and defragmenting, keeping the data");
     if (g_src.CanRecluster())
     {
         draw_recluster(part);
     }
     else
     {
-        ImGui::TextDisabled("Needs an image of the drive: the new file system is built as a full copy first.");
+        ImGui::TextDisabled("Need an image of the drive: the new file system is built as a full copy first.");
     }
 }
 

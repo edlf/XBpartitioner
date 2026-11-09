@@ -134,6 +134,14 @@ Changes the cluster size (16 KB to 1 MB) and keeps every file, folder, attribute
 
 Bigger clusters waste more space per file, so lots of small files may no longer fit; the tool tells you before writing anything. Clusters over 64 KB need an LBA48 v4 BIOS.
 
+### defrag
+
+```
+fatxtool defrag disk.img --partition 6 --write
+```
+
+Rebuilds the partition the same way at the cluster size it already has, so no file is fragmented afterwards. It needs the same free space as `recluster`, finishes with `recluster --resume` if interrupted, and only works on images. `check` shows how fragmented a partition is: how many files are fragmented, and the worst five. When nothing is fragmented, `defrag` says so and writes nothing. On an SSD fragmentation barely matters; on a spinning drive it means seeking.
+
 ### trim
 
 ```
@@ -154,7 +162,7 @@ Open a disk image, a partition image or an Xbox drive (or drop an image on the w
 
 - **Check** and **Repair**. Repair shows what it would do and asks first.
 - **Resize, keeping the data**: type a size and the status says whether the data can be kept, or suggests the nearest sizes that keep it. Disk image partitions can grow up to the next partition.
-- **Cluster size**: checks that the files fit, then asks. It needs free space next to the image, like `recluster`.
+- **Cluster size** and **Defragment**: checks that the files fit, then asks. It needs free space next to the image, like `recluster`. Check shows how fragmented a partition is.
 - **Finish**: an interrupted resize or cluster size change shows up when the image is opened, with a button to finish it.
 - **New image**: like `make`, empty or filled from a folder.
 
