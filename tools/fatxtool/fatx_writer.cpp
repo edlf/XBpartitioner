@@ -26,8 +26,10 @@ namespace
 
 class MemorySource : public FatxSource
 {
-public:
-    MemorySource(const void *data, uint32_t size) : m_data((const unsigned char *)data), m_left(size) {}
+  public:
+    MemorySource(const void *data, uint32_t size) : m_data((const unsigned char *)data), m_left(size)
+    {
+    }
     bool Read(void *buffer, uint32_t length) override
     {
         if (length > m_left)
@@ -40,7 +42,7 @@ public:
         return true;
     }
 
-private:
+  private:
     const unsigned char *m_data;
     uint32_t m_left;
 };
@@ -338,8 +340,7 @@ bool FatxWriter::AddFile(uint32_t parent, const FatxDirent &like, FatxSource &so
 bool FatxWriter::MakeDirectory(uint32_t parent, const FatxDirent &like, uint32_t *cluster)
 {
     uint32_t first;
-    if (like.name_length == 0 || like.name_length > FATX_MAX_NAME_LENGTH || !AllocateChain(1, &first) ||
-        !FillCluster(first, FATX_DIRENT_END))
+    if (like.name_length == 0 || like.name_length > FATX_MAX_NAME_LENGTH || !AllocateChain(1, &first) || !FillCluster(first, FATX_DIRENT_END))
     {
         return false;
     }

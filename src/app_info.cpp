@@ -42,9 +42,9 @@ void App::DisplaySystemInfo()
     InfoRow rows[14]; // At most 13 are added
     int row_count = 0;
 
-#define ADD_INFO_ROW(row_label, row_color) \
-    rows[row_count].label = (row_label); \
-    rows[row_count].color = (row_color); \
+#define ADD_INFO_ROW(row_label, row_color)                                                                                                                     \
+    rows[row_count].label = (row_label);                                                                                                                       \
+    rows[row_count].color = (row_color);                                                                                                                       \
     row_count++
 
     // As the drive reports itself
@@ -73,8 +73,7 @@ void App::DisplaySystemInfo()
         Color type_color = COLOR_WHITE;
         if (m_Drive.trim)
         {
-            swprintf(rows[row_count].value, L"%s, TRIM: fatxtool trim on a PC",
-                     m_Drive.rotation_rate == 1 ? L"SSD" : L"supports TRIM");
+            swprintf(rows[row_count].value, L"%s, TRIM: fatxtool trim on a PC", m_Drive.rotation_rate == 1 ? L"SSD" : L"supports TRIM");
             type_color = COLOR_GREEN;
         }
         else if (m_Drive.rotation_rate == 1)
@@ -141,8 +140,9 @@ void App::DisplaySystemInfo()
     }
     else if (main_valid)
     {
-        swprintf(rows[row_count].value, L"valid, %s (sector 0)",
-                 (m_TableHdd.Version == XBOX_TABLE_VERSION_TITAN)    ? L"Titan"
+        swprintf(rows[row_count].value,
+                 L"valid, %s (sector 0)",
+                 (m_TableHdd.Version == XBOX_TABLE_VERSION_TITAN)      ? L"Titan"
                  : (m_TableHdd.Version == XBOX_TABLE_VERSION_LBA48_V4) ? L"v4"
                                                                        : L"v3");
         ADD_INFO_ROW(L"Partition table", COLOR_GREEN);
@@ -226,10 +226,10 @@ void App::DisplayAbout()
     int row_count = 0;
 
     // Labels are grey, values all white
-#define ADD_ABOUT_ROW(row_label, row_value) \
-    rows[row_count].label = (row_label); \
-    swprintf(rows[row_count].value, L"%s", (row_value)); \
-    rows[row_count].color = COLOR_WHITE; \
+#define ADD_ABOUT_ROW(row_label, row_value)                                                                                                                    \
+    rows[row_count].label = (row_label);                                                                                                                       \
+    swprintf(rows[row_count].value, L"%s", (row_value));                                                                                                       \
+    rows[row_count].color = COLOR_WHITE;                                                                                                                       \
     row_count++
 
     ADD_ABOUT_ROW(L"Version", L"XBpartitioner " XBPARTITIONER_VERSION);

@@ -57,8 +57,7 @@ uint32_t fnv1a(const void *data, size_t length)
 
 bool journal_valid(const Journal &journal)
 {
-    return memcmp(journal.magic, JOURNAL_MAGIC, sizeof(JOURNAL_MAGIC)) == 0 &&
-           journal.checksum == fnv1a(&journal, offsetof(Journal, checksum));
+    return memcmp(journal.magic, JOURNAL_MAGIC, sizeof(JOURNAL_MAGIC)) == 0 && journal.checksum == fnv1a(&journal, offsetof(Journal, checksum));
 }
 
 uint32_t entry_value(const unsigned char *entry, uint32_t bytes_per_entry)
@@ -90,13 +89,15 @@ void set_entry_value(unsigned char *entry, uint32_t bytes_per_entry, uint32_t va
 // Caches one chunk of the FAT, writing it back when moving on or on Flush()
 class FatCache
 {
-public:
-    explicit FatCache(FatxDevice &device)
-        : m_device(device), m_chunk(NULL), m_offset(0), m_length(0), m_valid(false), m_dirty(false)
+  public:
+    explicit FatCache(FatxDevice &device) : m_device(device), m_chunk(NULL), m_offset(0), m_length(0), m_valid(false), m_dirty(false)
     {
         memset(&m_layout, 0, sizeof(m_layout));
     }
-    ~FatCache() { free(m_chunk); }
+    ~FatCache()
+    {
+        free(m_chunk);
+    }
 
     bool Init()
     {
@@ -153,7 +154,7 @@ public:
         return true;
     }
 
-private:
+  private:
     bool Load(uint32_t cluster, unsigned char **entry)
     {
         const uint64_t byte = (uint64_t)cluster * m_layout.bytes_per_entry;
@@ -190,8 +191,10 @@ private:
 // Maps a step's 0 to 100 onto part of the overall progress
 class PartProgress : public FatxProgress
 {
-public:
-    PartProgress(FatxProgress *whole, int from, int to) : m_whole(whole), m_from(from), m_to(to) {}
+  public:
+    PartProgress(FatxProgress *whole, int from, int to) : m_whole(whole), m_from(from), m_to(to)
+    {
+    }
     void Update(int percent)
     {
         if (m_whole != NULL)
@@ -200,7 +203,7 @@ public:
         }
     }
 
-private:
+  private:
     FatxProgress *m_whole;
     int m_from;
     int m_to;
@@ -221,12 +224,11 @@ typedef struct
 
 class Resizer
 {
-public:
+  public:
     Resizer(FatxDevice &device, FatxResizeTable &table, FatxMoveResult *result, FatxProgress *progress)
-        : m_device(device), m_table(table), m_result(result), m_progress(progress), m_fat(device), m_cluster(NULL),
-          m_copy(NULL), m_unit(NULL), m_old(NULL), m_cluster_bytes(0), m_shift(0), m_keep_begin(0), m_keep_end(0),
-          m_hint(0), m_pending(NULL), m_pending_count(0), m_pending_capacity(0), m_chain(NULL), m_chain_capacity(0),
-          m_moved_from(NULL), m_moved_to(NULL)
+        : m_device(device), m_table(table), m_result(result), m_progress(progress), m_fat(device), m_cluster(NULL), m_copy(NULL), m_unit(NULL), m_old(NULL),
+          m_cluster_bytes(0), m_shift(0), m_keep_begin(0), m_keep_end(0), m_hint(0), m_pending(NULL), m_pending_count(0), m_pending_capacity(0), m_chain(NULL),
+          m_chain_capacity(0), m_moved_from(NULL), m_moved_to(NULL)
     {
         memset(&m_old_layout, 0, sizeof(m_old_layout));
         memset(&m_new_layout, 0, sizeof(m_new_layout));
@@ -274,8 +276,7 @@ public:
         {
             const FatxLayout asked = FatxLayoutFor(requested_lba, m_cluster_bytes);
             const FatxLayout now = FatxLayoutFor(old_lba, m_cluster_bytes);
-            return Fail(asked.cluster_limit < 2 || asked.bytes_per_entry == now.bytes_per_entry ? FATX_MOVE_TOO_SMALL
-                                                                                                : FATX_MOVE_ENTRY_SIZE);
+            return Fail(asked.cluster_limit < 2 || asked.bytes_per_entry == now.bytes_per_entry ? FATX_MOVE_TOO_SMALL : FATX_MOVE_ENTRY_SIZE);
         }
         if (new_lba > old_lba && ClusterSizeKbFor(new_lba) > m_cluster_bytes / 1024)
         {
@@ -334,8 +335,7 @@ public:
         // Leave the spare cluster free, and empty the cache so no stale old
         // FAT chunk can be written over the new FAT later.
         uint32_t scratch;
-        if (!FindFree(&scratch, false) || !m_fat.Use(m_old_layout) ||
-            !ReadHeaderFields(&signature, &sectors_per_cluster, &root))
+        if (!FindFree(&scratch, false) || !m_fat.Use(m_old_layout) || !ReadHeaderFields(&signature, &sectors_per_cluster, &root))
         {
             return Fail(FATX_MOVE_STOPPED_SAFE);
         }
@@ -383,7 +383,7 @@ public:
         return Finish();
     }
 
-private:
+  private:
     bool Fail(FatxMoveStatus status)
     {
         m_result->status = status;
@@ -432,8 +432,7 @@ private:
         m_old = (unsigned char *)malloc(m_cluster_bytes + 2 * HDD_SECTOR_SIZE);
         m_moved_from = (uint32_t *)malloc(MOVE_BATCH * sizeof(uint32_t));
         m_moved_to = (uint32_t *)malloc(MOVE_BATCH * sizeof(uint32_t));
-        return m_cluster != NULL && m_copy != NULL && m_unit != NULL && m_old != NULL && m_moved_from != NULL &&
-               m_moved_to != NULL && m_fat.Init();
+        return m_cluster != NULL && m_copy != NULL && m_unit != NULL && m_old != NULL && m_moved_from != NULL && m_moved_to != NULL && m_fat.Init();
     }
 
     uint64_t ClusterOffset(const FatxLayout &layout, uint32_t cluster) const
@@ -641,8 +640,7 @@ private:
             // Link the copies
             for (uint32_t t = 0; t < run; t++)
             {
-                const uint32_t next = (t + 1 < run) ? moved_to[t + 1]
-                                    : (i + run < *count) ? m_chain[i + run] : FATX_FAT_END;
+                const uint32_t next = (t + 1 < run) ? moved_to[t + 1] : (i + run < *count) ? m_chain[i + run] : FATX_FAT_END;
                 if (!m_fat.Set(moved_to[t], next))
                 {
                     return false;
@@ -754,8 +752,7 @@ private:
                         ended = true;
                         break;
                     }
-                    if (entry.name_length == FATX_DIRENT_DELETED || entry.name_length > FATX_MAX_NAME_LENGTH ||
-                        entry.first_cluster == 0)
+                    if (entry.name_length == FATX_DIRENT_DELETED || entry.name_length > FATX_MAX_NAME_LENGTH || entry.first_cluster == 0)
                     {
                         continue;
                     }
@@ -823,8 +820,7 @@ private:
             return true;
         }
         const uint32_t length = m_journal.pending_length;
-        if (length > m_cluster_bytes || !m_device.Read(m_journal.scratch, m_unit, length) ||
-            fnv1a(m_unit, length) != m_journal.pending_checksum)
+        if (length > m_cluster_bytes || !m_device.Read(m_journal.scratch, m_unit, length) || fnv1a(m_unit, length) != m_journal.pending_checksum)
         {
             return false;
         }
@@ -857,8 +853,7 @@ private:
     {
         const uint32_t width = m_new_layout.bytes_per_entry;
         const uint64_t begin = unit * m_cluster_bytes;
-        const uint64_t end = (begin + m_cluster_bytes < m_new_layout.bytes_per_fat) ? begin + m_cluster_bytes
-                                                                                     : m_new_layout.bytes_per_fat;
+        const uint64_t end = (begin + m_cluster_bytes < m_new_layout.bytes_per_fat) ? begin + m_cluster_bytes : m_new_layout.bytes_per_fat;
         const int64_t first = (int64_t)(begin / width);
         const int64_t last = (int64_t)(end / width);
 
@@ -956,8 +951,7 @@ private:
                         {
                             stop = true;
                         }
-                        else if (entry.name_length != FATX_DIRENT_DELETED && entry.name_length <= FATX_MAX_NAME_LENGTH &&
-                                 entry.first_cluster != 0)
+                        else if (entry.name_length != FATX_DIRENT_DELETED && entry.name_length <= FATX_MAX_NAME_LENGTH && entry.first_cluster != 0)
                         {
                             entry.first_cluster = Renumber(entry.first_cluster);
                             memcpy(m_cluster + e * sizeof(FatxDirent), &entry, sizeof(entry));
@@ -979,8 +973,7 @@ private:
                         ended = true;
                     }
                     else if (entry.name_length != FATX_DIRENT_DELETED && entry.name_length <= FATX_MAX_NAME_LENGTH &&
-                             (entry.attributes & FATX_ATTR_DIRECTORY) && entry.first_cluster != 0 &&
-                             !PushDir(entry.first_cluster, 1))
+                             (entry.attributes & FATX_ATTR_DIRECTORY) && entry.first_cluster != 0 && !PushDir(entry.first_cluster, 1))
                     {
                         return false;
                     }
@@ -1009,8 +1002,7 @@ private:
         {
             return Fail(FATX_MOVE_INTERRUPTED);
         }
-        if (m_journal.phase != PHASE_TABLE && signature != FATX_RESIZING_SIGNATURE &&
-            !WriteHeaderField(FATX_SIGNATURE_OFFSET, FATX_RESIZING_SIGNATURE))
+        if (m_journal.phase != PHASE_TABLE && signature != FATX_RESIZING_SIGNATURE && !WriteHeaderField(FATX_SIGNATURE_OFFSET, FATX_RESIZING_SIGNATURE))
         {
             return Fail(FATX_MOVE_INTERRUPTED);
         }
@@ -1044,8 +1036,12 @@ private:
 
         // Size before signature, so it's never mounted at the old size with
         // the new layout
-        if (!m_table.SetSize(m_journal.new_lba_size) || !m_device.Sync() ||
-            !WriteHeaderField(FATX_SIGNATURE_OFFSET, FATX_signature) || !ClearJournal())
+        if (!m_table.SetSize(m_journal.new_lba_size))
+        {
+            m_result->table_failed = true;
+            return Fail(FATX_MOVE_INTERRUPTED);
+        }
+        if (!m_device.Sync() || !WriteHeaderField(FATX_SIGNATURE_OFFSET, FATX_signature) || !ClearJournal())
         {
             return Fail(FATX_MOVE_INTERRUPTED);
         }
@@ -1122,49 +1118,281 @@ uint64_t FatxMoveResizeTarget(uint64_t old_lba_size, uint32_t cluster_bytes, uin
     return 0;
 }
 
-uint64_t FatxMoveResizeNextUp(uint64_t old_lba_size, uint32_t cluster_bytes, uint64_t from_lba)
+bool FatxReadUsage(FatxReader &reader, uint64_t lba_size, FatxUsage *usage, FatxProgress *progress)
 {
-    const FatxLayout old_layout = FatxLayoutFor(old_lba_size, cluster_bytes);
-    uint64_t size = from_lba;
-    for (int page = 0; page < 1024; page++)
+    memset(usage, 0, sizeof(*usage));
+    unsigned char header[HDD_SECTOR_SIZE];
+    if (!reader.Read(0, header, sizeof(header)))
     {
-        uint64_t smallest, largest;
-        FatxInPlaceResizeRange(size, cluster_bytes, &smallest, &largest);
-        size = (largest & ~(uint64_t)(LBA_ALIGNMENT - 1)) + LBA_ALIGNMENT; // Next FAT size up
-        const FatxLayout layout = FatxLayoutFor(size, cluster_bytes);
-        if (layout.bytes_per_entry != old_layout.bytes_per_entry || ClusterSizeKbFor(size) > cluster_bytes / 1024)
+        return false;
+    }
+    uint32_t signature, sectors_per_cluster;
+    memcpy(&signature, header + FATX_SIGNATURE_OFFSET, 4);
+    memcpy(&sectors_per_cluster, header + FATX_SECTORS_PER_CLUSTER_OFFSET, 4);
+    if (signature != FATX_signature || sectors_per_cluster == 0 || (sectors_per_cluster & (sectors_per_cluster - 1)) != 0 || sectors_per_cluster > 2048)
+    {
+        return false;
+    }
+    usage->cluster_bytes = sectors_per_cluster * HDD_SECTOR_SIZE;
+
+    const FatxLayout layout = FatxLayoutFor(lba_size, usage->cluster_bytes);
+    unsigned char *chunk = (unsigned char *)malloc(FAT_CHUNK_BYTES);
+    if (chunk == NULL || layout.cluster_limit < 2)
+    {
+        free(chunk);
+        return false;
+    }
+    uint64_t chunk_offset = ~0ULL;
+    for (uint64_t cluster = 1; cluster < layout.cluster_limit; cluster++)
+    {
+        const uint64_t byte = cluster * layout.bytes_per_entry;
+        const uint64_t offset = byte - byte % FAT_CHUNK_BYTES;
+        if (offset != chunk_offset)
         {
-            return 0;
+            const uint64_t left = layout.bytes_per_fat - offset;
+            const uint32_t length = (uint32_t)(left < FAT_CHUNK_BYTES ? left : FAT_CHUNK_BYTES);
+            if (!reader.Read(FATX_HEADER_BYTES + offset, chunk, length))
+            {
+                free(chunk);
+                return false;
+            }
+            chunk_offset = offset;
+            if (progress != NULL)
+            {
+                progress->Update((int)(cluster * 100 / layout.cluster_limit));
+            }
         }
-        if ((layout.bytes_per_fat - old_layout.bytes_per_fat) % cluster_bytes == 0)
+        const uint32_t value = entry_value(chunk + (byte - offset), layout.bytes_per_entry);
+        if (value == FATX_FAT_BAD)
+        {
+            usage->bad_clusters++;
+        }
+        else if (value != FATX_FAT_FREE)
+        {
+            usage->used_clusters++;
+            usage->highest_used = cluster;
+        }
+    }
+    free(chunk);
+    return true;
+}
+
+namespace
+{
+
+// The sizes around lba_size with the same FAT (size and entry width)
+void fat_interval(uint64_t lba_size, uint32_t cluster_bytes, uint64_t *lowest, uint64_t *highest)
+{
+    const FatxLayout layout = FatxLayoutFor(lba_size, cluster_bytes);
+    const auto same = [&](uint64_t size) {
+        const FatxLayout other = FatxLayoutFor(size, cluster_bytes);
+        return other.bytes_per_entry == layout.bytes_per_entry && other.bytes_per_fat == layout.bytes_per_fat && other.cluster_limit >= 2;
+    };
+
+    // Doubling steps outwards, then halving back in
+    uint64_t high = lba_size;
+    uint64_t step = LBA_ALIGNMENT;
+    while (step < LBA48_MAX_LBA && same(high + step))
+    {
+        high += step;
+        step *= 2;
+    }
+    while (step > LBA_ALIGNMENT)
+    {
+        step /= 2;
+        if (same(high + step))
+        {
+            high += step;
+        }
+    }
+
+    uint64_t low = lba_size;
+    step = LBA_ALIGNMENT;
+    while (low > step && same(low - step))
+    {
+        low -= step;
+        step *= 2;
+    }
+    while (step > LBA_ALIGNMENT)
+    {
+        step /= 2;
+        if (low > step && same(low - step))
+        {
+            low -= step;
+        }
+    }
+    *lowest = low;
+    *highest = high;
+}
+
+// The largest size the cluster size allows growing to (XBpartitioner's
+// rule), 0 if it allows none
+uint64_t cluster_size_cap(uint32_t cluster_bytes)
+{
+    if (ClusterSizeKbFor(0x20000000) > cluster_bytes / 1024)
+    {
+        return 0;
+    }
+    uint64_t cap = 0x20000000;
+    while (ClusterSizeKbFor(cap * 2) <= cluster_bytes / 1024 && cap < LBA48_MAX_LBA)
+    {
+        cap *= 2;
+    }
+    return cap;
+}
+
+// Whether a size keeps the data, and how
+bool keeps_data(uint64_t old_lba_size, const FatxUsage &usage, uint64_t lba_size, FatxResizeKind *kind)
+{
+    const uint32_t cluster_bytes = usage.cluster_bytes;
+    *kind = FATX_RESIZE_KIND_FORMAT;
+    if (lba_size == old_lba_size)
+    {
+        *kind = FATX_RESIZE_KIND_IN_PLACE;
+        return true;
+    }
+    const FatxLayout old_layout = FatxLayoutFor(old_lba_size, cluster_bytes);
+    const FatxLayout layout = FatxLayoutFor(lba_size, cluster_bytes);
+    if (cluster_bytes == 0 || layout.cluster_limit < 2 || layout.bytes_per_entry != old_layout.bytes_per_entry ||
+        (lba_size > old_lba_size && ClusterSizeKbFor(lba_size) > cluster_bytes / 1024))
+    {
+        return false;
+    }
+    const int64_t change = (int64_t)layout.bytes_per_fat - (int64_t)old_layout.bytes_per_fat;
+    if (change % (int64_t)cluster_bytes != 0)
+    {
+        return false;
+    }
+
+    const int64_t shift = change / (int64_t)cluster_bytes;
+    if (shift == 0)
+    {
+        // Shrinking in place cuts off the end, which must be unused
+        if (lba_size < old_lba_size && usage.highest_used >= layout.cluster_limit)
+        {
+            return false;
+        }
+        *kind = FATX_RESIZE_KIND_IN_PLACE;
+        return true;
+    }
+
+    // The clusters that stay put must hold all the data, plus a spare one
+    int64_t keep_end = (shift > 0) ? (int64_t)old_layout.cluster_limit : (int64_t)layout.cluster_limit + shift;
+    keep_end = (keep_end > (int64_t)old_layout.cluster_limit) ? (int64_t)old_layout.cluster_limit : keep_end;
+    const int64_t keep_begin = (shift > 0) ? shift + 1 : 1;
+    const int64_t keep = keep_end - keep_begin;
+    if (keep < (int64_t)(usage.used_clusters + usage.bad_clusters + 1))
+    {
+        return false;
+    }
+    *kind = FATX_RESIZE_KIND_MOVES;
+    return true;
+}
+
+} // namespace
+
+FatxResizeKind FatxClassifyResize(uint64_t old_lba_size, const FatxUsage &usage, uint64_t new_lba_size)
+{
+    FatxResizeKind kind;
+    keeps_data(old_lba_size, usage, new_lba_size, &kind);
+    return kind;
+}
+
+// Within one FAT size, a bigger partition only makes the data fit better.
+// So if a size doesn't work, nothing smaller with the same FAT does either,
+// and each search can skip a whole FAT size at a time.
+uint64_t FatxKeepingSizeBelow(uint64_t old_lba_size, const FatxUsage &usage, uint64_t lba_size)
+{
+    const uint32_t cluster_bytes = usage.cluster_bytes;
+    uint64_t size = lba_size & ~(uint64_t)(LBA_ALIGNMENT - 1);
+    if (size < old_lba_size && lba_size >= old_lba_size)
+    {
+        return old_lba_size; // An unaligned partition's own size
+    }
+    for (int tries = 0; tries < 100000 && size >= LBA_ALIGNMENT; tries++)
+    {
+        if (size > old_lba_size && ClusterSizeKbFor(size) > cluster_bytes / 1024)
+        {
+            const uint64_t cap = cluster_size_cap(cluster_bytes) & ~(uint64_t)(LBA_ALIGNMENT - 1);
+            size = (cap > old_lba_size) ? cap : old_lba_size;
+            continue;
+        }
+        FatxResizeKind kind;
+        if (keeps_data(old_lba_size, usage, size, &kind))
         {
             return size;
         }
+        uint64_t lowest, highest;
+        fat_interval(size, cluster_bytes, &lowest, &highest);
+        if (lowest < LBA_ALIGNMENT * 2)
+        {
+            return 0;
+        }
+        size = lowest - LBA_ALIGNMENT;
     }
     return 0;
 }
 
-FatxResizeKind FatxClassifyResize(uint64_t old_lba_size, uint32_t cluster_bytes, uint64_t new_lba_size)
+uint64_t FatxKeepingSizeAbove(uint64_t old_lba_size, const FatxUsage &usage, uint64_t lba_size)
 {
-    uint64_t min_lba, max_lba;
-    FatxInPlaceResizeRange(old_lba_size, cluster_bytes, &min_lba, &max_lba);
-    if (new_lba_size >= min_lba && new_lba_size <= max_lba)
+    const uint32_t cluster_bytes = usage.cluster_bytes;
+    const uint64_t cap = cluster_size_cap(cluster_bytes);
+    uint64_t size = (lba_size + LBA_ALIGNMENT - 1) & ~(uint64_t)(LBA_ALIGNMENT - 1);
+    if (lba_size <= old_lba_size && size > old_lba_size)
     {
-        return FATX_RESIZE_KIND_IN_PLACE;
+        return old_lba_size; // An unaligned partition's own size
     }
-    const FatxLayout old_layout = FatxLayoutFor(old_lba_size, cluster_bytes);
-    const FatxLayout new_layout = FatxLayoutFor(new_lba_size, cluster_bytes);
-    const bool grows_too_far = new_lba_size > old_lba_size && ClusterSizeKbFor(new_lba_size) > cluster_bytes / 1024;
-    if (FatxMoveResizeTarget(old_lba_size, cluster_bytes, new_lba_size) == new_lba_size &&
-        new_layout.bytes_per_fat != old_layout.bytes_per_fat && !grows_too_far)
+    for (int tries = 0; tries < 100000; tries++)
     {
-        return FATX_RESIZE_KIND_MOVES;
+        if (size > old_lba_size && size > cap)
+        {
+            return 0;
+        }
+
+        // The best this FAT size can do is its largest allowed size
+        uint64_t lowest, highest;
+        fat_interval(size, cluster_bytes, &lowest, &highest);
+        uint64_t top = highest;
+        if (top > old_lba_size && top > cap)
+        {
+            top = (cap > old_lba_size) ? cap & ~(uint64_t)(LBA_ALIGNMENT - 1) : old_lba_size;
+        }
+
+        FatxResizeKind kind;
+        if (top >= size && keeps_data(old_lba_size, usage, top, &kind))
+        {
+            if (keeps_data(old_lba_size, usage, size, &kind))
+            {
+                return size;
+            }
+            // Binary search: low doesn't work, high does
+            uint64_t low = size;
+            uint64_t high = top;
+            while (high - low > LBA_ALIGNMENT)
+            {
+                const uint64_t middle = low + (((high - low) / 2) & ~(uint64_t)(LBA_ALIGNMENT - 1));
+                if (middle == low)
+                {
+                    break; // Only an unaligned top is left
+                }
+                if (keeps_data(old_lba_size, usage, middle, &kind))
+                {
+                    high = middle;
+                }
+                else
+                {
+                    low = middle;
+                }
+            }
+            return high;
+        }
+        size = highest + LBA_ALIGNMENT;
     }
-    return FATX_RESIZE_KIND_FORMAT;
+    return 0;
 }
 
-bool FatxResizeWithMoves(FatxDevice &device, uint64_t old_lba_size, uint64_t requested_lba, FatxResizeTable &table,
-                         bool write, FatxMoveResult *result, FatxProgress *progress)
+bool FatxResizeWithMoves(FatxDevice &device, uint64_t old_lba_size, uint64_t requested_lba, FatxResizeTable &table, bool write, FatxMoveResult *result,
+                         FatxProgress *progress)
 {
     memset(result, 0, sizeof(*result));
     Resizer resizer(device, table, result, progress);

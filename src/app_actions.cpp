@@ -80,8 +80,7 @@ bool App::ConfirmFormatWarning(bool format_changed, const bool *kept, LPCWSTR re
 void App::ShowReservedAreaWarning(int partition, LPCWSTR what)
 {
     wchar_t line1[100];
-    swprintf(line1, L"Partition %d (%c) starts before sector 0x%X,", partition + 1, partition_letter(partition),
-             XBOX_SWAPPART1_LBA_START);
+    swprintf(line1, L"Partition %d (%c) starts before sector 0x%X,", partition + 1, partition_letter(partition), XBOX_SWAPPART1_LBA_START);
     const LPCWSTR lines[] = {
         line1,
         L"in the area the Xbox reserves at the start of the drive.",
@@ -110,7 +109,11 @@ bool App::RefuseUnwritableTable(const XboxPartitionTable &table)
     }
 
     wchar_t line[100];
-    swprintf(line, L"Partitions %d (%c) and %d (%c) %s.", first + 1, partition_letter(first), second + 1,
+    swprintf(line,
+             L"Partitions %d (%c) and %d (%c) %s.",
+             first + 1,
+             partition_letter(first),
+             second + 1,
              partition_letter(second),
              (check.GetPartitionStart(first) == check.GetPartitionStart(second)) ? L"start at the same sector" : L"overlap");
     const LPCWSTR lines[] = {
@@ -188,8 +191,12 @@ void App::DoFormatAll()
         L"No backup: the last partition covers its sector.",
     };
     const bool ok = (formatted == attempted);
-    RunDialog(ok ? L"Done" : L"Finished with errors", ok ? COLOR_GREEN : COLOR_YELLOW,
-              lines, (backup_written || m_pTable->GetBackupTableLba() == 0 || m_pKernelTable == NULL) ? 1 : 2, L"OK", NULL);
+    RunDialog(ok ? L"Done" : L"Finished with errors",
+              ok ? COLOR_GREEN : COLOR_YELLOW,
+              lines,
+              (backup_written || m_pTable->GetBackupTableLba() == 0 || m_pKernelTable == NULL) ? 1 : 2,
+              L"OK",
+              NULL);
 }
 
 void App::DoWriteTable()
@@ -312,8 +319,7 @@ void App::DoFormatOne()
         return;
     }
 
-    if (m_pTableOriginal->isPartitionEnabled(m_CurrentPart) &&
-        m_pTableOriginal->GetPartitionStart(m_CurrentPart) < XBOX_SWAPPART1_LBA_START)
+    if (m_pTableOriginal->isPartitionEnabled(m_CurrentPart) && m_pTableOriginal->GetPartitionStart(m_CurrentPart) < XBOX_SWAPPART1_LBA_START)
     {
         ShowReservedAreaWarning(m_CurrentPart, L"and write the table before formatting.");
         return;
@@ -334,8 +340,7 @@ void App::DoFormatOne()
 
 void App::FormatLaunchPartitionLine(wchar_t *out, LPCWSTR what)
 {
-    swprintf(out, L"Partition %d (%c) holds this program: %s", m_LaunchPartition + 1,
-             partition_letter(m_LaunchPartition), what);
+    swprintf(out, L"Partition %d (%c) holds this program: %s", m_LaunchPartition + 1, partition_letter(m_LaunchPartition), what);
 }
 
 bool App::MovesLaunchPartition(const XboxPartitionTable &table) const
@@ -482,11 +487,8 @@ int App::GetChangedPartitions(bool changed[XboxPartitionTableEntryCount], bool e
     for (int i = 0; i < XboxPartitionTableEntryCount; i++)
     {
         const bool was_enabled = m_pTableOriginal->isPartitionEnabled(i);
-        changed[i] = m_pTable->isPartitionEnabled(i) &&
-                     (!existing_only || was_enabled) &&
-                     (kept == NULL || !kept[i]) &&
-                     (!was_enabled ||
-                      m_pTable->GetPartitionStart(i) != m_pTableOriginal->GetPartitionStart(i) ||
+        changed[i] = m_pTable->isPartitionEnabled(i) && (!existing_only || was_enabled) && (kept == NULL || !kept[i]) &&
+                     (!was_enabled || m_pTable->GetPartitionStart(i) != m_pTableOriginal->GetPartitionStart(i) ||
                       m_pTable->GetPartitionSize(i) != m_pTableOriginal->GetPartitionSize(i));
         if (changed[i])
         {
@@ -520,7 +522,7 @@ bool App::FormatMovedLine(const bool moved[XboxPartitionTableEntryCount], wchar_
     {
         return false;
     }
-    _snwprintf(out, out_count, L"Clusters move in: %s (don't switch off).", list);
+    _snwprintf(out, out_count, L"Clusters move in: %s.", list);
     out[out_count - 1] = L'\0';
     return true;
 }

@@ -106,8 +106,8 @@ static double background_dither_v(double x, double y)
 
 // How much the surface faces the light, plus the ripple's brightening.
 // along: left to right through the point, across: above to below.
-static FLOAT background_shade_u(const BackgroundPoint &left, const BackgroundPoint &right,
-                                const BackgroundPoint &above, const BackgroundPoint &below, double ripple)
+static FLOAT background_shade_u(const BackgroundPoint &left, const BackgroundPoint &right, const BackgroundPoint &above, const BackgroundPoint &below,
+                                double ripple)
 {
     // The normal (cross product, towards the viewer) against the light
     const double ux = right.x - left.x, uy = right.y - left.y, uz = right.z - left.z;
@@ -116,12 +116,9 @@ static FLOAT background_shade_u(const BackgroundPoint &left, const BackgroundPoi
     const double ny = uz * wx - ux * wz;
     const double nz = ux * wy - uy * wx;
     const double n_length = sqrt(nx * nx + ny * ny + nz * nz);
-    const double l_length = sqrt(BACKGROUND_LIGHT_X * BACKGROUND_LIGHT_X + BACKGROUND_LIGHT_Y * BACKGROUND_LIGHT_Y +
-                                 BACKGROUND_LIGHT_Z * BACKGROUND_LIGHT_Z);
+    const double l_length = sqrt(BACKGROUND_LIGHT_X * BACKGROUND_LIGHT_X + BACKGROUND_LIGHT_Y * BACKGROUND_LIGHT_Y + BACKGROUND_LIGHT_Z * BACKGROUND_LIGHT_Z);
     // The light: up (-y), left (-x) and out of the screen
-    const double facing = (n_length > 0.0)
-        ? (-nx * BACKGROUND_LIGHT_X - ny * BACKGROUND_LIGHT_Y + nz * BACKGROUND_LIGHT_Z) / (n_length * l_length)
-        : 0.0;
+    const double facing = (n_length > 0.0) ? (-nx * BACKGROUND_LIGHT_X - ny * BACKGROUND_LIGHT_Y + nz * BACKGROUND_LIGHT_Z) / (n_length * l_length) : 0.0;
     // A level surface is the middle shade; slopes move it either way
     const double level = BACKGROUND_LIGHT_Z / l_length;
     double shade = 0.5 + BACKGROUND_SHADE_LIGHT * (facing - level) + BACKGROUND_SHADE_RIPPLE * (ripple - 0.5);
@@ -133,8 +130,7 @@ static FLOAT background_shade_u(const BackgroundPoint &left, const BackgroundPoi
 
 // Each corner keeps its own place on the gradient and the GPU blends across
 // the triangle, so the triangles don't show
-static void background_emit(const BackgroundPoint &a, const BackgroundPoint &b, const BackgroundPoint &c,
-                            FLOAT *xy, FLOAT *uv, int &v)
+static void background_emit(const BackgroundPoint &a, const BackgroundPoint &b, const BackgroundPoint &c, FLOAT *xy, FLOAT *uv, int &v)
 {
     // Less whole repeats, the same for all three corners: stays exact in a float
     const double dither_base = floor(background_dither_v(a.x, a.y));
@@ -187,8 +183,8 @@ int build_background_mesh(FLOAT width, FLOAT height, double seconds, FLOAT *xy, 
             points[r][c].x = (FLOAT)(middle_x + grid_x * tilt_cos - grid_y * tilt_sin);
             points[r][c].y = (FLOAT)(middle_y + grid_x * tilt_sin + grid_y * tilt_cos);
             // Height: the ripple (the up and down one counts most)
-            const double ripple = 0.65 * (0.5 + 0.5 * background_ripple_y(x, seconds, wave_length_x)) +
-                                  0.35 * (0.5 + 0.5 * background_ripple_x(y, seconds, wave_length_y));
+            const double ripple =
+                0.65 * (0.5 + 0.5 * background_ripple_y(x, seconds, wave_length_x)) + 0.35 * (0.5 + 0.5 * background_ripple_x(y, seconds, wave_length_y));
             points[r][c].ripple = ripple;
             points[r][c].z = cell_w * BACKGROUND_RIPPLE_HEIGHT * ripple;
         }

@@ -37,15 +37,18 @@ bool largePartitionFixup(PANSI_STRING partitionString, const ULONG clusterSize)
 
     InitializeObjectAttributes(&ObjectAttributes, partitionString, OBJ_CASE_INSENSITIVE, NULL);
 
-    if (status = NtOpenFile(&VolumeHandle, SYNCHRONIZE | GENERIC_READ | GENERIC_WRITE, &ObjectAttributes, &IoStatusBlock, (FILE_SHARE_READ | FILE_SHARE_WRITE),
+    if (status = NtOpenFile(&VolumeHandle,
+                            SYNCHRONIZE | GENERIC_READ | GENERIC_WRITE,
+                            &ObjectAttributes,
+                            &IoStatusBlock,
+                            (FILE_SHARE_READ | FILE_SHARE_WRITE),
                             FILE_SYNCHRONOUS_IO_ALERT | FILE_NO_INTERMEDIATE_BUFFERING))
     {
         goto CleanupAndReturn;
     }
 
-    if (status = NtDeviceIoControlFile(VolumeHandle, NULL, NULL, NULL, &IoStatusBlock,
-                                       IOCTL_DISK_GET_DRIVE_GEOMETRY, NULL, 0, &DiskGeometry,
-                                       sizeof(DiskGeometry)))
+    if (status =
+            NtDeviceIoControlFile(VolumeHandle, NULL, NULL, NULL, &IoStatusBlock, IOCTL_DISK_GET_DRIVE_GEOMETRY, NULL, 0, &DiskGeometry, sizeof(DiskGeometry)))
     {
         goto CleanupAndReturn;
     }

@@ -13,6 +13,7 @@ enum MenuItem
     MENU_UNDO_ALL,
     MENU_PARTITION_TABLE,
     MENU_SYSTEM_INFO,
+    MENU_RESIZE_KEEPS_DATA,
     MENU_THEME,
     MENU_ABOUT,
     MENU_EXIT,
@@ -35,6 +36,8 @@ void App::DisplayStartMenu()
         wchar_t check_label[60];
         swprintf(check_label, L"Check file system on partition %d", m_CurrentPart + 1);
 
+        const LPCWSTR resize_label = m_ResizeKeepsData ? L"Resizing keeps data: On" : L"Resizing keeps data: Off";
+
         // Indexed by MenuItem
         const LPCWSTR labels[MENU_ITEM_COUNT] = {
             edit_label,
@@ -43,6 +46,7 @@ void App::DisplayStartMenu()
             L"Undo all changes since the last write",
             L"Partition table...",
             L"System information",
+            resize_label,
             L"Theme...",
             L"About",
             L"Exit to dashboard",
@@ -83,6 +87,11 @@ void App::DisplayStartMenu()
         case MENU_SYSTEM_INFO:
             DisplaySystemInfo();
             return;
+        case MENU_RESIZE_KEEPS_DATA:
+            // Stays in the menu so the new state shows
+            m_ResizeKeepsData = !m_ResizeKeepsData;
+            SaveSettings();
+            break;
         case MENU_THEME:
             if (DisplayThemeMenu())
             {

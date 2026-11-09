@@ -72,7 +72,10 @@ struct Image
         EXPECT_TRUE(writer.Flush());
     }
 
-    Check Run() { return RunCheck(device, SMALL); }
+    Check Run()
+    {
+        return RunCheck(device, SMALL);
+    }
 
     // Changes an entry of \apps (0 a.txt, 1 b.txt) through a function
     template <typename F> void EditEntry(uint32_t index, F edit)
@@ -100,8 +103,10 @@ struct Image
 
 class CountingProgress : public FatxProgress
 {
-public:
-    CountingProgress() : last(-1), calls(0), decreased(false) {}
+  public:
+    CountingProgress() : last(-1), calls(0), decreased(false)
+    {
+    }
     void Update(int percent) override
     {
         decreased = decreased || percent < last;
@@ -456,12 +461,20 @@ Repair RunRepair(FatxDevice &device, uint64_t size, bool write)
 // Reads but never writes
 class ReadOnlyDevice : public FatxDevice
 {
-public:
-    explicit ReadOnlyDevice(FatxDevice &inner) : m_inner(inner) {}
-    bool Read(uint64_t offset, void *buffer, uint32_t length) override { return m_inner.Read(offset, buffer, length); }
-    bool Write(uint64_t, const void *, uint32_t) override { return false; }
+  public:
+    explicit ReadOnlyDevice(FatxDevice &inner) : m_inner(inner)
+    {
+    }
+    bool Read(uint64_t offset, void *buffer, uint32_t length) override
+    {
+        return m_inner.Read(offset, buffer, length);
+    }
+    bool Write(uint64_t, const void *, uint32_t) override
+    {
+        return false;
+    }
 
-private:
+  private:
     FatxDevice &m_inner;
 };
 

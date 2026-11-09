@@ -151,8 +151,7 @@ int App::XInputGetStateAny(int *analog, int *buttons, int wait)
         }
 
         // *analog is -1 when a digital button was pressed
-        if (!ControllerState[c].Gamepad.wButtons &&
-            (*analog < 0 || ControllerState[c].Gamepad.bAnalogButtons[*analog] <= XINPUT_GAMEPAD_MAX_CROSSTALK))
+        if (!ControllerState[c].Gamepad.wButtons && (*analog < 0 || ControllerState[c].Gamepad.bAnalogButtons[*analog] <= XINPUT_GAMEPAD_MAX_CROSSTALK))
         {
             break;
         }

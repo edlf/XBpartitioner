@@ -1,13 +1,16 @@
 #include "partition.hpp"
 #include <string.h>
 
-XboxPartitionTableManipulator::XboxPartitionTableManipulator(const uint64_t total_hdd_lba, const bool lbav4, const bool physical_4k) : m_hdd_lba_size(total_hdd_lba), m_lba_v4(lbav4), m_physical_4k(physical_4k)
+XboxPartitionTableManipulator::XboxPartitionTableManipulator(const uint64_t total_hdd_lba, const bool lbav4, const bool physical_4k)
+    : m_hdd_lba_size(total_hdd_lba), m_lba_v4(lbav4), m_physical_4k(physical_4k)
 {
     SetupMaxSize();
     SetupPartitionsStock();
 }
 
-XboxPartitionTableManipulator::XboxPartitionTableManipulator(const XboxPartitionTable &part_table, const uint64_t total_hdd_lba, const bool lbav4, const bool physical_4k) : m_table(part_table), m_hdd_lba_size(total_hdd_lba), m_lba_v4(lbav4), m_physical_4k(physical_4k)
+XboxPartitionTableManipulator::XboxPartitionTableManipulator(const XboxPartitionTable &part_table, const uint64_t total_hdd_lba, const bool lbav4,
+                                                             const bool physical_4k)
+    : m_table(part_table), m_hdd_lba_size(total_hdd_lba), m_lba_v4(lbav4), m_physical_4k(physical_4k)
 {
 
     SetupMaxSize();
@@ -40,8 +43,8 @@ void XboxPartitionTableManipulator::DropHighLbaBitsIfNotV4()
 
 bool XboxPartitionTableManipulator::HasUnknownVersion(const XboxPartitionTable &part_table)
 {
-    return HasMagic(part_table) && part_table.Version != XBOX_TABLE_VERSION_LBA48_V3 &&
-           part_table.Version != XBOX_TABLE_VERSION_LBA48_V4 && part_table.Version != XBOX_TABLE_VERSION_TITAN;
+    return HasMagic(part_table) && part_table.Version != XBOX_TABLE_VERSION_LBA48_V3 && part_table.Version != XBOX_TABLE_VERSION_LBA48_V4 &&
+           part_table.Version != XBOX_TABLE_VERSION_TITAN;
 }
 
 unsigned char XboxPartitionTableManipulator::VersionFor(const bool lbav4)
@@ -377,8 +380,7 @@ namespace
 bool same_fatx_layout(const FatxLayout &layout, const uint64_t lba_size, const uint32_t cluster_bytes)
 {
     const FatxLayout other = FatxLayoutFor(lba_size, cluster_bytes);
-    return other.bytes_per_entry == layout.bytes_per_entry && other.bytes_per_fat == layout.bytes_per_fat &&
-           other.cluster_limit >= 2;
+    return other.bytes_per_entry == layout.bytes_per_entry && other.bytes_per_fat == layout.bytes_per_fat && other.cluster_limit >= 2;
 }
 
 } // namespace

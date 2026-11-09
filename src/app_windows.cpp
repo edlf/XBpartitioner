@@ -12,7 +12,8 @@ bool App::RunDialog(LPCWSTR title, Color title_color, const LPCWSTR *lines, int 
     bool ok_selected = !has_cancel; // Cancel is the default
 
     const int button_height = m_Ui.TextBoxHeight(FONT_TEXT, m_Layout->dialog_button_padding);
-    const int height = m_Layout->dialog_title_height + line_count * m_Layout->dialog_line_height + m_Layout->dialog_padding + button_height + m_Layout->dialog_padding;
+    const int height =
+        m_Layout->dialog_title_height + line_count * m_Layout->dialog_line_height + m_Layout->dialog_padding + button_height + m_Layout->dialog_padding;
     const int top = (m_Layout->height - height) / 2;
     const int buttons_y = top + m_Layout->dialog_title_height + line_count * m_Layout->dialog_line_height + m_Layout->dialog_padding;
 
@@ -41,13 +42,20 @@ bool App::RunDialog(LPCWSTR title, Color title_color, const LPCWSTR *lines, int 
 
         const int title_bottom = top + m_Layout->dialog_title_offset + m_Ui.FontHeight(FONT_TITLE);
         const int header_line_y = (title_bottom + top + m_Layout->dialog_title_height) / 2;
-        m_Ui.Rect((FLOAT)(m_Layout->dialog_left + m_Layout->menu_selection_inset), (FLOAT)header_line_y,
-                  (FLOAT)(m_Layout->dialog_right - m_Layout->menu_selection_inset), (FLOAT)(header_line_y + 1),
-                  Colors().panel_line, Colors().panel_line);
+        m_Ui.Rect((FLOAT)(m_Layout->dialog_left + m_Layout->menu_selection_inset),
+                  (FLOAT)header_line_y,
+                  (FLOAT)(m_Layout->dialog_right - m_Layout->menu_selection_inset),
+                  (FLOAT)(header_line_y + 1),
+                  Colors().panel_line,
+                  Colors().panel_line);
 
         for (int i = 0; i < line_count; i++)
         {
-            m_Ui.Text(FONT_TEXT, lines[i], (m_Layout->dialog_left + m_Layout->dialog_text_inset), top + m_Layout->dialog_title_height + i * m_Layout->dialog_line_height, COLOR_LIGHT_GREY);
+            m_Ui.Text(FONT_TEXT,
+                      lines[i],
+                      (m_Layout->dialog_left + m_Layout->dialog_text_inset),
+                      top + m_Layout->dialog_title_height + i * m_Layout->dialog_line_height,
+                      COLOR_LIGHT_GREY);
         }
 
         for (int button = 0; button < (has_cancel ? 2 : 1); button++)
@@ -58,8 +66,12 @@ bool App::RunDialog(LPCWSTR title, Color title_color, const LPCWSTR *lines, int 
             const D3DCOLOR color = selected ? Colors().selection : Colors().button;
 
             m_Ui.Rect((FLOAT)x, (FLOAT)buttons_y, (FLOAT)(x + m_Layout->dialog_button_width), (FLOAT)(buttons_y + button_height), color, color);
-            m_Ui.Text(FONT_TEXT, is_ok ? ok_label : cancel_label, x + m_Layout->dialog_button_width / 2,
-                      m_Ui.TextYCentered(FONT_TEXT, buttons_y, buttons_y + button_height), selected ? COLOR_YELLOW : COLOR_WHITE, XFONT_CENTER);
+            m_Ui.Text(FONT_TEXT,
+                      is_ok ? ok_label : cancel_label,
+                      x + m_Layout->dialog_button_width / 2,
+                      m_Ui.TextYCentered(FONT_TEXT, buttons_y, buttons_y + button_height),
+                      selected ? COLOR_YELLOW : COLOR_WHITE,
+                      XFONT_CENTER);
         }
 
         m_Ui.EndFrame();
@@ -70,8 +82,7 @@ bool App::RunDialog(LPCWSTR title, Color title_color, const LPCWSTR *lines, int 
         }
         m_WaitForRelease = true;
 
-        const bool cancel = (m_AnalogButton == XINPUT_GAMEPAD_B) ||
-                            (m_DigitalButtons & (XINPUT_GAMEPAD_BACK | XINPUT_GAMEPAD_START)) != 0;
+        const bool cancel = (m_AnalogButton == XINPUT_GAMEPAD_B) || (m_DigitalButtons & (XINPUT_GAMEPAD_BACK | XINPUT_GAMEPAD_START)) != 0;
 
         if (!has_cancel)
         {
@@ -111,7 +122,7 @@ void App::ShowWarning(const LPCWSTR *lines, int line_count)
     RunDialog(L"Warning", COLOR_WARNING, lines, line_count, L"OK", NULL);
 }
 
-void App::ShowError(const LPCWSTR* lines, int line_count)
+void App::ShowError(const LPCWSTR *lines, int line_count)
 {
     RunDialog(L"Error", COLOR_WARNING, lines, line_count, L"OK", NULL);
 }
@@ -166,12 +177,9 @@ void App::DrawBusyWindow(LPCWSTR message)
 
     m_Ui.BeginFrame();
     DrawMainScreen();
-    m_Ui.Rect((FLOAT)m_Layout->dialog_left, (FLOAT)top, (FLOAT)m_Layout->dialog_right, (FLOAT)bottom, Colors().panel,
-              Colors().panel);
-    m_Ui.Outline((FLOAT)m_Layout->dialog_left, (FLOAT)top, (FLOAT)m_Layout->dialog_right, (FLOAT)bottom,
-                 Colors().panel_border);
-    m_Ui.Text(FONT_TEXT, message, m_Layout->width / 2, m_Ui.TextYCentered(FONT_TEXT, top, bottom), COLOR_WHITE,
-              XFONT_CENTER);
+    m_Ui.Rect((FLOAT)m_Layout->dialog_left, (FLOAT)top, (FLOAT)m_Layout->dialog_right, (FLOAT)bottom, Colors().panel, Colors().panel);
+    m_Ui.Outline((FLOAT)m_Layout->dialog_left, (FLOAT)top, (FLOAT)m_Layout->dialog_right, (FLOAT)bottom, Colors().panel_border);
+    m_Ui.Text(FONT_TEXT, message, m_Layout->width / 2, m_Ui.TextYCentered(FONT_TEXT, top, bottom), COLOR_WHITE, XFONT_CENTER);
     m_Ui.EndFrame();
 }
 
@@ -285,9 +293,12 @@ void App::DrawPanel(int left, int top, int right, int bottom, LPCWSTR title, int
 
     const int title_bottom = top + m_Layout->menu_title_offset + m_Ui.FontHeight(FONT_TEXT);
     const int header_line_y = (title_bottom + first_item_y) / 2;
-    m_Ui.Rect((FLOAT)(left + m_Layout->menu_selection_inset), (FLOAT)header_line_y,
-              (FLOAT)(right - m_Layout->menu_selection_inset), (FLOAT)(header_line_y + 1),
-              Colors().panel_line, Colors().panel_line);
+    m_Ui.Rect((FLOAT)(left + m_Layout->menu_selection_inset),
+              (FLOAT)header_line_y,
+              (FLOAT)(right - m_Layout->menu_selection_inset),
+              (FLOAT)(header_line_y + 1),
+              Colors().panel_line,
+              Colors().panel_line);
 }
 
 void App::DrawPanelFooter(int left, int right, int bottom, LPCWSTR text, Color color)
@@ -385,8 +396,7 @@ static FLOAT menu_thumb_top(int track_top, int track_height, int thumb_height, i
 
 // Up/down moves (skipping disabled items), A selects, B returns
 // MENU_RESULT_BACK, Start MENU_RESULT_CLOSE. submenu: the footer says "B: back".
-int App::RunMenu(LPCWSTR title, const LPCWSTR *labels, const bool *enabled, int count, int initial, bool submenu,
-                 MenuPreview preview)
+int App::RunMenu(LPCWSTR title, const LPCWSTR *labels, const bool *enabled, int count, int initial, bool submenu, MenuPreview preview)
 {
     int selected = (initial >= 0 && initial < count) ? initial : 0;
     for (int tries = 0; tries < count && !enabled[selected]; tries++)
@@ -464,17 +474,18 @@ int App::RunMenu(LPCWSTR title, const LPCWSTR *labels, const bool *enabled, int 
 
         // Before the text, so it never covers an item while moving
         const int selection_top = (int)(bar_y + 0.5f);
-        m_Ui.Rect(box_left + m_Layout->menu_selection_inset, (FLOAT)selection_top,
-                  selection_right, (FLOAT)(selection_top + bar_height),
-                  Colors().selection, Colors().selection);
+        m_Ui.Rect(box_left + m_Layout->menu_selection_inset,
+                  (FLOAT)selection_top,
+                  selection_right,
+                  (FLOAT)(selection_top + bar_height),
+                  Colors().selection,
+                  Colors().selection);
 
         if (scrolls)
         {
             const int thumb_top = (int)(thumb_y + 0.5f);
-            m_Ui.Rect(scroll_left, (FLOAT)track_top, scroll_right, (FLOAT)(track_top + track_height),
-                      Colors().button, Colors().button);
-            m_Ui.Rect(scroll_left, (FLOAT)thumb_top, scroll_right, (FLOAT)(thumb_top + thumb_height),
-                      Colors().panel_border, Colors().panel_border);
+            m_Ui.Rect(scroll_left, (FLOAT)track_top, scroll_right, (FLOAT)(track_top + track_height), Colors().button, Colors().button);
+            m_Ui.Rect(scroll_left, (FLOAT)thumb_top, scroll_right, (FLOAT)(thumb_top + thumb_height), Colors().panel_border, Colors().panel_border);
         }
 
         for (int i = first_visible; i < first_visible + visible; i++)
@@ -488,8 +499,7 @@ int App::RunMenu(LPCWSTR title, const LPCWSTR *labels, const bool *enabled, int 
                 color = COLOR_YELLOW;
             }
 
-            m_Ui.Text(FONT_TEXT, labels[i], m_Layout->menu_left + m_Layout->menu_text_inset,
-                      m_Ui.TextYCentered(FONT_TEXT, bar_top, bar_bottom), color);
+            m_Ui.Text(FONT_TEXT, labels[i], m_Layout->menu_left + m_Layout->menu_text_inset, m_Ui.TextYCentered(FONT_TEXT, bar_top, bar_bottom), color);
         }
 
         DrawPanelFooter(m_Layout->menu_left, m_Layout->menu_right, box_bottom, submenu ? L"A: select    B: back    Start: close" : L"A: select    B: close");

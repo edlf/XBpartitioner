@@ -62,8 +62,7 @@ std::vector<unsigned char> Header(FatxDevice &device)
 }
 
 // Builds and copies back; returns the status
-FatxReclusterStatus Convert(SparseDevice &device, uint64_t lba_size, uint32_t cluster_bytes,
-                            FatxReclusterResult *result = NULL)
+FatxReclusterStatus Convert(SparseDevice &device, uint64_t lba_size, uint32_t cluster_bytes, FatxReclusterResult *result = NULL)
 {
     SparseDevice build_disk;
     FatxRangeRecorder build(build_disk);

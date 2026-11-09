@@ -12,20 +12,21 @@
 // finds errors, since a "free" cluster could then still hold file data.
 // Only clusters are listed: never the header, the FAT or the unused tail,
 // where other tools keep a backup table.
-bool FatxFreeRanges(FatxReader &reader, uint64_t partition_bytes, std::vector<FatxRange> *ranges,
-                    FatxCheckResult *check);
+bool FatxFreeRanges(FatxReader &reader, uint64_t partition_bytes, std::vector<FatxRange> *ranges, FatxCheckResult *check);
 
 // Reads a partition inside a disk
 class FatxOffsetReader : public FatxReader
 {
-public:
-    FatxOffsetReader(FatxReader &inner, uint64_t base) : m_inner(inner), m_base(base) {}
+  public:
+    FatxOffsetReader(FatxReader &inner, uint64_t base) : m_inner(inner), m_base(base)
+    {
+    }
     bool Read(uint64_t offset, void *buffer, uint32_t length) override
     {
         return m_inner.Read(m_base + offset, buffer, length);
     }
 
-private:
+  private:
     FatxReader &m_inner;
     uint64_t m_base;
 };
@@ -34,13 +35,16 @@ private:
 // rights). Reads, and TRIMs through ATA pass-through. Never writes data.
 class WindowsDisk : public FatxReader
 {
-public:
+  public:
     WindowsDisk();
     ~WindowsDisk();
 
     // trim opens it for ATA commands too
     bool Open(const char *path, bool trim, unsigned long *error);
-    uint64_t Size() const { return m_size; }
+    uint64_t Size() const
+    {
+        return m_size;
+    }
     bool Read(uint64_t offset, void *buffer, uint32_t length) override;
 
     // ATA IDENTIFY; fails if the connection blocks ATA commands (often USB)
@@ -48,7 +52,7 @@ public:
     // TRIMs sector-aligned byte ranges. max_blocks comes from IDENTIFY word 105.
     bool Trim(const std::vector<FatxRange> &ranges, uint32_t max_blocks, FatxProgress *progress);
 
-private:
+  private:
     bool Command(void *task, unsigned char *data, uint32_t length, bool data_out, bool dma, bool lba48);
 
     void *m_handle;

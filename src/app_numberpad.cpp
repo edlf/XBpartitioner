@@ -191,8 +191,7 @@ bool App::RunNumberInput(LPCWSTR title, ULONGLONG current, ULONGLONG min, ULONGL
             digits[0] = L'\0';
             break;
 
-        case KEY_UNIT:
-        {
+        case KEY_UNIT: {
             // Between decimal and hex the number is kept, in the other base
             const int old_base = input_base(unit);
             unit = (unit + 1) % INPUT_UNIT_COUNT;
@@ -224,8 +223,7 @@ bool App::RunNumberInput(LPCWSTR title, ULONGLONG current, ULONGLONG min, ULONGL
             AnimatePanelClose(m_Layout->dialog_left, box_top, m_Layout->dialog_right, box_top + NumberInputHeight());
             return false;
 
-        case KEY_OK:
-        {
+        case KEY_OK: {
             if (length == 0)
             {
                 message = L"Type a number first.";
@@ -265,12 +263,10 @@ int App::NumberInputHeight()
     const int gap = m_Layout->menu_selection_inset;
     const int key_height = m_Ui.TextBoxHeight(FONT_TEXT, m_Layout->dialog_button_padding);
     const int line_height = m_Layout->dialog_line_height;
-    return m_Layout->menu_first_item_offset + key_height + gap + 2 * line_height + gap +
-           KEYPAD_ROWS * (key_height + gap) - gap + m_Layout->menu_footer_height;
+    return m_Layout->menu_first_item_offset + key_height + gap + 2 * line_height + gap + KEYPAD_ROWS * (key_height + gap) - gap + m_Layout->menu_footer_height;
 }
 
-void App::DrawNumberInput(LPCWSTR title, const wchar_t *digits, int unit, ULONGLONG current, ULONGLONG min, ULONGLONG max,
-                          int selected_key, LPCWSTR message)
+void App::DrawNumberInput(LPCWSTR title, const wchar_t *digits, int unit, ULONGLONG current, ULONGLONG min, ULONGLONG max, int selected_key, LPCWSTR message)
 {
     const int left = m_Layout->dialog_left;
     const int right = m_Layout->dialog_right;
@@ -293,12 +289,10 @@ void App::DrawNumberInput(LPCWSTR title, const wchar_t *digits, int unit, ULONGL
 
     DrawPanel(left, top, right, bottom, title, value_y);
 
-    m_Ui.Rect((FLOAT)(left + inset), (FLOAT)value_y, (FLOAT)(right - inset), (FLOAT)(value_y + key_height),
-              Colors().selection, Colors().selection);
+    m_Ui.Rect((FLOAT)(left + inset), (FLOAT)value_y, (FLOAT)(right - inset), (FLOAT)(value_y + key_height), Colors().selection, Colors().selection);
     swprintf(text, (input_base(unit) == 16) ? L"0x%s_" : L"%s_", digits);
     m_Ui.Text(FONT_TABLE, text, left + inset + gap, m_Ui.TextYCentered(FONT_TABLE, value_y, value_y + key_height), COLOR_YELLOW);
-    m_Ui.Text(FONT_TEXT, g_InputUnitNames[unit], right - inset - gap, m_Ui.TextYCentered(FONT_TEXT, value_y, value_y + key_height),
-              COLOR_WHITE, XFONT_RIGHT);
+    m_Ui.Text(FONT_TEXT, g_InputUnitNames[unit], right - inset - gap, m_Ui.TextYCentered(FONT_TEXT, value_y, value_y + key_height), COLOR_WHITE, XFONT_RIGHT);
 
     if (g_InputUnitSectors[unit] == 1)
     {
@@ -340,17 +334,33 @@ void App::DrawNumberInput(LPCWSTR title, const wchar_t *digits, int unit, ULONGL
             LPCWSTR label = text;
             switch (key)
             {
-            case KEY_DELETE: label = L"Delete"; break;
-            case KEY_UNIT:   label = L"Unit"; break;
-            case KEY_CLEAR:  label = L"Clear"; break;
-            case KEY_CANCEL: label = L"Cancel"; break;
-            case KEY_OK:     label = L"OK"; break;
-            default:         swprintf(text, L"%X", key); break;
+            case KEY_DELETE:
+                label = L"Delete";
+                break;
+            case KEY_UNIT:
+                label = L"Unit";
+                break;
+            case KEY_CLEAR:
+                label = L"Clear";
+                break;
+            case KEY_CANCEL:
+                label = L"Cancel";
+                break;
+            case KEY_OK:
+                label = L"OK";
+                break;
+            default:
+                swprintf(text, L"%X", key);
+                break;
             }
 
             m_Ui.Rect((FLOAT)x, (FLOAT)y, (FLOAT)(x + key_width), (FLOAT)(y + key_height), color, color);
-            m_Ui.Text(FONT_TEXT, label, x + key_width / 2, m_Ui.TextYCentered(FONT_TEXT, y, y + key_height),
-                      selected ? COLOR_YELLOW : (usable ? COLOR_WHITE : COLOR_GREY), XFONT_CENTER);
+            m_Ui.Text(FONT_TEXT,
+                      label,
+                      x + key_width / 2,
+                      m_Ui.TextYCentered(FONT_TEXT, y, y + key_height),
+                      selected ? COLOR_YELLOW : (usable ? COLOR_WHITE : COLOR_GREY),
+                      XFONT_CENTER);
         }
     }
 

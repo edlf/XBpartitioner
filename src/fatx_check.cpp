@@ -69,14 +69,12 @@ typedef struct
 
 class Checker
 {
-public:
+  public:
     Checker(FatxReader &reader, uint64_t partition_bytes, FatxCheckResult *result, FatxProgress *progress)
-        : m_reader(reader), m_partition_bytes(partition_bytes), m_result(result), m_progress(progress), m_last_percent(-1),
-          m_referenced(NULL), m_fat_chunk(NULL), m_fat_chunk_offset(0), m_fat_chunk_length(0), m_fat_chunk_valid(false),
-          m_fat_dirty(false), m_writer(NULL), m_write_failed(false), m_cluster(NULL), m_pending(NULL), m_pending_count(0),
-          m_pending_capacity(0), m_names(NULL), m_name_count(0), m_name_capacity(0), m_fixes(NULL), m_fix_count(0),
-          m_fix_capacity(0), m_media_wrong(false), m_out_of_memory(false), m_referenced_count(0),
-          m_check_share(100), m_wrote(false)
+        : m_reader(reader), m_partition_bytes(partition_bytes), m_result(result), m_progress(progress), m_last_percent(-1), m_referenced(NULL),
+          m_fat_chunk(NULL), m_fat_chunk_offset(0), m_fat_chunk_length(0), m_fat_chunk_valid(false), m_fat_dirty(false), m_writer(NULL), m_write_failed(false),
+          m_cluster(NULL), m_pending(NULL), m_pending_count(0), m_pending_capacity(0), m_names(NULL), m_name_count(0), m_name_capacity(0), m_fixes(NULL),
+          m_fix_count(0), m_fix_capacity(0), m_media_wrong(false), m_out_of_memory(false), m_referenced_count(0), m_check_share(100), m_wrote(false)
     {
     }
 
@@ -211,9 +209,12 @@ public:
     }
 
     // Whether anything was written before a failure
-    bool StoppedPartway() const { return m_wrote || m_write_failed; }
+    bool StoppedPartway() const
+    {
+        return m_wrote || m_write_failed;
+    }
 
-private:
+  private:
     // Clears a chain from the used bitmap. The chain is known to be intact.
     bool Unmark(uint32_t cluster)
     {
@@ -607,8 +608,7 @@ private:
             }
             if (entry.name_length > FATX_MAX_NAME_LENGTH)
             {
-                Report(true, "%s: entry %u in cluster %u has a bad name length (%u).", PathOrRoot(path), i, cluster,
-                       entry.name_length);
+                Report(true, "%s: entry %u in cluster %u has a bad name length (%u).", PathOrRoot(path), i, cluster, entry.name_length);
                 continue;
             }
             if (!CheckEntry(entry, path, offset + i * sizeof(FatxDirent)))
@@ -683,8 +683,7 @@ private:
             ok = FollowChain(entry.first_cluster, full, false, &count, &clean);
             if (ok && count < needed)
             {
-                Report(true, "%s: %u bytes need %I64u clusters, the chain has %I64u.", full, entry.file_size, needed,
-                       count);
+                Report(true, "%s: %u bytes need %I64u clusters, the chain has %I64u.", full, entry.file_size, needed, count);
             }
             else if (ok && count > needed)
             {
@@ -870,8 +869,7 @@ namespace
 {
 
 // Counts used entries in a small range of the FAT, and whether it's all 0
-bool scan_fat_entries(FatxReader &reader, const FatxLayout &layout, uint64_t first, uint64_t limit, uint64_t *used,
-                      bool *all_zero)
+bool scan_fat_entries(FatxReader &reader, const FatxLayout &layout, uint64_t first, uint64_t limit, uint64_t *used, bool *all_zero)
 {
     *used = 0;
     *all_zero = true;
@@ -917,8 +915,7 @@ bool scan_fat_entries(FatxReader &reader, const FatxLayout &layout, uint64_t fir
 
 } // namespace
 
-bool FatxCheckResize(FatxReader &reader, uint64_t old_lba_size, uint64_t new_lba_size, FatxResizeResult *resize,
-                     FatxProgress *progress)
+bool FatxCheckResize(FatxReader &reader, uint64_t old_lba_size, uint64_t new_lba_size, FatxResizeResult *resize, FatxProgress *progress)
 {
     memset(resize, 0, sizeof(*resize));
     resize->status = FATX_RESIZE_NOT_CHECKED;
@@ -1012,8 +1009,7 @@ bool FatxRepair(FatxDevice &device, uint64_t partition_bytes, FatxRepairResult *
         return false;
     }
 
-    const bool any = repair->files_trimmed > 0 || repair->empty_files_cleared > 0 || repair->clusters_freed > 0 ||
-                     repair->media_fixed;
+    const bool any = repair->files_trimmed > 0 || repair->empty_files_cleared > 0 || repair->clusters_freed > 0 || repair->media_fixed;
     repair->status = any ? FATX_REPAIR_DONE : FATX_REPAIR_NOTHING_TO_DO;
     repair->written = write && any;
     return true;

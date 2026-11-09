@@ -25,14 +25,19 @@ typedef struct
 // Records which ranges were written, for the copy back
 class FatxRangeRecorder : public FatxDevice
 {
-public:
-    explicit FatxRangeRecorder(FatxDevice &inner) : m_inner(inner) {}
+  public:
+    explicit FatxRangeRecorder(FatxDevice &inner) : m_inner(inner)
+    {
+    }
     bool Read(uint64_t offset, void *buffer, uint32_t length) override;
     bool Write(uint64_t offset, const void *buffer, uint32_t length) override;
-    bool Sync() override { return m_inner.Sync(); }
+    bool Sync() override
+    {
+        return m_inner.Sync();
+    }
     std::vector<FatxRange> Ranges() const;
 
-private:
+  private:
     FatxDevice &m_inner;
     std::map<uint64_t, uint64_t> m_ranges; // Begin to end, merged
 };
@@ -67,11 +72,10 @@ typedef struct
 } FatxReclusterResult;
 
 // Step 1. Pass a NULL build for a dry run.
-bool FatxBuildReclustered(FatxDevice &original, uint64_t lba_size, uint32_t new_cluster_bytes, FatxRangeRecorder *build,
-                          FatxReclusterResult *result, FatxProgress *progress = NULL);
+bool FatxBuildReclustered(FatxDevice &original, uint64_t lba_size, uint32_t new_cluster_bytes, FatxRangeRecorder *build, FatxReclusterResult *result,
+                          FatxProgress *progress = NULL);
 
 // Step 2: copies the built ranges onto the partition. Safe to repeat.
-bool FatxCopyReclustered(FatxDevice &build, FatxDevice &partition, const std::vector<FatxRange> &ranges,
-                         FatxProgress *progress = NULL);
+bool FatxCopyReclustered(FatxDevice &build, FatxDevice &partition, const std::vector<FatxRange> &ranges, FatxProgress *progress = NULL);
 
 #endif // FATX_RECLUSTER_H_

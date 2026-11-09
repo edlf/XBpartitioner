@@ -57,10 +57,9 @@ namespace
 // Reads a file's contents from the original
 class ChainSource : public FatxSource
 {
-public:
+  public:
     ChainSource(FatxWriter &original, FatxDevice &device, uint32_t first)
-        : m_original(original), m_device(device), m_next(first), m_data(original.ClusterBytes()),
-          m_position(original.ClusterBytes())
+        : m_original(original), m_device(device), m_next(first), m_data(original.ClusterBytes()), m_position(original.ClusterBytes())
     {
     }
 
@@ -88,7 +87,7 @@ public:
         return true;
     }
 
-private:
+  private:
     FatxWriter &m_original;
     FatxDevice &m_device;
     uint32_t m_next;
@@ -101,8 +100,7 @@ bool read_folder(FatxWriter &original, FatxDevice &device, uint32_t first, std::
 {
     const uint32_t per_cluster = original.ClusterBytes() / sizeof(FatxDirent);
     std::vector<unsigned char> data(original.ClusterBytes());
-    for (uint32_t cluster = first; cluster >= 1 && cluster < original.Layout().cluster_limit;
-         cluster = original.GetFat(cluster))
+    for (uint32_t cluster = first; cluster >= 1 && cluster < original.Layout().cluster_limit; cluster = original.GetFat(cluster))
     {
         if (!device.Read(original.ClusterOffset(cluster), data.data(), (uint32_t)data.size()))
         {
@@ -133,8 +131,10 @@ typedef struct
 
 class PartProgress : public FatxProgress
 {
-public:
-    PartProgress(FatxProgress *whole, int from, int to) : m_whole(whole), m_from(from), m_to(to) {}
+  public:
+    PartProgress(FatxProgress *whole, int from, int to) : m_whole(whole), m_from(from), m_to(to)
+    {
+    }
     void Update(int percent) override
     {
         if (m_whole != NULL)
@@ -143,7 +143,7 @@ public:
         }
     }
 
-private:
+  private:
     FatxProgress *m_whole;
     int m_from;
     int m_to;
@@ -157,8 +157,8 @@ bool fail(FatxReclusterResult *result, FatxReclusterStatus status)
 
 } // namespace
 
-bool FatxBuildReclustered(FatxDevice &original, uint64_t lba_size, uint32_t new_cluster_bytes, FatxRangeRecorder *build,
-                          FatxReclusterResult *result, FatxProgress *progress)
+bool FatxBuildReclustered(FatxDevice &original, uint64_t lba_size, uint32_t new_cluster_bytes, FatxRangeRecorder *build, FatxReclusterResult *result,
+                          FatxProgress *progress)
 {
     memset(result, 0, sizeof(*result));
     result->new_cluster_bytes = new_cluster_bytes;
@@ -315,8 +315,8 @@ bool FatxBuildReclustered(FatxDevice &original, uint64_t lba_size, uint32_t new_
     FatxCheckResult *built = new FatxCheckResult;
     PartProgress verify_progress(progress, 90, 100);
     FatxCheck(*build, lba_size * HDD_SECTOR_SIZE, built, &verify_progress);
-    const bool clean = built->status == FATX_CHECK_DONE && built->errors == 0 && built->lost_clusters == 0 &&
-                       built->files == result->files && built->directories == result->folders;
+    const bool clean = built->status == FATX_CHECK_DONE && built->errors == 0 && built->lost_clusters == 0 && built->files == result->files &&
+                       built->directories == result->folders;
     delete built;
     if (!clean)
     {
@@ -326,8 +326,7 @@ bool FatxBuildReclustered(FatxDevice &original, uint64_t lba_size, uint32_t new_
     return true;
 }
 
-bool FatxCopyReclustered(FatxDevice &build, FatxDevice &partition, const std::vector<FatxRange> &ranges,
-                         FatxProgress *progress)
+bool FatxCopyReclustered(FatxDevice &build, FatxDevice &partition, const std::vector<FatxRange> &ranges, FatxProgress *progress)
 {
     // Block mounting until the header is copied, last
     unsigned char sector[HDD_SECTOR_SIZE];
@@ -373,8 +372,7 @@ bool FatxCopyReclustered(FatxDevice &build, FatxDevice &partition, const std::ve
             }
         }
     }
-    if (!partition.Sync() || !build.Read(0, sector, sizeof(sector)) || !partition.Write(0, sector, sizeof(sector)) ||
-        !partition.Sync())
+    if (!partition.Sync() || !build.Read(0, sector, sizeof(sector)) || !partition.Write(0, sector, sizeof(sector)) || !partition.Sync())
     {
         return false;
     }

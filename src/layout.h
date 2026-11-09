@@ -65,7 +65,6 @@ struct Layout
     // Partition edit panel: laid out like system information, slightly narrower
     int edit_left;
     int edit_right;
-
 };
 
 extern const Layout g_Layout480; // 640x480: 480i and 480p

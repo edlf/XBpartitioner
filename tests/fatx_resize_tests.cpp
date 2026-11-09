@@ -115,7 +115,6 @@ void MakeShrink(Case &c)
     ASSERT_TRUE(writer.Flush());
 }
 
-
 } // namespace
 
 TEST(FatxMoveResize, Target)
@@ -282,6 +281,33 @@ TEST(FatxMoveResize, NoRoom)
     delete result;
 }
 
+TEST(FatxMoveResize, TableWriteFailureCanBeFinished)
+{
+    Case c;
+    MakeGrow(c);
+    SizeRecord table(c.old_lba);
+    table.fail = true;
+    FatxMoveResult *result = new FatxMoveResult;
+
+    // Everything on disk is done, only the table is left
+    EXPECT_FALSE(FatxResizeWithMoves(c.device, c.old_lba, c.requested_lba, table, true, result));
+    EXPECT_EQ(result->status, FATX_MOVE_INTERRUPTED);
+    EXPECT_TRUE(result->table_failed);
+    EXPECT_EQ(table.size, c.old_lba);
+    EXPECT_EQ(Check(c.device, c.old_lba).status, FATX_CHECK_RESIZING);
+
+    // Failing again keeps it resumable
+    EXPECT_FALSE(FatxResumeResize(c.device, table, result));
+    EXPECT_TRUE(result->table_failed);
+
+    table.fail = false;
+    ASSERT_TRUE(FatxResumeResize(c.device, table, result));
+    EXPECT_FALSE(result->table_failed);
+    EXPECT_NE(table.size, c.old_lba);
+    EXPECT_EQ(Check(c.device, table.size).errors, 0u);
+    delete result;
+}
+
 TEST(FatxMoveResize, InterruptedShowsInTheCheck)
 {
     Case c;
@@ -401,17 +427,182 @@ TEST(FatxMoveResize, PowerCutAtEveryWriteShrinking)
     PowerCutEverywhere(MakeShrink, 1);
 }
 
-TEST(FatxMoveResize, Classify)
+namespace
 {
-    // 64 MB with 16 KB clusters: the FAT keeps its size up to 95.99 MB, grows
-    // by a whole cluster at 192 MB, and by only 12 KB at 190 MB
-    const uint64_t old_lba = 64 * MB / 512;
-    EXPECT_EQ(FatxClassifyResize(old_lba, CLUSTER, 80 * MB / 512), FATX_RESIZE_KIND_IN_PLACE);
-    EXPECT_EQ(FatxClassifyResize(old_lba, CLUSTER, 192 * MB / 512), FATX_RESIZE_KIND_MOVES);
-    EXPECT_EQ(FatxClassifyResize(old_lba, CLUSTER, 190 * MB / 512), FATX_RESIZE_KIND_FORMAT);
-    EXPECT_EQ(FatxMoveResizeNextUp(old_lba, CLUSTER, 190 * MB / 512), 192 * MB / 512);
-    EXPECT_EQ(FatxMoveResizeTarget(old_lba, CLUSTER, 190 * MB / 512), 96 * MB / 512 - 8);
 
-    // Too big for 16 KB clusters
-    EXPECT_EQ(FatxClassifyResize(0x1F000000, CLUSTER, 0x30000000), FATX_RESIZE_KIND_FORMAT);
+FatxUsage Usage(uint64_t used, uint64_t highest)
+{
+    FatxUsage usage;
+    usage.cluster_bytes = CLUSTER;
+    usage.used_clusters = used;
+    usage.bad_clusters = 0;
+    usage.highest_used = highest;
+    return usage;
+}
+
+bool Keeps(uint64_t old_lba, const FatxUsage &usage, uint64_t lba)
+{
+    return FatxClassifyResize(old_lba, usage, lba) != FATX_RESIZE_KIND_FORMAT;
+}
+
+} // namespace
+
+TEST(FatxKeepData, ClassifyBySize)
+{
+    // A nearly empty 64 MB partition: the FAT keeps its size up to 95.99 MB,
+    // grows by a whole cluster at 192 MB, and by only 12 KB at 190 MB
+    const uint64_t old_lba = 64 * MB / 512;
+    const FatxUsage empty = Usage(1, 1);
+    EXPECT_EQ(FatxClassifyResize(old_lba, empty, 80 * MB / 512), FATX_RESIZE_KIND_IN_PLACE);
+    EXPECT_EQ(FatxClassifyResize(old_lba, empty, 192 * MB / 512), FATX_RESIZE_KIND_MOVES);
+    EXPECT_EQ(FatxClassifyResize(old_lba, empty, 190 * MB / 512), FATX_RESIZE_KIND_FORMAT);
+    EXPECT_EQ(FatxKeepingSizeAbove(old_lba, empty, 190 * MB / 512), 192 * MB / 512);
+    EXPECT_EQ(FatxKeepingSizeBelow(old_lba, empty, 190 * MB / 512), 96 * MB / 512 - 8);
+}
+
+TEST(FatxKeepData, ShrinkingInPlaceNeedsTheEndFree)
+{
+    // 90 MB: the FAT keeps its size down to 64 MB. Cluster 5000 is in use,
+    // which 80 MB (5119 clusters) still holds and 70 MB (4479) doesn't.
+    const uint64_t old_lba = 90 * MB / 512;
+    const FatxUsage usage = Usage(10, 5000);
+    EXPECT_EQ(FatxClassifyResize(old_lba, usage, 80 * MB / 512), FATX_RESIZE_KIND_IN_PLACE);
+    EXPECT_EQ(FatxClassifyResize(old_lba, usage, 70 * MB / 512), FATX_RESIZE_KIND_FORMAT);
+
+    // The nearest size up from 70 MB is just big enough for cluster 5000
+    const uint64_t above = FatxKeepingSizeAbove(old_lba, usage, 70 * MB / 512);
+    EXPECT_TRUE(Keeps(old_lba, usage, above));
+    EXPECT_FALSE(Keeps(old_lba, usage, above - 8));
+    EXPECT_GT(FatxLayoutFor(above, CLUSTER).cluster_limit, 5000u);
+}
+
+TEST(FatxKeepData, ShrinkingWithMovesNeedsRoomForTheData)
+{
+    // 400 MB to 150 MB keeps 9596 clusters in place, one of them spare
+    const uint64_t old_lba = 400 * MB / 512;
+    EXPECT_EQ(FatxClassifyResize(old_lba, Usage(9000, 20000), 150 * MB / 512), FATX_RESIZE_KIND_MOVES);
+    EXPECT_EQ(FatxClassifyResize(old_lba, Usage(9595, 20000), 150 * MB / 512), FATX_RESIZE_KIND_MOVES);
+    EXPECT_EQ(FatxClassifyResize(old_lba, Usage(9596, 20000), 150 * MB / 512), FATX_RESIZE_KIND_FORMAT);
+
+    // With 9700 in use, 150 MB is too small: the next size up holds them
+    const FatxUsage full = Usage(9700, 20000);
+    const uint64_t above = FatxKeepingSizeAbove(old_lba, full, 150 * MB / 512);
+    EXPECT_GT(above, 150 * MB / 512);
+    EXPECT_TRUE(Keeps(old_lba, full, above));
+    EXPECT_FALSE(Keeps(old_lba, full, above - 8));
+}
+
+TEST(FatxKeepData, GrowingStaysWithinTheClusterSizeLimit)
+{
+    // 16 KB clusters stop at 256 GB, whatever the FAT would allow
+    const uint64_t old_lba = 0x1F000000;
+    const FatxUsage usage = Usage(1000, 1000);
+    const uint64_t below = FatxKeepingSizeBelow(old_lba, usage, 0x30000000);
+    EXPECT_NE(below, 0u);
+    EXPECT_LE(below, 0x20000000u);
+    EXPECT_LE(ClusterSizeKbFor(below), 16u);
+    EXPECT_TRUE(Keeps(old_lba, usage, below));
+    EXPECT_EQ(FatxKeepingSizeAbove(old_lba, usage, 0x30000000), 0u);
+    EXPECT_FALSE(Keeps(old_lba, usage, 0x30000000));
+}
+
+TEST(FatxKeepData, NearestSizesAreTheNearest)
+{
+    // Every 4 KB step checked by hand for requests all over the place
+    const uint64_t old_lba = 100 * MB / 512;
+    const FatxUsage usage = Usage(3000, 5500);
+    const uint64_t last = 420 * MB / 512;
+    std::vector<bool> keeps((size_t)(last / 8 + 1));
+    for (uint64_t lba = 8; lba <= last; lba += 8)
+    {
+        keeps[(size_t)(lba / 8)] = Keeps(old_lba, usage, lba);
+    }
+
+    for (uint64_t request = 5 * MB / 512; request <= 400 * MB / 512; request += 3 * MB / 512 + 8)
+    {
+        SCOPED_TRACE("request " + std::to_string(request));
+        uint64_t expect_below = 0;
+        for (uint64_t lba = request & ~7ULL; lba >= 8; lba -= 8)
+        {
+            if (keeps[(size_t)(lba / 8)])
+            {
+                expect_below = lba;
+                break;
+            }
+        }
+        uint64_t expect_above = 0;
+        for (uint64_t lba = (request + 7) & ~7ULL; lba <= last; lba += 8)
+        {
+            if (keeps[(size_t)(lba / 8)])
+            {
+                expect_above = lba;
+                break;
+            }
+        }
+        EXPECT_EQ(FatxKeepingSizeBelow(old_lba, usage, request), expect_below);
+        if (expect_above != 0)
+        {
+            EXPECT_EQ(FatxKeepingSizeAbove(old_lba, usage, request), expect_above);
+        }
+    }
+}
+
+TEST(FatxKeepData, ReadUsage)
+{
+    const uint64_t lba = 64 * MB / HDD_SECTOR_SIZE;
+    SparseDevice device;
+    FatxWriter writer(device, lba * HDD_SECTOR_SIZE, CLUSTER);
+    ASSERT_TRUE(writer.Format());
+    AddFile(writer, writer.RootCluster(), "a", CLUSTER * 3, 1); // Clusters 2 to 4
+    writer.SetFat(3000, FATX_FAT_END);                            // Lost, still in use
+    writer.SetFat(3001, FATX_FAT_BAD);
+    ASSERT_TRUE(writer.Flush());
+
+    FatxUsage usage;
+    ASSERT_TRUE(FatxReadUsage(device, lba, &usage));
+    EXPECT_EQ(usage.cluster_bytes, CLUSTER);
+    EXPECT_EQ(usage.used_clusters, 1u + 3u + 1u); // Root, a, the lost one
+    EXPECT_EQ(usage.bad_clusters, 1u);
+    EXPECT_EQ(usage.highest_used, 3000u);
+
+    SparseDevice blank;
+    EXPECT_FALSE(FatxReadUsage(blank, lba, &usage));
+}
+
+TEST(FatxKeepData, AgreesWithTheResize)
+{
+    // What the editor says from the usage must be what the resize then does
+    Case c;
+    MakeShrink(c);
+    FatxUsage usage;
+    ASSERT_TRUE(FatxReadUsage(c.device, c.old_lba, &usage));
+
+    // Every MB, so all three answers come up
+    int seen[3] = {0, 0, 0};
+    for (uint64_t mb = 30; mb <= 420; mb++)
+    {
+        const uint64_t lba = mb * MB / HDD_SECTOR_SIZE;
+        SCOPED_TRACE(std::to_string(mb) + " MB");
+        const FatxResizeKind kind = FatxClassifyResize(c.old_lba, usage, lba);
+        seen[kind]++;
+        if (kind == FATX_RESIZE_KIND_IN_PLACE)
+        {
+            FatxResizeResult *resize = new FatxResizeResult;
+            FatxCheckResize(c.device, c.old_lba, lba, resize);
+            EXPECT_EQ(resize->status, FATX_RESIZE_OK);
+            delete resize;
+        }
+        else
+        {
+            SizeRecord table(c.old_lba);
+            FatxMoveResult *move = new FatxMoveResult;
+            FatxResizeWithMoves(c.device, c.old_lba, lba, table, false, move);
+            const bool planned = move->status == FATX_MOVE_PLANNED && move->new_lba_size == lba;
+            EXPECT_EQ(planned, kind == FATX_RESIZE_KIND_MOVES) << "status " << move->status;
+            delete move;
+        }
+    }
+    EXPECT_GT(seen[FATX_RESIZE_KIND_FORMAT], 0);
+    EXPECT_GT(seen[FATX_RESIZE_KIND_IN_PLACE], 0);
+    EXPECT_GT(seen[FATX_RESIZE_KIND_MOVES], 0);
 }

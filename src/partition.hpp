@@ -16,7 +16,7 @@ typedef __int64 int64_t;
 #define LBA48_GET_INFO_MAGIC2_IDX 1
 #define LBA48_GET_INFO_MAGIC2_VAL 0xbabeface
 #define LBA48_GET_INFO_PATCHCODE_VERSION_IDX 2
-#define LBA48_GET_INFO_LOWCODE_BASE_IDX  3
+#define LBA48_GET_INFO_LOWCODE_BASE_IDX 3
 #define LBA48_GET_INFO_HIGHCODE_BASE_IDX 4
 #define LBA48_GET_INFO_PATCHSEG_SIZE_IDX 5
 #define LBA48_GET_INFO_PART_TABLE_OFS_IDX 6
@@ -33,10 +33,10 @@ typedef __int64 int64_t;
 // The xbox currently only supports 512 byte hdd/ssds
 const uint32_t HDD_SECTOR_SIZE = 512;
 
-const uint32_t XBOX_SWAPPART1_LBA_START    = 0x400;
+const uint32_t XBOX_SWAPPART1_LBA_START = 0x400;
 const uint32_t XBOX_SWAPPART_LBA_SIZE = 0x177000;
-const uint32_t XBOX_SWAPPART2_LBA_START    = (XBOX_SWAPPART1_LBA_START + XBOX_SWAPPART_LBA_SIZE);
-const uint32_t XBOX_SWAPPART3_LBA_START    = (XBOX_SWAPPART2_LBA_START + XBOX_SWAPPART_LBA_SIZE);
+const uint32_t XBOX_SWAPPART2_LBA_START = (XBOX_SWAPPART1_LBA_START + XBOX_SWAPPART_LBA_SIZE);
+const uint32_t XBOX_SWAPPART3_LBA_START = (XBOX_SWAPPART2_LBA_START + XBOX_SWAPPART_LBA_SIZE);
 
 const uint32_t XBOX_SYSPART_LBA_START = (XBOX_SWAPPART3_LBA_START + XBOX_SWAPPART_LBA_SIZE);
 const uint32_t XBOX_SYSPART_LBA_SIZE = 0xfa000;
@@ -64,18 +64,18 @@ const uint32_t PE_PARTFLAGS_IN_USE = 0x80000000;
 #define SCALE_MEGABYTE 0x100000
 #define SCALE_GIGABYTE 0x40000000
 
-#define LBA_LOWER_BITS   0xFFFFFFFF
+#define LBA_LOWER_BITS 0xFFFFFFFF
 // Largest partition the presets make
-#define LBASIZE_16TB    0x800000000
+#define LBASIZE_16TB 0x800000000
 // v3 kernels only mount FATX clusters up to 64 KB: partitions at most 1TB
-#define LBA48_V3_MAX_CLUSTER_KB  64
-#define LBASIZE_LBA48_V3_MAX     0x80000000
+#define LBA48_V3_MAX_CLUSTER_KB 64
+#define LBASIZE_LBA48_V3_MAX 0x80000000
 
 // The backup table is at the end of the disk: the last sector, or on 512e
 // drives the first sector of the last 4K block (aligned, like Fatxplorer).
 // Partitions end before it.
 #define RESERVED_SPACE_END_LBA 0x1
-#define MAX_HDD_SIZE_LBA48_V3  0xFFFFFFFF
+#define MAX_HDD_SIZE_LBA48_V3 0xFFFFFFFF
 
 const uint32_t XboxPartitionNameMaxLength = 0x10;
 
@@ -96,8 +96,8 @@ const uint32_t XboxPartitionTableEntrySize = 0x20;
 const uint32_t XboxPartitionTableEntryCount = 14;
 const uint32_t XboxPartitionTableFooterSize = 0x10;
 
-const uint32_t XboxPartitionTableSize = XboxPartitionTableMagicSize + XboxPartitionTableHeaderVersionSize + XboxPartitionTableHeaderReservedSize + (XboxPartitionTableEntryCount * XboxPartitionTableEntrySize) + XboxPartitionTableFooterSize;
-
+const uint32_t XboxPartitionTableSize = XboxPartitionTableMagicSize + XboxPartitionTableHeaderVersionSize + XboxPartitionTableHeaderReservedSize +
+                                        (XboxPartitionTableEntryCount * XboxPartitionTableEntrySize) + XboxPartitionTableFooterSize;
 
 static_assert(sizeof(XboxPartitionTableEntry) == XboxPartitionTableEntrySize, "XboxPartitionTableEntry size is wrong!");
 
@@ -111,7 +111,7 @@ typedef struct
     unsigned char Magic[XboxPartitionTableMagicSize];
     unsigned char Version;
     unsigned char Reserved[XboxPartitionTableHeaderReservedSize];
-    XboxPartitionTableEntry    TableEntries[XboxPartitionTableEntryCount];
+    XboxPartitionTableEntry TableEntries[XboxPartitionTableEntryCount];
     unsigned char Footer[XboxPartitionTableFooterSize];
 } XboxPartitionTable;
 
@@ -122,12 +122,13 @@ static_assert(XboxPartitionTableSize == HDD_SECTOR_SIZE, "XboxPartitionTable mus
 static_assert(offsetof(XboxPartitionTable, Version) == 0x10, "XboxPartitionTable::Version is misplaced!");
 static_assert(offsetof(XboxPartitionTable, TableEntries) == 0x30, "XboxPartitionTable::TableEntries is misplaced!");
 
-class XboxPartitionTableManipulator {
+class XboxPartitionTableManipulator
+{
 
-public:
+  public:
     // physical_4k: 512e drive, see GetBackupTableLba()
     XboxPartitionTableManipulator(const uint64_t total_hdd_lba, const bool lbav4, const bool physical_4k);
-    XboxPartitionTableManipulator(const XboxPartitionTable& part_table, const uint64_t total_hdd_lba, const bool lbav4, const bool physical_4k);
+    XboxPartitionTableManipulator(const XboxPartitionTable &part_table, const uint64_t total_hdd_lba, const bool lbav4, const bool physical_4k);
 
     // 0 if there is none (unknown size, or no room after the stock partitions)
     uint64_t GetBackupTableLba() const;
@@ -147,7 +148,7 @@ public:
 
     XboxPartitionTable GetPartitionTable();
 
-    void LoadNewTable(const XboxPartitionTable& part_table);
+    void LoadNewTable(const XboxPartitionTable &part_table);
 
     // Up to XboxPartitionNameMaxLength characters, space padded
     void SetPartitionName(const uint16_t partition_number, const char *name);
@@ -168,21 +169,21 @@ public:
 
     XboxPartitionTableEntry getPartitionEntry(const int partition_number) const;
     // Names and the unused fields of disabled entries are ignored
-    bool HasSameLayout(const XboxPartitionTableManipulator& other) const;
+    bool HasSameLayout(const XboxPartitionTableManipulator &other) const;
     // False if other partitions have moved into its range since
-    bool RestorePartitionEntry(const int partition_number, const XboxPartitionTableEntry& entry);
+    bool RestorePartitionEntry(const int partition_number, const XboxPartitionTableEntry &entry);
 
     bool HasMagic() const;
-    static bool HasMagic(const XboxPartitionTable& part_table);
+    static bool HasMagic(const XboxPartitionTable &part_table);
     // lba48 v4 only
-    static bool HasHighLbaBits(const XboxPartitionTable& part_table);
+    static bool HasHighLbaBits(const XboxPartitionTable &part_table);
     // Has the magic and a version other than v3, v4 or Titan
-    static bool HasUnknownVersion(const XboxPartitionTable& part_table);
+    static bool HasUnknownVersion(const XboxPartitionTable &part_table);
     // The version a table written in this mode gets
     static unsigned char VersionFor(const bool lbav4);
     // Magic, at least one partition in use, each with a size, after the first
     // usable sector, inside the disk (if total_sectors is known), no overlaps
-    static bool IsTableUsable(const XboxPartitionTable& part_table, const uint64_t total_sectors);
+    static bool IsTableUsable(const XboxPartitionTable &part_table, const uint64_t total_sectors);
     // Overlapping or sharing a start (also when one is empty): must not be written
     bool FindConflict(int *first, int *second) const;
     // Starts in the reserved area before XBOX_SWAPPART1_LBA_START (damaged or
@@ -229,7 +230,7 @@ public:
     uint64_t AlignTo4k(const uint64_t value) const;
     bool isAlignedTo4k(const uint64_t value) const;
 
-private:
+  private:
     void SortPartitions(uint64_t *starts, uint64_t *ends) const;
     // The presets' size cap: 16TB, or GetMaxPartitionSize() if smaller
     uint64_t PresetMaxPartitionSize() const;
@@ -260,10 +261,11 @@ private:
 #define FATX_signature 1481916742
 
 // Code stolen from PrometheOS
-#define FAT_VOLUME_NAME_LENGTH          32
-#define FAT_ONLINE_DATA_LENGTH          2048
+#define FAT_VOLUME_NAME_LENGTH 32
+#define FAT_ONLINE_DATA_LENGTH 2048
 
-typedef struct _FAT_VOLUME_METADATA {
+typedef struct _FAT_VOLUME_METADATA
+{
     uint32_t Signature;
     uint32_t SerialNumber;
     uint32_t SectorsPerCluster;
@@ -271,7 +273,7 @@ typedef struct _FAT_VOLUME_METADATA {
     wchar_t VolumeName[FAT_VOLUME_NAME_LENGTH];
     unsigned char OnlineData[FAT_ONLINE_DATA_LENGTH];
     // Unused space in the block is filled with 0xFF bytes.
-} FAT_VOLUME_METADATA, * PFAT_VOLUME_METADATA;
+} FAT_VOLUME_METADATA, *PFAT_VOLUME_METADATA;
 
 // On disk layout: the fix-up writes SectorsPerCluster in place
 static_assert(offsetof(FAT_VOLUME_METADATA, Signature) == 0, "FAT_VOLUME_METADATA layout is wrong!");
@@ -280,7 +282,7 @@ static_assert(offsetof(FAT_VOLUME_METADATA, VolumeName) == 16, "FAT_VOLUME_METAD
 static_assert(sizeof(FAT_VOLUME_METADATA) == 0x850, "FAT_VOLUME_METADATA layout is wrong!");
 static_assert(sizeof(FAT_VOLUME_METADATA) <= HDD_SECTOR_SIZE * 8, "FAT_VOLUME_METADATA must fit the 4 KB read buffer!");
 
-#define ROUND_TO_PAGES(Size)  (((ULONG_PTR)(Size) + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1))
+#define ROUND_TO_PAGES(Size) (((ULONG_PTR)(Size) + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1))
 // Theft over
 
 // The FATX layout the kernel derives from a partition's size: a 4 KB

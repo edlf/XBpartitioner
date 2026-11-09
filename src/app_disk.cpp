@@ -26,8 +26,7 @@ ULONGLONG App::get_hdd_size()
     obj_attr.Attributes = OBJ_CASE_INSENSITIVE;
 
     IO_STATUS_BLOCK io_stat_block;
-    unsigned int stat = NtOpenFile(&handle, (GENERIC_READ | 0x00100000),
-                                   &obj_attr, &io_stat_block, (FILE_SHARE_READ | FILE_SHARE_WRITE), 0x10);
+    unsigned int stat = NtOpenFile(&handle, (GENERIC_READ | 0x00100000), &obj_attr, &io_stat_block, (FILE_SHARE_READ | FILE_SHARE_WRITE), 0x10);
 
     if (stat != STATUS_SUCCESS)
     {
@@ -40,10 +39,16 @@ ULONGLONG App::get_hdd_size()
     geom_ioctl_cmd_in_buf[0] = IOCTL_SUBCMD_GET_INFO;
 
     DISK_GEOMETRY DiskGeometry;
-    stat = NtDeviceIoControlFile(handle, 0, 0, 0, &io_stat_block,
+    stat = NtDeviceIoControlFile(handle,
+                                 0,
+                                 0,
+                                 0,
+                                 &io_stat_block,
                                  IOCTL_DISK_GET_DRIVE_GEOMETRY,
-                                 geom_ioctl_cmd_in_buf, sizeof(geom_ioctl_cmd_in_buf),
-                                 &DiskGeometry, sizeof(DiskGeometry));
+                                 geom_ioctl_cmd_in_buf,
+                                 sizeof(geom_ioctl_cmd_in_buf),
+                                 &DiskGeometry,
+                                 sizeof(DiskGeometry));
     NtClose(handle);
 
     ULONGLONG total_sectors = 0ULL;
@@ -135,8 +140,8 @@ void App::read_drive_identify()
 
     HANDLE handle;
     IO_STATUS_BLOCK io_stat_block;
-    NTSTATUS stat = NtOpenFile(&handle, SYNCHRONIZE | GENERIC_READ | GENERIC_WRITE, &obj_attr, &io_stat_block,
-                               FILE_SHARE_READ | FILE_SHARE_WRITE, FILE_SYNCHRONOUS_IO_ALERT);
+    NTSTATUS stat = NtOpenFile(
+        &handle, SYNCHRONIZE | GENERIC_READ | GENERIC_WRITE, &obj_attr, &io_stat_block, FILE_SHARE_READ | FILE_SHARE_WRITE, FILE_SYNCHRONOUS_IO_ALERT);
     if (!NT_SUCCESS(stat))
     {
         return;
@@ -154,8 +159,7 @@ void App::read_drive_identify()
     ata.DataBufferSize = sizeof(identify);
     ata.DataBuffer = identify;
 
-    stat = NtDeviceIoControlFile(handle, NULL, NULL, NULL, &io_stat_block, IOCTL_IDE_PASS_THROUGH,
-                                 &ata, sizeof(ata), &ata, sizeof(ata));
+    stat = NtDeviceIoControlFile(handle, NULL, NULL, NULL, &io_stat_block, IOCTL_IDE_PASS_THROUGH, &ata, sizeof(ata), &ata, sizeof(ata));
     NtClose(handle);
 
     if (!NT_SUCCESS(stat))
@@ -170,15 +174,12 @@ void App::read_drive_identify()
     // 48 bit count if supported, else the 28 bit one
     if (identify[ATA_ID_COMMAND_SET_2_WORD] & 0x0400)
     {
-        m_Drive.native_sectors = (ULONGLONG)identify[ATA_ID_LBA48_SECTORS_WORD] |
-                                 ((ULONGLONG)identify[ATA_ID_LBA48_SECTORS_WORD + 1] << 16) |
-                                 ((ULONGLONG)identify[ATA_ID_LBA48_SECTORS_WORD + 2] << 32) |
-                                 ((ULONGLONG)identify[ATA_ID_LBA48_SECTORS_WORD + 3] << 48);
+        m_Drive.native_sectors = (ULONGLONG)identify[ATA_ID_LBA48_SECTORS_WORD] | ((ULONGLONG)identify[ATA_ID_LBA48_SECTORS_WORD + 1] << 16) |
+                                 ((ULONGLONG)identify[ATA_ID_LBA48_SECTORS_WORD + 2] << 32) | ((ULONGLONG)identify[ATA_ID_LBA48_SECTORS_WORD + 3] << 48);
     }
     else
     {
-        m_Drive.native_sectors = (ULONGLONG)identify[ATA_ID_LBA28_SECTORS_WORD] |
-                                 ((ULONGLONG)identify[ATA_ID_LBA28_SECTORS_WORD + 1] << 16);
+        m_Drive.native_sectors = (ULONGLONG)identify[ATA_ID_LBA28_SECTORS_WORD] | ((ULONGLONG)identify[ATA_ID_LBA28_SECTORS_WORD + 1] << 16);
     }
 
     // Word 106:
@@ -212,8 +213,7 @@ bool App::read_lba48_info(XboxPartitionTable *p_table)
     obj_attr.Attributes = OBJ_CASE_INSENSITIVE;
 
     IO_STATUS_BLOCK io_stat_block;
-    unsigned int stat = NtOpenFile(&handle, (GENERIC_READ | 0x00100000),
-                                   &obj_attr, &io_stat_block, (FILE_SHARE_READ | FILE_SHARE_WRITE), 0x10);
+    unsigned int stat = NtOpenFile(&handle, (GENERIC_READ | 0x00100000), &obj_attr, &io_stat_block, (FILE_SHARE_READ | FILE_SHARE_WRITE), 0x10);
 
     if (stat != STATUS_SUCCESS)
     {
@@ -230,10 +230,16 @@ bool App::read_lba48_info(XboxPartitionTable *p_table)
 
     memset(lba48_ioctl_cmd_out_buf, 0, sizeof(lba48_ioctl_cmd_out_buf));
 
-    stat = NtDeviceIoControlFile(handle, 0, 0, 0, &io_stat_block,
+    stat = NtDeviceIoControlFile(handle,
+                                 0,
+                                 0,
+                                 0,
+                                 &io_stat_block,
                                  IOCTL_CMD_LBA48_ACCESS,
-                                 lba48_ioctl_cmd_in_buf, sizeof(lba48_ioctl_cmd_in_buf),
-                                 lba48_ioctl_cmd_out_buf, sizeof(lba48_ioctl_cmd_out_buf));
+                                 lba48_ioctl_cmd_in_buf,
+                                 sizeof(lba48_ioctl_cmd_in_buf),
+                                 lba48_ioctl_cmd_out_buf,
+                                 sizeof(lba48_ioctl_cmd_out_buf));
 
     NtClose(handle);
     if (stat != STATUS_SUCCESS)
@@ -311,8 +317,7 @@ unsigned int App::get_cluster_size_from_partition(ANSI_STRING part)
     RWOffset.QuadPart = 0;
     memset(PartSector, 0, sizeof(PartSector));
 
-    status = NtOpenFile(&hDisk, SYNCHRONIZE | GENERIC_READ, &ObjectAttributes, &IoStatusBlock,
-                        FILE_SHARE_READ | FILE_SHARE_WRITE, FILE_SYNCHRONOUS_IO_ALERT);
+    status = NtOpenFile(&hDisk, SYNCHRONIZE | GENERIC_READ, &ObjectAttributes, &IoStatusBlock, FILE_SHARE_READ | FILE_SHARE_WRITE, FILE_SYNCHRONOUS_IO_ALERT);
 
     if (!NT_SUCCESS(status))
     {
@@ -350,6 +355,7 @@ void App::RefreshClusterSizes()
     for (int i = 0; i < XboxPartitionTableEntryCount; i++)
     {
         m_ClusterSizes[i] = get_cluster_size_from_partition(m_PartitionPaths[i]);
+        m_UsageKnown[i] = false;
     }
 }
 
@@ -451,8 +457,10 @@ bool App::write_tables_raw(const XboxPartitionTable &table_in, bool write_main, 
     RtlInitAnsiString(&a_path, "\\Device\\Harddisk0\\Partition0");
     InitializeObjectAttributes(&ObjectAttributes, &a_path, OBJ_CASE_INSENSITIVE, NULL);
     IO_STATUS_BLOCK IoStatusBlock;
-    NTSTATUS status = NtOpenFile(&hDisk, SYNCHRONIZE | GENERIC_ALL, &ObjectAttributes, &IoStatusBlock,
-                                 FILE_SHARE_READ | FILE_SHARE_WRITE, FILE_SYNCHRONOUS_IO_ALERT);
+    // Read and write only: a resize writes the table while its own handle on
+    // the disk is open, and more access (GENERIC_ALL) may not be shared
+    NTSTATUS status = NtOpenFile(
+        &hDisk, SYNCHRONIZE | GENERIC_READ | GENERIC_WRITE, &ObjectAttributes, &IoStatusBlock, FILE_SHARE_READ | FILE_SHARE_WRITE, FILE_SYNCHRONOUS_IO_ALERT);
 
     // Backup first: if it fails nothing has been touched yet
     if (status == 0 && write_backup)
@@ -578,8 +586,7 @@ bool App::read_hdd_sector(ULONGLONG lba, BYTE *sector)
     InitializeObjectAttributes(&ObjectAttributes, &a_path, OBJ_CASE_INSENSITIVE, NULL);
     memset(sector, 0, HDD_SECTOR_SIZE);
 
-    status = NtOpenFile(&hDisk, SYNCHRONIZE | GENERIC_READ, &ObjectAttributes, &IoStatusBlock,
-                        FILE_SHARE_READ | FILE_SHARE_WRITE, FILE_SYNCHRONOUS_IO_ALERT);
+    status = NtOpenFile(&hDisk, SYNCHRONIZE | GENERIC_READ, &ObjectAttributes, &IoStatusBlock, FILE_SHARE_READ | FILE_SHARE_WRITE, FILE_SYNCHRONOUS_IO_ALERT);
     if (status == 0)
     {
         status = NtReadFile(hDisk, NULL, NULL, NULL, &IoStatusBlock, (PVOID)sector, HDD_SECTOR_SIZE, &RWOffset);
@@ -637,8 +644,8 @@ XboxPartitionTable App::read_hdd_backup_partition_table()
         // (see OfferShrinkForBackup()).
         table = read_hdd_partition_table(get_backup_partition_offset_bytes());
         if (XboxPartitionTableManipulator::IsTableUsable(table, m_TotalHddSectors) &&
-            XboxPartitionTableManipulator::IsTableUsable(m_TableHdd, m_TotalHddSectors) &&
-            same_table_but_version(table, m_TableHdd) && same_table_but_version(table, m_TableKernel))
+            XboxPartitionTableManipulator::IsTableUsable(m_TableHdd, m_TotalHddSectors) && same_table_but_version(table, m_TableHdd) &&
+            same_table_but_version(table, m_TableKernel))
         {
             m_BackupStatus = BACKUP_OVERLAPPED_MATCH;
             return table;

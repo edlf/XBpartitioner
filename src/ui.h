@@ -64,7 +64,7 @@ static const int FONT_GLYPH_COUNT = FONT_LAST_CHAR - FONT_FIRST_CHAR + 1;
 
 class Renderer
 {
-public:
+  public:
     Renderer();
     ~Renderer();
 
@@ -72,7 +72,10 @@ public:
     // Safe to call more than once
     void Shutdown();
 
-    VideoMode GetVideoMode() const { return m_VideoMode; }
+    VideoMode GetVideoMode() const
+    {
+        return m_VideoMode;
+    }
     LPCWSTR GetVideoModeName() const;
 
     void BeginFrame();
@@ -84,8 +87,14 @@ public:
     // Case insensitive, -1 if there is none
     static int FindTheme(const char *name);
     void SetTheme(int index);
-    int GetThemeIndex() const { return m_ThemeIndex; }
-    const Theme &GetTheme() const { return GetThemeAt(m_ThemeIndex); }
+    int GetThemeIndex() const
+    {
+        return m_ThemeIndex;
+    }
+    const Theme &GetTheme() const
+    {
+        return GetThemeAt(m_ThemeIndex);
+    }
 
     // In layout pixels. Drawn by the GPU from a font texture (BuildFontAtlas),
     // laid out like XFONT; with XFONT itself if there is no texture.
@@ -125,8 +134,7 @@ public:
     // long gap counts as a short step.
     void DrawBackground();
 
-
-private:
+  private:
     bool CreateDevice(VideoMode mode);
 
     // Each font's characters drawn once with XFONT into a texture (white,
@@ -148,8 +156,14 @@ private:
     // and at the end of the frame
     void FlushText();
 
-    FLOAT ToScreenX(FLOAT x) const { return m_OffsetX + x; }
-    FLOAT ToScreenY(FLOAT y) const { return m_OffsetY + y; }
+    FLOAT ToScreenX(FLOAT x) const
+    {
+        return m_OffsetX + x;
+    }
+    FLOAT ToScreenY(FLOAT y) const
+    {
+        return m_OffsetY + y;
+    }
     // Rectangle in back buffer coordinates
     void ScreenRect(FLOAT x1, FLOAT y1, FLOAT x2, FLOAT y2, D3DCOLOR top_color, D3DCOLOR bottom_color);
 

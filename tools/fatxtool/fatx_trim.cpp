@@ -118,8 +118,8 @@ WindowsDisk::~WindowsDisk()
 bool WindowsDisk::Open(const char *path, bool trim, unsigned long *error)
 {
     // ATA pass-through needs write access, even for IDENTIFY
-    HANDLE handle = CreateFileA(path, GENERIC_READ | (trim ? GENERIC_WRITE : 0), FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
-                                OPEN_EXISTING, FILE_FLAG_NO_BUFFERING, NULL);
+    HANDLE handle =
+        CreateFileA(path, GENERIC_READ | (trim ? GENERIC_WRITE : 0), FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, FILE_FLAG_NO_BUFFERING, NULL);
     if (handle == INVALID_HANDLE_VALUE)
     {
         *error = GetLastError();
@@ -130,8 +130,7 @@ bool WindowsDisk::Open(const char *path, bool trim, unsigned long *error)
     LARGE_INTEGER length;
     DWORD returned = 0;
     m_buffer = (unsigned char *)VirtualAlloc(NULL, BUFFER_BYTES, MEM_COMMIT, PAGE_READWRITE);
-    if (m_buffer == NULL ||
-        !DeviceIoControl(handle, IOCTL_DISK_GET_LENGTH, NULL, 0, &length, sizeof(length), &returned, NULL))
+    if (m_buffer == NULL || !DeviceIoControl(handle, IOCTL_DISK_GET_LENGTH, NULL, 0, &length, sizeof(length), &returned, NULL))
     {
         *error = GetLastError();
         return false;
@@ -155,8 +154,7 @@ bool WindowsDisk::Read(uint64_t offset, void *buffer, uint32_t length)
         LARGE_INTEGER position;
         position.QuadPart = (LONGLONG)begin;
         DWORD done = 0;
-        if (!SetFilePointerEx((HANDLE)m_handle, position, NULL, FILE_BEGIN) ||
-            !ReadFile((HANDLE)m_handle, m_buffer, whole, &done, NULL) || done != whole)
+        if (!SetFilePointerEx((HANDLE)m_handle, position, NULL, FILE_BEGIN) || !ReadFile((HANDLE)m_handle, m_buffer, whole, &done, NULL) || done != whole)
         {
             return false;
         }
@@ -173,8 +171,7 @@ bool WindowsDisk::Command(void *task, unsigned char *data, uint32_t length, bool
     AtaPassThroughDirect command;
     memset(&command, 0, sizeof(command));
     command.Length = sizeof(command);
-    command.AtaFlags = ATA_FLAG_DRDY_REQUIRED | (data_out ? ATA_FLAG_DATA_OUT : ATA_FLAG_DATA_IN) |
-                       (dma ? ATA_FLAG_USE_DMA : 0) | (lba48 ? ATA_FLAG_48BIT : 0);
+    command.AtaFlags = ATA_FLAG_DRDY_REQUIRED | (data_out ? ATA_FLAG_DATA_OUT : ATA_FLAG_DATA_IN) | (dma ? ATA_FLAG_USE_DMA : 0) | (lba48 ? ATA_FLAG_48BIT : 0);
     command.DataTransferLength = length;
     command.TimeOutValue = 60;
     command.DataBuffer = data;
@@ -182,8 +179,7 @@ bool WindowsDisk::Command(void *task, unsigned char *data, uint32_t length, bool
     memcpy(command.CurrentTaskFile, (unsigned char *)task + 8, 8);
 
     DWORD returned = 0;
-    if (!DeviceIoControl((HANDLE)m_handle, IOCTL_ATA_PASS_THROUGH_DIRECT_, &command, sizeof(command), &command,
-                         sizeof(command), &returned, NULL))
+    if (!DeviceIoControl((HANDLE)m_handle, IOCTL_ATA_PASS_THROUGH_DIRECT_, &command, sizeof(command), &command, sizeof(command), &returned, NULL))
     {
         return false;
     }

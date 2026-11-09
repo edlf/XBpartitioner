@@ -12,7 +12,8 @@ void App::RunStartupChecks()
         QuitToDashboard();
     }
 
-    if (CheckStellar()) {
+    if (CheckStellar())
+    {
         WarnStellarDetected();
         QuitToDashboard();
     }
@@ -60,8 +61,7 @@ void App::RunStartupChecks()
 }
 
 // "kernel, hdd" for the tables that match
-static void list_tables(const XboxPartitionTable *const *tables, const LPCWSTR *names, int count,
-                        bool (*match)(const XboxPartitionTable &), wchar_t *out)
+static void list_tables(const XboxPartitionTable *const *tables, const LPCWSTR *names, int count, bool (*match)(const XboxPartitionTable &), wchar_t *out)
 {
     out[0] = L'\0';
     for (int i = 0; i < count; i++)
@@ -135,8 +135,7 @@ void App::OfferTitanOrRestore()
     bool main_written = false;
     if (write_partition_tables(m_TableHddBackup, NULL, &main_written))
     {
-        ShowMessage(L"Done", COLOR_GREEN, main_written ? L"Written as the backup and the main table."
-                                                       : L"The backup partition table was written.");
+        ShowMessage(L"Done", COLOR_GREEN, main_written ? L"Written as the backup and the main table." : L"The backup partition table was written.");
     }
     else
     {
@@ -193,8 +192,7 @@ void App::WarnUnalignedPartitions()
     for (int i = 0; i < XboxPartitionTableEntryCount; i++)
     {
         marked[i] = m_pTable->isPartitionEnabled(i) &&
-                    (!m_pTable->isAlignedTo4k(m_pTable->GetPartitionStart(i)) ||
-                     !m_pTable->isAlignedTo4k(m_pTable->GetPartitionSize(i)));
+                    (!m_pTable->isAlignedTo4k(m_pTable->GetPartitionStart(i)) || !m_pTable->isAlignedTo4k(m_pTable->GetPartitionSize(i)));
         any = any || marked[i];
     }
     if (!any)
@@ -209,8 +207,7 @@ void App::WarnUnalignedPartitions()
 
     const LPCWSTR lines[] = {
         line1,
-        m_Physical4k ? L"This drive has 4K sectors, so they are slower."
-                     : L"That makes them slower on drives with 4K sectors.",
+        m_Physical4k ? L"This drive has 4K sectors, so they are slower." : L"That makes them slower on drives with 4K sectors.",
         L"Editing one rounds it to 4 KB, which moves it:",
         L"it then needs formatting, and its data is lost.",
     };
@@ -250,8 +247,7 @@ void App::CheckForV4TableOnOldBios()
 
     for (int i = 0; i < ARRAY_COUNT(tables); i++)
     {
-        if (XboxPartitionTableManipulator::HasMagic(*tables[i].table) &&
-            XboxPartitionTableManipulator::HasHighLbaBits(*tables[i].table))
+        if (XboxPartitionTableManipulator::HasMagic(*tables[i].table) && XboxPartitionTableManipulator::HasHighLbaBits(*tables[i].table))
         {
             if (found_in[0] != L'\0')
             {
@@ -286,8 +282,7 @@ void App::CheckForV4TableOnOldBios()
         L"uses v4 values (over 2TB), likely from a v4 BIOS.",
         line3,
         L"Partitions over 2TB are shown in the wrong place.",
-        forced ? L"Do not write or format. Turn force_lba48_v3 off."
-               : L"Do not write or format. Use a v4 BIOS such as Cerbios.",
+        forced ? L"Do not write or format. Turn force_lba48_v3 off." : L"Do not write or format. Use a v4 BIOS such as Cerbios.",
     };
     ShowWarning(lines, ARRAY_COUNT(lines));
 }

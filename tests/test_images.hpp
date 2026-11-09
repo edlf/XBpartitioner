@@ -23,7 +23,7 @@ const uint32_t CLUSTER = 16 * 1024;
 // Unwritten sectors read as 0
 class SparseDevice : public FatxDevice
 {
-public:
+  public:
     bool Read(uint64_t offset, void *buffer, uint32_t length) override
     {
         unsigned char *out = (unsigned char *)buffer;
@@ -66,7 +66,7 @@ public:
         return true;
     }
 
-private:
+  private:
     std::map<uint64_t, std::vector<unsigned char>> m_sectors;
 };
 
@@ -74,10 +74,15 @@ private:
 // happens in only gets its first half of sectors through
 class PowerCutDevice : public FatxDevice
 {
-public:
-    PowerCutDevice(FatxDevice &inner, uint64_t limit) : m_inner(inner), m_limit(limit), m_writes(0) {}
+  public:
+    PowerCutDevice(FatxDevice &inner, uint64_t limit) : m_inner(inner), m_limit(limit), m_writes(0)
+    {
+    }
 
-    bool Read(uint64_t offset, void *buffer, uint32_t length) override { return m_inner.Read(offset, buffer, length); }
+    bool Read(uint64_t offset, void *buffer, uint32_t length) override
+    {
+        return m_inner.Read(offset, buffer, length);
+    }
 
     bool Write(uint64_t offset, const void *buffer, uint32_t length) override
     {
@@ -96,9 +101,12 @@ public:
         return false;
     }
 
-    uint64_t Writes() const { return m_writes; }
+    uint64_t Writes() const
+    {
+        return m_writes;
+    }
 
-private:
+  private:
     FatxDevice &m_inner;
     uint64_t m_limit;
     uint64_t m_writes;
@@ -107,24 +115,30 @@ private:
 // Stands in for the partition table
 class SizeRecord : public FatxResizeTable
 {
-public:
-    explicit SizeRecord(uint64_t lba) : size(lba), calls(0) {}
+  public:
+    explicit SizeRecord(uint64_t lba) : size(lba), calls(0), fail(false)
+    {
+    }
     bool SetSize(uint64_t lba) override
     {
-        size = lba;
         calls++;
+        if (fail)
+        {
+            return false;
+        }
+        size = lba;
         return true;
     }
     uint64_t size;
     int calls;
+    bool fail; // Like a table write error on the Xbox
 };
 
 // Attributes and times
 std::string Details(const FatxDirent &entry)
 {
-    return std::to_string(entry.attributes & ~FATX_ATTR_DIRECTORY) + "/" + std::to_string(entry.modified_date) + "/" +
-           std::to_string(entry.modified_time) + "/" + std::to_string(entry.created_date) + "/" +
-           std::to_string(entry.created_time) + "/" + std::to_string(entry.accessed_date) + "/" +
+    return std::to_string(entry.attributes & ~FATX_ATTR_DIRECTORY) + "/" + std::to_string(entry.modified_date) + "/" + std::to_string(entry.modified_time) +
+           "/" + std::to_string(entry.created_date) + "/" + std::to_string(entry.created_time) + "/" + std::to_string(entry.accessed_date) + "/" +
            std::to_string(entry.accessed_time);
 }
 
@@ -165,8 +179,7 @@ void Walk(FatxWriter &writer, FatxDevice &device, uint32_t dir, const std::strin
             left -= part;
             cluster = writer.GetFat(cluster);
         }
-        out[name] = std::to_string(entry.file_size) + ":" + std::to_string(hash) + (left > 0 ? ":short" : "") + ":" +
-                    Details(entry);
+        out[name] = std::to_string(entry.file_size) + ":" + std::to_string(hash) + (left > 0 ? ":short" : "") + ":" + Details(entry);
     }
 }
 
@@ -205,7 +218,6 @@ void AddFile(FatxWriter &writer, uint32_t dir, const char *name, uint32_t size, 
     const std::vector<unsigned char> data = Pattern(size, seed);
     ASSERT_TRUE(writer.AddFile(dir, name, data.data(), size, first)) << name;
 }
-
 
 void ExpectSameFiles(const std::map<std::string, std::string> &before, const std::map<std::string, std::string> &after)
 {

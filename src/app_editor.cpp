@@ -31,8 +31,7 @@ static const int EDIT_DETAIL_COUNT = 5; // Name, format, on disk, free space, st
 
 int App::EditPanelHeight() const
 {
-    return m_Layout->menu_first_item_offset + (EDIT_FIELD_COUNT + EDIT_DETAIL_COUNT) * MenuItemHeight() +
-           MenuItemHeight() / 2 + m_Layout->menu_footer_height;
+    return m_Layout->menu_first_item_offset + (EDIT_FIELD_COUNT + EDIT_DETAIL_COUNT) * MenuItemHeight() + MenuItemHeight() / 2 + m_Layout->menu_footer_height;
 }
 
 int App::EditPanelTop() const
@@ -45,6 +44,13 @@ int App::EditPanelTop() const
 void App::DisplayEditPartition()
 {
     const int part = m_CurrentPart;
+
+    // What a resize can keep depends on how much is in use
+    if (m_ResizeKeepsData)
+    {
+        EnsureUsage(part);
+    }
+
     int field = EDIT_SIZE;
     int step = EDIT_DEFAULT_STEP;
     LPCWSTR message = NULL; // One-off feedback in the footer
@@ -369,9 +375,12 @@ void App::DrawEditPanel(const EditView &view)
 
     // Before the text, so it never covers it
     const int selection_top = (int)(bar_y + 0.5f);
-    m_Ui.Rect((FLOAT)(left + m_Layout->menu_selection_inset), (FLOAT)selection_top,
-              (FLOAT)(right - m_Layout->menu_selection_inset), (FLOAT)(selection_top + bar_height),
-              Colors().selection, Colors().selection);
+    m_Ui.Rect((FLOAT)(left + m_Layout->menu_selection_inset),
+              (FLOAT)selection_top,
+              (FLOAT)(right - m_Layout->menu_selection_inset),
+              (FLOAT)(selection_top + bar_height),
+              Colors().selection,
+              Colors().selection);
 
     for (int i = 0; i < EDIT_FIELD_COUNT; i++)
     {
@@ -428,9 +437,12 @@ void App::DrawEditPanel(const EditView &view)
         m_Ui.Text(FONT_TABLE, text, value_x, m_Ui.TextYCentered(FONT_TABLE, bar_top, bar_top + bar_height), color);
     }
 
-    m_Ui.Rect((FLOAT)(left + m_Layout->menu_selection_inset), (FLOAT)divider_y,
-              (FLOAT)(right - m_Layout->menu_selection_inset), (FLOAT)(divider_y + 1),
-              Colors().panel_line, Colors().panel_line);
+    m_Ui.Rect((FLOAT)(left + m_Layout->menu_selection_inset),
+              (FLOAT)divider_y,
+              (FLOAT)(right - m_Layout->menu_selection_inset),
+              (FLOAT)(divider_y + 1),
+              Colors().panel_line,
+              Colors().panel_line);
 
     struct DetailRow
     {
@@ -460,7 +472,16 @@ void App::DrawEditPanel(const EditView &view)
     details[2].label = L"On disk now";
     if (m_ClusterSizes[part])
     {
-        swprintf(details[2].value, L"FATX, %u KB clusters", m_ClusterSizes[part]);
+        if (m_UsageKnown[part])
+        {
+            wchar_t used[32];
+            format_human_size(m_Usage[part].used_clusters * m_Usage[part].cluster_bytes / HDD_SECTOR_SIZE, used);
+            swprintf(details[2].value, L"FATX, %u KB clusters, %s used", m_ClusterSizes[part], used);
+        }
+        else
+        {
+            swprintf(details[2].value, L"FATX, %u KB clusters", m_ClusterSizes[part]);
+        }
     }
     else
     {
@@ -498,16 +519,15 @@ void App::DrawEditPanel(const EditView &view)
     }
     else if (moved)
     {
-        // With the same start, some sizes keep the data. Free space and errors
-        // are checked when writing.
+        // With the same start, some sizes keep the data, depending on how
+        // much is in use. Errors are only found by the check when writing.
         const ULONGLONG old_size = m_pTableOriginal->GetPartitionSize(part);
-        const uint32_t cluster_bytes = m_ClusterSizes[part] * 1024;
-        const bool formatted = start == m_pTableOriginal->GetPartitionStart(part) && cluster_bytes != 0;
-        const FatxResizeKind kind = formatted ? FatxClassifyResize(old_size, cluster_bytes, size) : FATX_RESIZE_KIND_FORMAT;
+        const bool formatted = m_ResizeKeepsData && start == m_pTableOriginal->GetPartitionStart(part) && m_UsageKnown[part];
+        const FatxResizeKind kind = formatted ? FatxClassifyResize(old_size, m_Usage[part], size) : FATX_RESIZE_KIND_FORMAT;
 
         if (kind == FATX_RESIZE_KIND_IN_PLACE)
         {
-            swprintf(details[4].value, size > old_size ? L"resized, keeps its data" : L"resized, keeps its data if its end is free");
+            swprintf(details[4].value, L"resized, keeps its data");
             details[4].color = COLOR_GREEN;
         }
         else if (kind == FATX_RESIZE_KIND_MOVES)
@@ -517,9 +537,13 @@ void App::DrawEditPanel(const EditView &view)
         }
         else if (formatted)
         {
-            // Suggest the nearest sizes that work
-            const ULONGLONG below = FatxMoveResizeTarget(old_size, cluster_bytes, size);
-            const ULONGLONG above = FatxMoveResizeNextUp(old_size, cluster_bytes, size);
+            // Suggest the nearest sizes that work and fit the free space
+            const ULONGLONG below = FatxKeepingSizeBelow(old_size, m_Usage[part], size);
+            ULONGLONG above = FatxKeepingSizeAbove(old_size, m_Usage[part], size);
+            if (above > size + m_pTable->GetGrowthLimit(part))
+            {
+                above = 0;
+            }
             wchar_t below_size[32];
             wchar_t above_size[32];
             format_human_size(below, below_size);
@@ -562,8 +586,7 @@ void App::DrawEditPanel(const EditView &view)
     else
     {
         const bool typeable = (field == EDIT_START || field == EDIT_SIZE || field == EDIT_END);
-        DrawPanelFooter(left, right, bottom, typeable ? L"Left/Right: change   A: type it in   Y: reset   B: back"
-                                                      : L"Left/Right: change   A: apply   Y: reset   B: back");
+        DrawPanelFooter(
+            left, right, bottom, typeable ? L"Left/Right: change   A: type it in   Y: reset   B: back" : L"Left/Right: change   A: apply   Y: reset   B: back");
     }
-
 }

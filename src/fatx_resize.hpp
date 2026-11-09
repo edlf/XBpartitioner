@@ -26,8 +26,10 @@ const uint32_t FATX_RESIZING_SIGNATURE = 0x5A535258;
 // called again on resume, so it must be safe to repeat.
 class FatxResizeTable
 {
-public:
-    virtual ~FatxResizeTable() {}
+  public:
+    virtual ~FatxResizeTable()
+    {
+    }
     virtual bool SetSize(uint64_t new_lba_size) = 0;
 };
 
@@ -58,16 +60,13 @@ typedef struct
     uint64_t clusters_to_move;
     uint64_t free_clusters;   // Room to move them into
     uint64_t clusters_moved;
+    bool table_failed;        // Interrupted because the new size couldn't be written to the table
     FatxRepairResult repair;  // Step 1's result
 } FatxMoveResult;
 
 // The largest size up to requested_lba where the FAT changes by whole
 // clusters, or 0. May land on a size where the FAT doesn't change at all.
 uint64_t FatxMoveResizeTarget(uint64_t old_lba_size, uint32_t cluster_bytes, uint64_t requested_lba);
-
-// The smallest size above from_lba where the FAT has grown by whole
-// clusters, or 0
-uint64_t FatxMoveResizeNextUp(uint64_t old_lba_size, uint32_t cluster_bytes, uint64_t from_lba);
 
 enum FatxResizeKind
 {
@@ -76,16 +75,34 @@ enum FatxResizeKind
     FATX_RESIZE_KIND_MOVES     // Clusters move (FatxResizeWithMoves)
 };
 
-// Judged from the sizes alone; free space and errors are checked when writing
-FatxResizeKind FatxClassifyResize(uint64_t old_lba_size, uint32_t cluster_bytes, uint64_t new_lba_size);
+// How much of a formatted partition is in use, from a scan of its FAT
+typedef struct
+{
+    uint32_t cluster_bytes;
+    uint64_t used_clusters; // Not free and not bad; lost clusters count as used
+    uint64_t bad_clusters;
+    uint64_t highest_used;  // Highest used cluster number, 0 if none
+} FatxUsage;
+
+// False if it isn't FATX or can't be read
+bool FatxReadUsage(FatxReader &reader, uint64_t lba_size, FatxUsage *usage, FatxProgress *progress = NULL);
+
+// What resizing to new_lba_size means for the data, given the partition's
+// usage: the data must fit, nothing may sit past a shrunk end (in place),
+// and growing can't pass the cluster size limit. Errors are only found by
+// the check when writing.
+FatxResizeKind FatxClassifyResize(uint64_t old_lba_size, const FatxUsage &usage, uint64_t new_lba_size);
+
+// The nearest sizes that keep the data, at or below / at or above a size; 0 if none
+uint64_t FatxKeepingSizeBelow(uint64_t old_lba_size, const FatxUsage &usage, uint64_t lba_size);
+uint64_t FatxKeepingSizeAbove(uint64_t old_lba_size, const FatxUsage &usage, uint64_t lba_size);
 
 // With write false it only checks. The partition must not be mounted.
-bool FatxResizeWithMoves(FatxDevice &device, uint64_t old_lba_size, uint64_t requested_lba, FatxResizeTable &table,
-                         bool write, FatxMoveResult *result, FatxProgress *progress = NULL);
+bool FatxResizeWithMoves(FatxDevice &device, uint64_t old_lba_size, uint64_t requested_lba, FatxResizeTable &table, bool write, FatxMoveResult *result,
+                         FatxProgress *progress = NULL);
 
 // Finishes a resize interrupted in step 3 or 4
-bool FatxResumeResize(FatxDevice &device, FatxResizeTable &table, FatxMoveResult *result,
-                      FatxProgress *progress = NULL);
+bool FatxResumeResize(FatxDevice &device, FatxResizeTable &table, FatxMoveResult *result, FatxProgress *progress = NULL);
 
 // The sizes of an unfinished resize, or false if there isn't one
 bool FatxFindInterruptedResize(FatxReader &reader, uint64_t *old_lba_size, uint64_t *new_lba_size);

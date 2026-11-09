@@ -6,7 +6,7 @@
 
 // One key=value per line, keys in any case, spaces ignored; missing or
 // unknown values mean the default (see the README):
-//   theme=Name, animations=0/1, force_lba48_v3=0/1
+//   theme=Name, animations=0/1, force_lba48_v3=0/1, resize_keeps_data=0/1
 static const char SETTINGS_PATH[] = "D:\\xbpartitioner.ini";
 
 static const char SETTING_THEME[] = "theme";
@@ -14,6 +14,8 @@ static const char SETTING_THEME[] = "theme";
 static const char SETTING_ANIMATIONS[] = "animations";
 
 static const char SETTING_FORCE_LBA48_V3[] = "force_lba48_v3";
+
+static const char SETTING_RESIZE_KEEPS_DATA[] = "resize_keeps_data";
 
 static char *trim_setting(char *text)
 {
@@ -95,6 +97,10 @@ void App::LoadSettings()
             {
                 parse_setting_bool(value, &m_ForceLba48V3);
             }
+            else if (_stricmp(key, SETTING_RESIZE_KEEPS_DATA) == 0)
+            {
+                parse_setting_bool(value, &m_ResizeKeepsData);
+            }
         }
 
         line = next;
@@ -111,15 +117,21 @@ void App::SaveSettings()
     }
 
     // Theme names are plain ASCII
-    char text[160];
+    char text[200];
     const wchar_t *name = m_Ui.GetTheme().name;
     int length = sprintf(text, "%s=", SETTING_THEME);
     for (int i = 0; name[i] != L'\0' && length < 80; i++)
     {
         text[length++] = (char)name[i];
     }
-    length += sprintf(text + length, "\r\n%s=%d\r\n%s=%d\r\n", SETTING_ANIMATIONS, m_Animations ? 1 : 0,
-                      SETTING_FORCE_LBA48_V3, m_ForceLba48V3 ? 1 : 0);
+    length += sprintf(text + length,
+                      "\r\n%s=%d\r\n%s=%d\r\n%s=%d\r\n",
+                      SETTING_ANIMATIONS,
+                      m_Animations ? 1 : 0,
+                      SETTING_FORCE_LBA48_V3,
+                      m_ForceLba48V3 ? 1 : 0,
+                      SETTING_RESIZE_KEEPS_DATA,
+                      m_ResizeKeepsData ? 1 : 0);
 
     // The drive can take a while (spinning up): without this the screen just stops
     static const LPCWSTR busy = L"Saving settings...";

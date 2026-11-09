@@ -11,25 +11,32 @@
 // Reads a partition. Offsets and lengths are in whole sectors.
 class FatxReader
 {
-public:
-    virtual ~FatxReader() {}
+  public:
+    virtual ~FatxReader()
+    {
+    }
     virtual bool Read(uint64_t offset, void *buffer, uint32_t length) = 0;
 };
 
 // A writable partition, for repairs
 class FatxDevice : public FatxReader
 {
-public:
+  public:
     virtual bool Write(uint64_t offset, const void *buffer, uint32_t length) = 0;
     // Flushes writes to the disk, so later writes can't land first
-    virtual bool Sync() { return true; }
+    virtual bool Sync()
+    {
+        return true;
+    }
 };
 
 // Receives 0 to 100 as the work progresses
 class FatxProgress
 {
-public:
-    virtual ~FatxProgress() {}
+  public:
+    virtual ~FatxProgress()
+    {
+    }
     virtual void Update(int percent) = 0;
 };
 
@@ -142,8 +149,7 @@ typedef struct
 // Refuses if the check finds errors, since a "lost" cluster might then
 // belong to a damaged file. With write false it only counts. The partition
 // must not be mounted while it's written.
-bool FatxRepair(FatxDevice &device, uint64_t partition_bytes, FatxRepairResult *repair, bool write,
-                FatxProgress *progress = NULL);
+bool FatxRepair(FatxDevice &device, uint64_t partition_bytes, FatxRepairResult *repair, bool write, FatxProgress *progress = NULL);
 
 enum FatxResizeStatus
 {
@@ -169,7 +175,6 @@ typedef struct
 // Whether resizing (same start) only needs a table change. Growing reads a
 // few FAT sectors; shrinking runs a full check, since the clusters it drops
 // must be unused. Read only.
-bool FatxCheckResize(FatxReader &reader, uint64_t old_lba_size, uint64_t new_lba_size, FatxResizeResult *resize,
-                     FatxProgress *progress = NULL);
+bool FatxCheckResize(FatxReader &reader, uint64_t old_lba_size, uint64_t new_lba_size, FatxResizeResult *resize, FatxProgress *progress = NULL);
 
 #endif // FATX_CHECK_H_

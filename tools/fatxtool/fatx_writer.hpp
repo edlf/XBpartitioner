@@ -10,28 +10,38 @@
 // In memory, for the tests
 class FatxMemoryDevice : public FatxDevice
 {
-public:
-    explicit FatxMemoryDevice(uint64_t size) : m_data((size_t)size, 0) {}
+  public:
+    explicit FatxMemoryDevice(uint64_t size) : m_data((size_t)size, 0)
+    {
+    }
     bool Read(uint64_t offset, void *buffer, uint32_t length) override;
     bool Write(uint64_t offset, const void *buffer, uint32_t length) override;
-    unsigned char *Data() { return m_data.data(); }
-    uint64_t Size() const { return m_data.size(); }
+    unsigned char *Data()
+    {
+        return m_data.data();
+    }
+    uint64_t Size() const
+    {
+        return m_data.size();
+    }
 
-private:
+  private:
     std::vector<unsigned char> m_data;
 };
 
 // Supplies a file's contents in order
 class FatxSource
 {
-public:
-    virtual ~FatxSource() {}
+  public:
+    virtual ~FatxSource()
+    {
+    }
     virtual bool Read(void *buffer, uint32_t length) = 0;
 };
 
 class FatxWriter
 {
-public:
+  public:
     // cluster_bytes 0 picks XBpartitioner's size
     FatxWriter(FatxDevice &device, uint64_t partition_bytes, uint32_t cluster_bytes = 0);
 
@@ -41,11 +51,23 @@ public:
     // Writes the FAT; call when done
     bool Flush();
 
-    uint32_t RootCluster() const { return m_root; }
-    uint32_t ClusterBytes() const { return m_cluster_bytes; }
-    const FatxLayout &Layout() const { return m_layout; }
+    uint32_t RootCluster() const
+    {
+        return m_root;
+    }
+    uint32_t ClusterBytes() const
+    {
+        return m_cluster_bytes;
+    }
+    const FatxLayout &Layout() const
+    {
+        return m_layout;
+    }
     // Where allocation starts searching (tests use it to place files)
-    void SetNextFree(uint32_t cluster) { m_next_free = cluster; }
+    void SetNextFree(uint32_t cluster)
+    {
+        m_next_free = cluster;
+    }
     uint64_t ClusterOffset(uint32_t cluster) const;
 
     // parent is a folder's first cluster
@@ -63,7 +85,7 @@ public:
     bool GetEntry(uint32_t dir, uint32_t index, FatxDirent *entry, uint64_t *offset = NULL);
     bool SetEntry(uint64_t offset, const FatxDirent &entry);
 
-private:
+  private:
     bool AllocateChain(uint32_t count, uint32_t *first);
     bool FillCluster(uint32_t cluster, unsigned char value);
     bool AddEntry(uint32_t parent, const FatxDirent &entry);

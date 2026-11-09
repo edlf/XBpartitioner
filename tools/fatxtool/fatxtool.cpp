@@ -81,12 +81,30 @@ uint64_t parse_size(const char *text)
     uint64_t scale = 1;
     switch (*end)
     {
-    case '\0': break;
-    case 'k': case 'K': scale = 1ULL << 10; end++; break;
-    case 'm': case 'M': scale = 1ULL << 20; end++; break;
-    case 'g': case 'G': scale = 1ULL << 30; end++; break;
-    case 't': case 'T': scale = 1ULL << 40; end++; break;
-    default: return 0;
+    case '\0':
+        break;
+    case 'k':
+    case 'K':
+        scale = 1ULL << 10;
+        end++;
+        break;
+    case 'm':
+    case 'M':
+        scale = 1ULL << 20;
+        end++;
+        break;
+    case 'g':
+    case 'G':
+        scale = 1ULL << 30;
+        end++;
+        break;
+    case 't':
+    case 'T':
+        scale = 1ULL << 40;
+        end++;
+        break;
+    default:
+        return 0;
     }
     if (*end == 'B' || *end == 'b')
     {
@@ -105,17 +123,17 @@ char partition_letter(int index)
 // A file, starting at base (a partition inside a disk image)
 class FileDevice : public FatxDevice
 {
-public:
-    FileDevice(FILE *file, uint64_t base) : m_file(file), m_base(base) {}
+  public:
+    FileDevice(FILE *file, uint64_t base) : m_file(file), m_base(base)
+    {
+    }
     bool Read(uint64_t offset, void *buffer, uint32_t length) override
     {
-        return _fseeki64(m_file, (__int64)(m_base + offset), SEEK_SET) == 0 &&
-               fread(buffer, 1, length, m_file) == length;
+        return _fseeki64(m_file, (__int64)(m_base + offset), SEEK_SET) == 0 && fread(buffer, 1, length, m_file) == length;
     }
     bool Write(uint64_t offset, const void *buffer, uint32_t length) override
     {
-        return _fseeki64(m_file, (__int64)(m_base + offset), SEEK_SET) == 0 &&
-               fwrite(buffer, 1, length, m_file) == length;
+        return _fseeki64(m_file, (__int64)(m_base + offset), SEEK_SET) == 0 && fwrite(buffer, 1, length, m_file) == length;
     }
     // Flushes past Windows' cache
     bool Sync() override
@@ -123,14 +141,14 @@ public:
         return fflush(m_file) == 0 && _commit(_fileno(m_file)) == 0;
     }
 
-private:
+  private:
     FILE *m_file;
     uint64_t m_base;
 };
 
 class ConsoleProgress : public FatxProgress
 {
-public:
+  public:
     void Update(int percent) override
     {
         if (!_isatty(_fileno(stderr)))
@@ -183,10 +201,16 @@ int print_check(const FatxCheckResult *result)
         code = EXIT_ERRORS;
         break;
     default:
-        printf("  FATX, %u KB clusters, %u bit FAT, %I64u files, %I64u folders\n", result->cluster_bytes / 1024,
-               result->layout.bytes_per_entry * 8, result->files, result->directories);
-        printf("  Clusters: %I64u in use of %I64u, %I64u lost, %I64u bad\n", result->used_clusters,
-               result->layout.cluster_limit - 1, result->lost_clusters, result->bad_clusters);
+        printf("  FATX, %u KB clusters, %u bit FAT, %I64u files, %I64u folders\n",
+               result->cluster_bytes / 1024,
+               result->layout.bytes_per_entry * 8,
+               result->files,
+               result->directories);
+        printf("  Clusters: %I64u in use of %I64u, %I64u lost, %I64u bad\n",
+               result->used_clusters,
+               result->layout.cluster_limit - 1,
+               result->lost_clusters,
+               result->bad_clusters);
         break;
     }
 
@@ -222,8 +246,7 @@ void print_repairs(const FatxRepairResult *repair, bool done)
     const char *separator = " ";
     if (repair->clusters_freed > 0)
     {
-        printf("%sfree %I64u clusters (%I64u KB)", separator, repair->clusters_freed,
-               repair->clusters_freed * repair->check.cluster_bytes / 1024);
+        printf("%sfree %I64u clusters (%I64u KB)", separator, repair->clusters_freed, repair->clusters_freed * repair->check.cluster_bytes / 1024);
         separator = ", ";
     }
     if (repair->files_trimmed > 0)
@@ -426,11 +449,16 @@ std::string xbox_name(const fs::path &path)
 
 class StreamSource : public FatxSource
 {
-public:
-    explicit StreamSource(FILE *file) : m_file(file) {}
-    bool Read(void *buffer, uint32_t length) override { return fread(buffer, 1, length, m_file) == length; }
+  public:
+    explicit StreamSource(FILE *file) : m_file(file)
+    {
+    }
+    bool Read(void *buffer, uint32_t length) override
+    {
+        return fread(buffer, 1, length, m_file) == length;
+    }
 
-private:
+  private:
     FILE *m_file;
 };
 
@@ -516,8 +544,7 @@ int command_make(int argc, char **argv)
         fprintf(stderr, "The size must be at least 1M.\n");
         return EXIT_FAILED;
     }
-    if (cluster_bytes != 0 && (cluster_bytes < 16 * 1024 || cluster_bytes > 1024 * 1024 ||
-                               (cluster_bytes & (cluster_bytes - 1)) != 0))
+    if (cluster_bytes != 0 && (cluster_bytes < 16 * 1024 || cluster_bytes > 1024 * 1024 || (cluster_bytes & (cluster_bytes - 1)) != 0))
     {
         fprintf(stderr, "--cluster must be a power of two from 16 to 1024.\n");
         return EXIT_FAILED;
@@ -553,8 +580,7 @@ int command_make(int argc, char **argv)
         fprintf(stderr, "Failed to make %s\n", path);
         return EXIT_FAILED;
     }
-    printf("Made %s: %I64u MB, %u KB clusters, %u bit FAT", path, size >> 20, writer.ClusterBytes() / 1024,
-           writer.Layout().bytes_per_entry * 8);
+    printf("Made %s: %I64u MB, %u KB clusters, %u bit FAT", path, size >> 20, writer.ClusterBytes() / 1024, writer.Layout().bytes_per_entry * 8);
     if (skipped > 0)
     {
         printf(", %d items skipped", skipped);
@@ -571,8 +597,7 @@ void print_mb(const char *label, uint64_t lba)
 
 // Updates backup copies of the table, found in the last sector or the
 // last 4K block
-void update_backup_tables(FILE *file, uint64_t image_size, const XboxPartitionTable &old_table,
-                          const XboxPartitionTable &new_table)
+void update_backup_tables(FILE *file, uint64_t image_size, const XboxPartitionTable &old_table, const XboxPartitionTable &new_table)
 {
     const uint64_t sectors = image_size / HDD_SECTOR_SIZE;
     const uint64_t candidates[] = {(sectors & ~(uint64_t)(LBA_ALIGNMENT - 1)) - LBA_ALIGNMENT, sectors - 1};
@@ -601,9 +626,11 @@ void update_backup_tables(FILE *file, uint64_t image_size, const XboxPartitionTa
 // the table entry (and backup) for a disk image
 class ImageTable : public FatxResizeTable
 {
-public:
+  public:
     // index -1 means a partition image
-    ImageTable(FILE *file, int index) : m_file(file), m_index(index) {}
+    ImageTable(FILE *file, int index) : m_file(file), m_index(index)
+    {
+    }
 
     bool SetSize(uint64_t new_lba_size) override
     {
@@ -632,7 +659,7 @@ public:
         return fflush(m_file) == 0;
     }
 
-private:
+  private:
     FILE *m_file;
     int m_index;
 };
@@ -649,9 +676,30 @@ int check_resized(FatxDevice &device, uint64_t lba_size, ConsoleProgress &progre
     return code;
 }
 
+// Prints the nearest sizes that keep the data, from how it's used
+void print_keeping_sizes(FatxDevice &device, uint64_t old_lba, uint64_t new_lba)
+{
+    FatxUsage usage;
+    if (!FatxReadUsage(device, old_lba, &usage))
+    {
+        return;
+    }
+    const uint64_t below = FatxKeepingSizeBelow(old_lba, usage, new_lba);
+    const uint64_t above = FatxKeepingSizeAbove(old_lba, usage, new_lba);
+    printf("  %I64u MB in use. Nearest sizes that keep the data:", (usage.used_clusters * usage.cluster_bytes) >> 20);
+    if (below != 0)
+    {
+        print_mb(" ", below);
+    }
+    if (above != 0)
+    {
+        print_mb(below != 0 ? " or " : " ", above);
+    }
+    printf(below == 0 && above == 0 ? " none.\n" : ".\n");
+}
+
 // Resizes by moving clusters; returns the exit code
-int resize_with_moves(FatxDevice &device, ImageTable &table, uint64_t old_lba, uint64_t new_lba, bool write,
-                      ConsoleProgress &progress)
+int resize_with_moves(FatxDevice &device, ImageTable &table, uint64_t old_lba, uint64_t new_lba, bool write, ConsoleProgress &progress)
 {
     FatxMoveResult *move = new FatxMoveResult;
     FatxResizeWithMoves(device, old_lba, new_lba, table, write, move, &progress);
@@ -666,10 +714,11 @@ int resize_with_moves(FatxDevice &device, ImageTable &table, uint64_t old_lba, u
             printf(", so the FAT changes by whole clusters.\n");
         }
         const int64_t shift = move->shift > 0 ? move->shift : -move->shift;
-        printf("  The FAT %s by %I64d cluster%s: every cluster gets a new number.\n", move->shift > 0 ? "grows" : "shrinks",
-               shift, shift == 1 ? "" : "s");
-        printf("  %I64u cluster%s to move first (%I64u free where they can go).\n", move->clusters_to_move,
-               move->clusters_to_move == 1 ? "" : "s", move->free_clusters);
+        printf("  The FAT %s by %I64d cluster%s: every cluster gets a new number.\n", move->shift > 0 ? "grows" : "shrinks", shift, shift == 1 ? "" : "s");
+        printf("  %I64u cluster%s to move first (%I64u free where they can go).\n",
+               move->clusters_to_move,
+               move->clusters_to_move == 1 ? "" : "s",
+               move->free_clusters);
     }
     if (move->repair.written)
     {
@@ -683,22 +732,12 @@ int resize_with_moves(FatxDevice &device, ImageTable &table, uint64_t old_lba, u
         code = EXIT_CLEAN;
         break;
     case FATX_MOVE_DONE:
-        printf("  Resized: %I64u cluster%s moved, the FAT and every folder renumbered.\n", move->clusters_moved,
-               move->clusters_moved == 1 ? "" : "s");
+        printf("  Resized: %I64u cluster%s moved, the FAT and every folder renumbered.\n", move->clusters_moved, move->clusters_moved == 1 ? "" : "s");
         code = check_resized(device, move->new_lba_size, progress);
         break;
     case FATX_MOVE_SAME_FAT:
-    {
-        print_mb("  The FAT can't change by whole clusters there. Below, the nearest size is ", move->new_lba_size);
-        printf(" (it keeps the FAT's size)");
-        const uint64_t up = FatxMoveResizeNextUp(old_lba, move->cluster_bytes, new_lba);
-        if (up != 0 && new_lba > old_lba)
-        {
-            print_mb(";\n  growing, the next one is ", up);
-        }
-        printf(".\n");
+        printf("  The FAT can't change by whole clusters at that size.\n");
         break;
-    }
     case FATX_MOVE_HAS_ERRORS:
         print_check(&move->repair.check);
         printf("  A resize needs a check without errors.\n");
@@ -710,11 +749,10 @@ int resize_with_moves(FatxDevice &device, ImageTable &table, uint64_t old_lba, u
         printf("  That size needs bigger clusters than %u KB: format it instead.\n", move->cluster_bytes / 1024);
         break;
     case FATX_MOVE_TOO_SMALL:
-        printf("  Too small for its data.\n");
+        printf("  No size that small works with this FAT and cluster size.\n");
         break;
     case FATX_MOVE_NO_ROOM:
-        printf("  Not enough room: %I64u clusters to move, %I64u free where they can go (one more is needed).\n",
-               move->clusters_to_move, move->free_clusters);
+        printf("  Not enough room: %I64u clusters to move, %I64u free where they can go (one more is needed).\n", move->clusters_to_move, move->free_clusters);
         break;
     case FATX_MOVE_STOPPED_SAFE:
         printf("  Stopped while moving clusters (read or write error). It is still the old size and valid;\n");
@@ -728,6 +766,19 @@ int resize_with_moves(FatxDevice &device, ImageTable &table, uint64_t old_lba, u
     default:
         printf("  Could not be checked (read error, out of memory or damaged header).\n");
         code = EXIT_FAILED;
+        break;
+    }
+
+    switch (move->status)
+    {
+    case FATX_MOVE_SAME_FAT:
+    case FATX_MOVE_CLUSTER_SIZE:
+    case FATX_MOVE_TOO_SMALL:
+    case FATX_MOVE_NO_ROOM:
+    case FATX_MOVE_ENTRY_SIZE:
+        print_keeping_sizes(device, old_lba, new_lba);
+        break;
+    default:
         break;
     }
     delete move;
@@ -787,8 +838,7 @@ int command_resize(int argc, char **argv)
     uint64_t old_lba = image_size / HDD_SECTOR_SIZE;
     if (disk_image)
     {
-        if (only < 1 || only > (int)XboxPartitionTableEntryCount ||
-            table.TableEntries[only - 1].Flags != PE_PARTFLAGS_IN_USE)
+        if (only < 1 || only > (int)XboxPartitionTableEntryCount || table.TableEntries[only - 1].Flags != PE_PARTFLAGS_IN_USE)
         {
             fprintf(stderr, "A disk image needs --partition N, for a partition in its table.\n");
             fclose(file);
@@ -903,8 +953,10 @@ int command_resize(int argc, char **argv)
         code = resize_with_moves(device, table_writer, old_lba, new_lba, write, progress);
         break;
     case FATX_RESIZE_CLUSTERS_IN_USE:
-        printf("  %I64u clusters past the new end are in use%s.\n", resize->clusters_in_use,
+        printf("  %I64u clusters past the new end are in use%s.\n",
+               resize->clusters_in_use,
                resize->check.lost_clusters > 0 ? " (lost ones count too: try repair first)" : "");
+        print_keeping_sizes(device, old_lba, new_lba);
         code = EXIT_ERRORS;
         break;
     case FATX_RESIZE_FAT_NOT_CLEAN:
@@ -1006,8 +1058,7 @@ bool load_recluster_plan(const std::string &path, ReclusterPlanHeader *header, s
     {
         return false;
     }
-    bool ok = fread(header, 1, sizeof(*header), file) == sizeof(*header) &&
-              memcmp(header->magic, RECLUSTER_MAGIC, sizeof(RECLUSTER_MAGIC)) == 0;
+    bool ok = fread(header, 1, sizeof(*header), file) == sizeof(*header) && memcmp(header->magic, RECLUSTER_MAGIC, sizeof(RECLUSTER_MAGIC)) == 0;
     uint32_t checksum = fnv1a(header, sizeof(*header));
     for (uint32_t i = 0; ok && i < header->range_count; i++)
     {
@@ -1040,8 +1091,8 @@ void remove_recluster_files(const std::string &plan_path, const std::string &bui
 }
 
 // Copies the built file system back; also used by --resume
-int copy_reclustered(FILE *image, uint64_t partition_offset, uint64_t lba_size, const std::string &plan_path,
-                     const std::string &build_path, const std::vector<FatxRange> &ranges, ConsoleProgress &progress)
+int copy_reclustered(FILE *image, uint64_t partition_offset, uint64_t lba_size, const std::string &plan_path, const std::string &build_path,
+                     const std::vector<FatxRange> &ranges, ConsoleProgress &progress)
 {
     FILE *build_file = NULL;
     if (fopen_s(&build_file, build_path.c_str(), "rb") != 0 || build_file == NULL)
@@ -1111,8 +1162,7 @@ int command_recluster(int argc, char **argv)
     uint64_t lba_size = image_size / HDD_SECTOR_SIZE;
     if (XboxPartitionTableManipulator::HasMagic(table))
     {
-        if (only < 1 || only > (int)XboxPartitionTableEntryCount ||
-            table.TableEntries[only - 1].Flags != PE_PARTFLAGS_IN_USE)
+        if (only < 1 || only > (int)XboxPartitionTableEntryCount || table.TableEntries[only - 1].Flags != PE_PARTFLAGS_IN_USE)
         {
             fprintf(stderr, "A disk image needs --partition N, for a partition in its table.\n");
             fclose(file);
@@ -1189,12 +1239,17 @@ int command_recluster(int argc, char **argv)
     FatxBuildReclustered(device, lba_size, new_cluster_bytes, recorder, result, &progress);
 
     int code = EXIT_ERRORS;
-    if (result->status == FATX_RECLUSTER_PLANNED || result->status == FATX_RECLUSTER_DONE ||
-        result->status == FATX_RECLUSTER_NO_ROOM)
+    if (result->status == FATX_RECLUSTER_PLANNED || result->status == FATX_RECLUSTER_DONE || result->status == FATX_RECLUSTER_NO_ROOM)
     {
         printf("  %I64u files, %I64u folders: %I64u clusters of %u KB now (%I64u in use), %I64u of %u KB needed, %I64u there.\n",
-               result->files, result->folders, result->check.layout.cluster_limit - 1, result->old_cluster_bytes / 1024,
-               result->old_clusters_used, result->clusters_needed, new_cluster_bytes / 1024, result->clusters_available);
+               result->files,
+               result->folders,
+               result->check.layout.cluster_limit - 1,
+               result->old_cluster_bytes / 1024,
+               result->old_clusters_used,
+               result->clusters_needed,
+               new_cluster_bytes / 1024,
+               result->clusters_available);
     }
     switch (result->status)
     {
@@ -1494,8 +1549,7 @@ int command_trim(int argc, char **argv)
         else
         {
             const bool trim = (identify[169] & 0x0001) != 0;
-            printf("Drive: %s, %s.\n", identify_string(&identify[27], 20).c_str(),
-                   trim ? "supports TRIM" : "no TRIM support");
+            printf("Drive: %s, %s.\n", identify_string(&identify[27], 20).c_str(), trim ? "supports TRIM" : "no TRIM support");
             if (!trim)
             {
                 code = write ? EXIT_FAILED : EXIT_CLEAN;

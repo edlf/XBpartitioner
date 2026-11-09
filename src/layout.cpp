@@ -4,7 +4,8 @@
 // 720p uses 1.5x the 480 values, rounded where needed so things line up.
 
 const Layout g_Layout480 = {
-    640, 480, // width, height
+    640, // width
+    480, // height
 
     // Main screen
     60,  // margin_x
@@ -66,7 +67,8 @@ const Layout g_Layout480 = {
 };
 
 const Layout g_Layout720 = {
-    960, 720, // width, height
+    960, // width
+    720, // height
 
     // Main screen
     90,  // margin_x

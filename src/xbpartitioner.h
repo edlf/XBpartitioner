@@ -26,7 +26,7 @@ const char partStr[][32] = {
     "\\Device\\Harddisk0\\Partition11",
     "\\Device\\Harddisk0\\Partition12",
     "\\Device\\Harddisk0\\Partition13",
-    "\\Device\\Harddisk0\\Partition14"
+    "\\Device\\Harddisk0\\Partition14",
 };
 
 // Where the edited table came from
@@ -66,7 +66,6 @@ enum BackupStatus
 #define MENU_RESULT_BACK -1  // B: back one level
 #define MENU_RESULT_CLOSE -2 // Start: close all menus
 
-
 // Held D-pad repeat, timed so screens keep drawing. Step() runs once per
 // frame with the direction held and returns the move: at once, then after
 // a delay, repeating.
@@ -76,7 +75,9 @@ struct DpadRepeat
     DWORD last_move;
     bool repeating;
 
-    DpadRepeat() : held(0), last_move(0), repeating(false) {}
+    DpadRepeat() : held(0), last_move(0), repeating(false)
+    {
+    }
     int Step(int direction);
 };
 
@@ -108,13 +109,13 @@ class App
 {
     friend class XboxResizeTable; // Writes the table from a worker thread
 
-public:
+  public:
     App();
     ~App();
 
     void MainLoop();
 
-private:
+  private:
     // Layout space coordinates (see ui.h). The main screen is drawn behind
     // every other screen, every frame.
     void DrawMainScreen();
@@ -130,7 +131,7 @@ private:
     void AnimatePanel(int left, int top, int right, int bottom, bool opening);
     bool ConfirmWarning(const LPCWSTR *lines, int line_count, LPCWSTR ok_label);
     void ShowWarning(const LPCWSTR *lines, int line_count);
-    void ShowError(const LPCWSTR* lines, int line_count);
+    void ShowError(const LPCWSTR *lines, int line_count);
     void FadeIn();
     void FadeOut();
 
@@ -185,11 +186,16 @@ private:
     bool ShrinkKeepsData(int partition);
     // Called with the selected item at the start and whenever it changes
     typedef void (App::*MenuPreview)(int item);
-    int RunMenu(LPCWSTR title, const LPCWSTR *labels, const bool *enabled, int count, int initial = 0, bool submenu = false,
-                MenuPreview preview = NULL);
-    const Theme &Colors() const { return m_Ui.GetTheme(); }
+    int RunMenu(LPCWSTR title, const LPCWSTR *labels, const bool *enabled, int count, int initial = 0, bool submenu = false, MenuPreview preview = NULL);
+    const Theme &Colors() const
+    {
+        return m_Ui.GetTheme();
+    }
     bool DisplayThemeMenu();
-    void PreviewTheme(int index) { m_Ui.SetTheme(index); }
+    void PreviewTheme(int index)
+    {
+        m_Ui.SetTheme(index);
+    }
     void LoadSettings();
     void SaveSettings();
     // "Partition N (X) holds this program: <what>"
@@ -198,8 +204,14 @@ private:
     bool MovesLaunchPartition(const XboxPartitionTable &table) const;
     void DrawPanel(int left, int top, int right, int bottom, LPCWSTR title, int first_item_y);
     void DrawPanelFooter(int left, int right, int bottom, LPCWSTR text, Color color = COLOR_GREY);
-    int MenuItemBarHeight() const { return m_Ui.TextBoxHeight(FONT_TEXT, m_Layout->menu_item_padding); }
-    int MenuItemHeight() const { return MenuItemBarHeight() + m_Layout->menu_item_gap; }
+    int MenuItemBarHeight() const
+    {
+        return m_Ui.TextBoxHeight(FONT_TEXT, m_Layout->menu_item_padding);
+    }
+    int MenuItemHeight() const
+    {
+        return MenuItemBarHeight() + m_Layout->menu_item_gap;
+    }
     void DisplayStartMenu();
     // Submenus: false if the user went back with B
     bool DisplayPartitionTableMenu();
@@ -215,8 +227,7 @@ private:
     const EditView *m_pActiveEditView;
     void TypeEditValue(int part, int field, LPCWSTR &message, Color &message_color);
     bool RunNumberInput(LPCWSTR title, ULONGLONG current, ULONGLONG min, ULONGLONG max, int unit, ULONGLONG *result);
-    void DrawNumberInput(LPCWSTR title, const wchar_t *digits, int unit, ULONGLONG current, ULONGLONG min, ULONGLONG max,
-                         int selected_key, LPCWSTR message);
+    void DrawNumberInput(LPCWSTR title, const wchar_t *digits, int unit, ULONGLONG current, ULONGLONG min, ULONGLONG max, int selected_key, LPCWSTR message);
     int EditPanelTop() const;
     int EditPanelHeight() const;
     int NumberInputHeight();
@@ -245,16 +256,18 @@ private:
     // Finds resized partitions that can keep their data, either by a table
     // change (kept) or by moving clusters (moved). reason explains the first
     // one that can't.
-    int FindResizesKeepingData(bool kept[XboxPartitionTableEntryCount], bool moved[XboxPartitionTableEntryCount],
-                               wchar_t *reason, size_t reason_count);
+    int FindResizesKeepingData(bool kept[XboxPartitionTableEntryCount], bool moved[XboxPartitionTableEntryCount], wchar_t *reason, size_t reason_count);
     // Resize with moves (write false: check only), and resume, on a worker thread
     void RunMoveResizeJob(int partition, ULONGLONG new_lba_size, bool write, FatxMoveResult *move, bool write_main);
     void RunResumeJob(int partition, FatxMoveResult *move, bool write_main);
-    bool RunMoveResizes(const bool moved[XboxPartitionTableEntryCount], const ULONGLONG new_sizes[XboxPartitionTableEntryCount],
-                        bool shrinking, bool write_main);
+    // Reads a formatted partition's usage if it isn't known yet. False if it
+    // isn't FATX or can't be read.
+    bool EnsureUsage(int partition);
+    bool RunMoveResizes(const bool moved[XboxPartitionTableEntryCount], const ULONGLONG new_sizes[XboxPartitionTableEntryCount], bool shrinking,
+                        bool write_main);
     // Writes the edited table with those resizes. explained: an error was already shown.
-    bool WriteTableWithResizes(const bool kept[XboxPartitionTableEntryCount], const bool moved[XboxPartitionTableEntryCount],
-                               bool *backup_written, bool *main_written, bool *explained);
+    bool WriteTableWithResizes(const bool kept[XboxPartitionTableEntryCount], const bool moved[XboxPartitionTableEntryCount], bool *backup_written,
+                               bool *main_written, bool *explained);
     // At startup: offers to finish interrupted resizes
     void OfferFinishResizes();
     // After writing: unmount so the kernel remounts them at the new size
@@ -292,15 +305,24 @@ private:
     Renderer m_Ui;
     const Layout *m_Layout; // For the video mode m_Ui runs in
 
-    int TableCenterX() const { return (m_Layout->table_left + m_Layout->table_right) / 2; }
+    int TableCenterX() const
+    {
+        return (m_Layout->table_left + m_Layout->table_right) / 2;
+    }
     // Slot 0 is the column headers, then the line under them, then one pitch apart
     int TableSlotTop(int slot) const
     {
         return m_Layout->table_first_row_y + slot * m_Layout->table_row_height + (slot > 0 ? m_Layout->table_header_gap : 0);
     }
     // Slots of the section labels, and of partition i's row
-    static int StandardLabelSlot() { return 1; }
-    static int ExtendedLabelSlot() { return XBOX_STANDARD_PARTITION_COUNT + 2; }
+    static int StandardLabelSlot()
+    {
+        return 1;
+    }
+    static int ExtendedLabelSlot()
+    {
+        return XBOX_STANDARD_PARTITION_COUNT + 2;
+    }
     int TableRowTop(int i) const
     {
         return TableSlotTop(i + (i >= XBOX_STANDARD_PARTITION_COUNT ? 3 : 2));
@@ -320,6 +342,10 @@ private:
     // FATX cluster size (KB) per partition, 0 if none. Cached: reading it means
     // opening every partition.
     unsigned int m_ClusterSizes[XboxPartitionTableEntryCount];
+    // How much of each formatted partition is used, read when first needed
+    // (it means scanning the FAT) and forgotten when the tables change
+    FatxUsage m_Usage[XboxPartitionTableEntryCount];
+    bool m_UsageKnown[XboxPartitionTableEntryCount];
 
     HANDLE m_Controllers[4];
     int m_AnalogButton;
@@ -335,6 +361,9 @@ private:
     bool m_Animations;
     // force_lba48_v3= in the settings, see read_lba48_info()
     bool m_ForceLba48V3;
+    // resize_keeps_data= in the settings, Start > Resizing keeps data. Off:
+    // resized partitions are always formatted and their usage isn't read.
+    bool m_ResizeKeepsData;
     // Titan patched BIOS (it only uses the backup table): the user said so
     // (OfferTitanOrRestore), or the backup has Titan's version
     bool m_TitanBios;

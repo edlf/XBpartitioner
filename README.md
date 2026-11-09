@@ -16,18 +16,20 @@ XBpartitioner updated with new features and lba48v4 support. Requires a lba48 v4
 
 ## Settings
 
-Settings are kept in `xbpartitioner.ini`, next to the `.xbe`. It's written when you pick a theme, and can be edited by hand, one `key=value` per line:
+Settings are kept in `xbpartitioner.ini`, next to the `.xbe`. It's written when you pick a theme or switch Resizing keeps data, and can be edited by hand, one `key=value` per line:
 
 ```
 theme=Nord
 animations=0
 force_lba48_v3=0
+resize_keeps_data=1
 ```
 
 | Key | Values |
 |---|---|
 | `theme` | A theme name, as listed in Start > Theme |
 | `animations` | `1` (default): windows grow from a line when they open and shrink back when they close. `0`: they appear and disappear at once. `on`/`off`, `yes`/`no` and `true`/`false` work too. |
+| `resize_keeps_data` | `0` (default): a resized partition is always formatted. `1`: resizing keeps the data when it can, see [Resizing without a format](#resizing-without-a-format). Also switched in Start > Resizing keeps data. |
 | `force_lba48_v3` | `0` (default): use the BIOS's LBA48 patch as it is. `1`: work as with an LBA48 v3 BIOS even on v4: the high LBA bits are ignored (32 bit LBAs, drives used up to 2TB), and partitions are at most 1TB, so they never need clusters bigger than 64 KB. The same limits apply on a real v3 BIOS. |
 
 A missing file, key or value means the default. The file isn't written when running from a DVD, or once the partition the `.xbe` is on has been changed.
@@ -77,7 +79,7 @@ If there are warnings but no errors, the result offers **Repair**. It frees lost
 
 ## Resizing without a format
 
-You can move the end of a formatted partition and keep its data, as long as the new size suits the FAT. The editor's Status line tells you whether it does, and suggests the nearest sizes that work.
+Off by default: switch it on in Start > Resizing keeps data. Then you can move the end of a formatted partition and keep its data, as long as the new size suits the FAT. The editor's Status line tells you whether it does, and suggests the nearest sizes that work.
 
 - **Small changes** that keep the FAT the same size only touch the partition table. That's up to roughly one FAT page of clusters: about 32 MB with 16 KB clusters.
 - **Bigger changes** grow or shrink the FAT by whole clusters. Any data in the way is moved, then the FAT and folders are renumbered. This is journaled: if the power goes, the next start offers to finish it, and the partition can't be used until then.

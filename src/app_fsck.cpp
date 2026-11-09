@@ -9,9 +9,8 @@
 // One partition, accessed through the whole-disk device
 class DiskPartitionDevice : public FatxDevice
 {
-public:
-    DiskPartitionDevice(ULONGLONG start_lba, bool writable)
-        : m_base(start_lba * HDD_SECTOR_SIZE), m_disk(NULL), m_writable(writable)
+  public:
+    DiskPartitionDevice(ULONGLONG start_lba, bool writable) : m_base(start_lba * HDD_SECTOR_SIZE), m_disk(NULL), m_writable(writable)
     {
         ANSI_STRING path;
         OBJECT_ATTRIBUTES attributes;
@@ -19,8 +18,7 @@ public:
         RtlInitAnsiString(&path, "\\Device\\Harddisk0\\Partition0");
         InitializeObjectAttributes(&attributes, &path, OBJ_CASE_INSENSITIVE, NULL);
         const ACCESS_MASK access = SYNCHRONIZE | GENERIC_READ | (writable ? GENERIC_WRITE : 0);
-        if (NtOpenFile(&m_disk, access, &attributes, &status_block, FILE_SHARE_READ | FILE_SHARE_WRITE,
-                       FILE_SYNCHRONOUS_IO_ALERT) != 0)
+        if (NtOpenFile(&m_disk, access, &attributes, &status_block, FILE_SHARE_READ | FILE_SHARE_WRITE, FILE_SYNCHRONOUS_IO_ALERT) != 0)
         {
             m_disk = NULL;
         }
@@ -58,7 +56,7 @@ public:
         return NtWriteFile(m_disk, NULL, NULL, NULL, &status_block, (PVOID)buffer, length, &position) == 0;
     }
 
-private:
+  private:
     ULONGLONG m_base;
     HANDLE m_disk;
     bool m_writable;
@@ -68,7 +66,7 @@ private:
 // worker thread, so no dialogs: write_main is decided beforehand.
 class XboxResizeTable : public FatxResizeTable
 {
-public:
+  public:
     XboxResizeTable(App *app, int partition, const XboxPartitionTable &base, bool write_main)
         : m_app(app), m_partition(partition), m_base(base), m_write_main(write_main)
     {
@@ -88,7 +86,7 @@ public:
         return table.GetPartitionTable();
     }
 
-private:
+  private:
     App *m_app;
     int m_partition;
     XboxPartitionTable m_base;
@@ -100,7 +98,8 @@ enum FsckJobKind
     JOB_REPAIR,       // Check, plus a repair or (write false) a dry run
     JOB_RESIZE_CHECK, // Can a table change alone keep the data?
     JOB_MOVE_RESIZE,  // Resize with moves, or check it can be done
-    JOB_RESUME        // Finish an interrupted resize
+    JOB_RESUME,       // Finish an interrupted resize
+    JOB_USAGE         // Read how much is in use
 };
 
 // Disk work for a worker thread, so the screen keeps animating
@@ -115,6 +114,8 @@ struct FsckJob : public FatxProgress
     FatxResizeResult *resize;
     FatxMoveResult *move;
     FatxResizeTable *table;
+    FatxUsage *usage;
+    bool ok;
     volatile LONG percent; // Read by the main thread
 
     void Update(int value)
@@ -137,6 +138,9 @@ static DWORD WINAPI fsck_thread(LPVOID parameter)
         break;
     case JOB_RESUME:
         FatxResumeResize(device, *job->table, job->move, job);
+        break;
+    case JOB_USAGE:
+        job->ok = FatxReadUsage(device, job->lba_size, job->usage, job);
         break;
     default:
         FatxRepair(device, job->lba_size * HDD_SECTOR_SIZE, job->repair, job->write, job);
@@ -184,6 +188,8 @@ static void init_job(FsckJob *job, FsckJobKind kind)
     job->resize = NULL;
     job->move = NULL;
     job->table = NULL;
+    job->usage = NULL;
+    job->ok = false;
     job->percent = 0;
 }
 
@@ -215,6 +221,24 @@ void App::RunMoveResizeJob(int partition, ULONGLONG new_lba_size, bool write, Fa
     job.move = move;
     job.table = &table;
     RunFsckThread(partition, write ? L"Resizing" : L"Checking", job);
+}
+
+bool App::EnsureUsage(int partition)
+{
+    if (m_UsageKnown[partition])
+    {
+        return true;
+    }
+    if (!m_pTableOriginal->isPartitionEnabled(partition) || m_ClusterSizes[partition] == 0)
+    {
+        return false;
+    }
+    FsckJob job;
+    init_job(&job, JOB_USAGE);
+    job.usage = &m_Usage[partition];
+    RunFsckThread(partition, L"Reading", job);
+    m_UsageKnown[partition] = job.ok;
+    return job.ok;
 }
 
 void App::RunResumeJob(int partition, FatxMoveResult *move, bool write_main)
@@ -312,8 +336,7 @@ bool App::ShowCheckResult(int partition, const FatxCheckResult &result, LPCWSTR 
         lines[line_count++] = L"Not enough memory to check this partition.";
         break;
     default:
-        swprintf(line_summary, L"Partition %d (%c): %I64u files, %I64u folders.", partition + 1,
-                 partition_letter(partition), result.files, result.directories);
+        swprintf(line_summary, L"Partition %d (%c): %I64u files, %I64u folders.", partition + 1, partition_letter(partition), result.files, result.directories);
         lines[line_count++] = line_summary;
 
         if (result.status == FATX_CHECK_BAD_HEADER)
@@ -460,8 +483,7 @@ void App::RepairFileSystem(int partition, const FatxRepairResult &plan)
 
     switch (repair->status)
     {
-    case FATX_REPAIR_DONE:
-    {
+    case FATX_REPAIR_DONE: {
         FatxRepairResult *after = new FatxRepairResult;
         if (after == NULL)
         {
@@ -489,8 +511,7 @@ void App::RepairFileSystem(int partition, const FatxRepairResult &plan)
     delete repair;
 }
 
-int App::FindResizesKeepingData(bool kept[XboxPartitionTableEntryCount], bool moved[XboxPartitionTableEntryCount],
-                                wchar_t *reason, size_t reason_count)
+int App::FindResizesKeepingData(bool kept[XboxPartitionTableEntryCount], bool moved[XboxPartitionTableEntryCount], wchar_t *reason, size_t reason_count)
 {
     int count = 0;
     reason[0] = L'\0';
@@ -498,6 +519,14 @@ int App::FindResizesKeepingData(bool kept[XboxPartitionTableEntryCount], bool mo
     {
         kept[i] = false;
         moved[i] = false;
+    }
+    // Off: every resized partition is formatted, nothing is read or checked
+    if (!m_ResizeKeepsData)
+    {
+        return 0;
+    }
+    for (int i = 0; i < XboxPartitionTableEntryCount; i++)
+    {
         if (!m_pTable->isPartitionEnabled(i) || !m_pTableOriginal->isPartitionEnabled(i) ||
             m_pTable->GetPartitionStart(i) != m_pTableOriginal->GetPartitionStart(i))
         {
@@ -505,13 +534,13 @@ int App::FindResizesKeepingData(bool kept[XboxPartitionTableEntryCount], bool mo
         }
         const ULONGLONG old_size = m_pTableOriginal->GetPartitionSize(i);
         const ULONGLONG new_size = m_pTable->GetPartitionSize(i);
-        if (new_size == old_size || m_ClusterSizes[i] == 0)
+        if (new_size == old_size || !EnsureUsage(i))
         {
             continue; // Unchanged, or nothing to keep
         }
 
-        // Classify by size first, so formats need no disk access
-        const FatxResizeKind kind = FatxClassifyResize(old_size, m_ClusterSizes[i] * 1024, new_size);
+        // By the usage first, the same as the editor; the disk has the last word
+        const FatxResizeKind kind = FatxClassifyResize(old_size, m_Usage[i], new_size);
         LPCWSTR why = NULL;
         if (kind == FATX_RESIZE_KIND_IN_PLACE)
         {
@@ -587,8 +616,8 @@ int App::FindResizesKeepingData(bool kept[XboxPartitionTableEntryCount], bool mo
 // Runs the shrinking or the growing resizes with moves. Each partition is
 // unmounted first and writes its own size to the table. Stops at the first
 // failure and explains it.
-bool App::RunMoveResizes(const bool moved[XboxPartitionTableEntryCount],
-                         const ULONGLONG new_sizes[XboxPartitionTableEntryCount], bool shrinking, bool write_main)
+bool App::RunMoveResizes(const bool moved[XboxPartitionTableEntryCount], const ULONGLONG new_sizes[XboxPartitionTableEntryCount], bool shrinking,
+                         bool write_main)
 {
     for (int i = 0; i < XboxPartitionTableEntryCount; i++)
     {
@@ -620,6 +649,7 @@ bool App::RunMoveResizes(const bool moved[XboxPartitionTableEntryCount],
         RunMoveResizeJob(i, new_sizes[i], true, move, write_main);
         const FatxMoveStatus status = move->status;
         const ULONGLONG moved_clusters = move->clusters_moved;
+        const bool table_failed = move->table_failed;
         delete move;
 
         // The worker thread changed the kernel's table; reload the editor
@@ -639,6 +669,13 @@ bool App::RunMoveResizes(const bool moved[XboxPartitionTableEntryCount],
             lines[line_count++] = line1;
             lines[line_count++] = L"clusters: it keeps its old size and its data.";
             lines[line_count++] = L"A check may show lost space, which Repair frees.";
+        }
+        else if (status == FATX_MOVE_INTERRUPTED && table_failed)
+        {
+            swprintf(line1, L"Partition %d (%c) was resized, but the partition", i + 1, partition_letter(i));
+            lines[line_count++] = line1;
+            lines[line_count++] = L"table couldn't be written. Finish it: it's offered";
+            lines[line_count++] = L"at the next start. Until then it can't be used.";
         }
         else if (status == FATX_MOVE_INTERRUPTED)
         {
@@ -663,9 +700,8 @@ bool App::RunMoveResizes(const bool moved[XboxPartitionTableEntryCount],
 // Writes the edited table, keeping the data of resized partitions. Shrinks
 // with moves go first so their space is free, growths with moves go last,
 // and everything else is written in between.
-bool App::WriteTableWithResizes(const bool kept[XboxPartitionTableEntryCount],
-                                const bool moved[XboxPartitionTableEntryCount], bool *backup_written, bool *main_written,
-                                bool *explained)
+bool App::WriteTableWithResizes(const bool kept[XboxPartitionTableEntryCount], const bool moved[XboxPartitionTableEntryCount], bool *backup_written,
+                                bool *main_written, bool *explained)
 {
     *explained = false;
     const XboxPartitionTable edited = m_pTable->GetPartitionTable();
@@ -688,8 +724,8 @@ bool App::WriteTableWithResizes(const bool kept[XboxPartitionTableEntryCount],
             return false;
         }
         const LPCWSTR lines[] = {
-            L"Clusters are moved and renumbered now.",
-            L"Don't switch the Xbox off until it's done.",
+            L"Partition will be resized now.",
+            L"DON'T switch the Xbox off until it's done.",
         };
         ShowWarning(lines, ARRAY_COUNT(lines));
     }
@@ -766,10 +802,9 @@ void App::OfferFinishResizes()
         const LPCWSTR lines[] = {
             line1,
             L"It can't be used until that's finished.",
-            L"Finish it now? Don't switch off meanwhile.",
+            L"Finish it now? DON'T turn off your XBOX.",
         };
-        if (i == m_LaunchPartition ||
-            !RunDialog(L"Interrupted resize", COLOR_WARNING, lines, ARRAY_COUNT(lines), L"Finish", L"Later"))
+        if (i == m_LaunchPartition || !RunDialog(L"Interrupted resize", COLOR_WARNING, lines, ARRAY_COUNT(lines), L"Finish", L"Later"))
         {
             continue;
         }

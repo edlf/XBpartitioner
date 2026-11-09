@@ -44,21 +44,21 @@ void App::DrawTable()
     m_Ui.Text(FONT_TABLE, row, TableCenterX(), m_Ui.TextYCentered(FONT_TABLE, header_top, header_top + bar_height), COLOR_GREY, XFONT_CENTER);
 
     const int line_y = (header_top + bar_height + TableSlotTop(1)) / 2;
-    m_Ui.Rect((FLOAT)(left + inset), (FLOAT)line_y, (FLOAT)(right - inset), (FLOAT)(line_y + 1),
-              Colors().panel_line, Colors().panel_line);
+    m_Ui.Rect((FLOAT)(left + inset), (FLOAT)line_y, (FLOAT)(right - inset), (FLOAT)(line_y + 1), Colors().panel_line, Colors().panel_line);
 
     // Before the row text, so it never covers a row. Outside the main loop it
     // doesn't animate: until the first frame it sits on the row.
     const int selection_top = m_SelectionBarPlaced ? (int)(m_SelectionBarY + 0.5f) : TableRowTop(m_CurrentPart);
-    m_Ui.Rect((FLOAT)(left + inset), (FLOAT)selection_top, (FLOAT)(right - inset), (FLOAT)(selection_top + bar_height),
-              Colors().selection, Colors().selection);
+    m_Ui.Rect((FLOAT)(left + inset), (FLOAT)selection_top, (FLOAT)(right - inset), (FLOAT)(selection_top + bar_height), Colors().selection, Colors().selection);
 
     const int standard_top = TableSlotTop(StandardLabelSlot());
     const int extended_top = TableSlotTop(ExtendedLabelSlot());
-    m_Ui.Text(FONT_TEXT, L"Standard partitions (custom sizes might cause problems)", label_x,
-              m_Ui.TextYCentered(FONT_TEXT, standard_top, standard_top + bar_height), COLOR_GREY);
-    m_Ui.Text(FONT_TEXT, L"Extended partitions", label_x,
-              m_Ui.TextYCentered(FONT_TEXT, extended_top, extended_top + bar_height), COLOR_GREY);
+    m_Ui.Text(FONT_TEXT,
+              L"Standard partitions (custom sizes might cause problems)",
+              label_x,
+              m_Ui.TextYCentered(FONT_TEXT, standard_top, standard_top + bar_height),
+              COLOR_GREY);
+    m_Ui.Text(FONT_TEXT, L"Extended partitions", label_x, m_Ui.TextYCentered(FONT_TEXT, extended_top, extended_top + bar_height), COLOR_GREY);
 
     for (int i = 0; i < XboxPartitionTableEntryCount; i++)
     {
@@ -173,8 +173,7 @@ void App::DrawDiskMap()
                 x2 = x1 + 1.0f;
             }
 
-            const D3DCOLOR color = selected ? Colors().map_selected
-                                 : disk_map_color(Colors().map_standard, Colors().map_extended, place[i], shown);
+            const D3DCOLOR color = selected ? Colors().map_selected : disk_map_color(Colors().map_standard, Colors().map_extended, place[i], shown);
             m_Ui.Rect(x1, top + 1.0f, x2, bottom - 1.0f, color, color);
         }
     }
@@ -214,8 +213,7 @@ void App::FormatPartitionRow(const int partition_number, wchar_t *row)
         marker = L'+';
     }
     else if (m_pTableOriginal &&
-             (lba_start != m_pTableOriginal->GetPartitionStart(partition_number) ||
-              lba_size != m_pTableOriginal->GetPartitionSize(partition_number)))
+             (lba_start != m_pTableOriginal->GetPartitionStart(partition_number) || lba_size != m_pTableOriginal->GetPartitionSize(partition_number)))
     {
         marker = L'*';
     }
@@ -243,8 +241,7 @@ void App::FormatPartitionRow(const int partition_number, wchar_t *row)
         swprintf(cluster_str, L"%uKB", cluster_size);
     }
 
-    swprintf(row, L"%2d %c  %-12s  %-12s  %9s  %-5s %c",
-             partition_number + 1, letter, start_str, end_str, size_str, cluster_str, marker);
+    swprintf(row, L"%2d %c  %-12s  %-12s  %9s  %-5s %c", partition_number + 1, letter, start_str, end_str, size_str, cluster_str, marker);
 }
 
 void App::DrawFreeSpace()
@@ -262,8 +259,7 @@ void App::DrawFreeSpace()
     swprintf(size_line, L"Free: %s of %s", free_size, usable_size);
     m_Ui.Text(FONT_TEXT, size_line, m_Layout->margin_x, m_Layout->free_space_y, COLOR_WHITE);
 
-    m_Ui.Text(FONT_TEXT, L"* changed   + new   - removed", m_Layout->table_right - m_Layout->menu_text_inset,
-              m_Layout->legend_y, COLOR_GREY, XFONT_RIGHT);
+    m_Ui.Text(FONT_TEXT, L"* changed   + new   - removed", m_Layout->table_right - m_Layout->menu_text_inset, m_Layout->legend_y, COLOR_GREY, XFONT_RIGHT);
 }
 
 void App::DrawLoadedTableName()

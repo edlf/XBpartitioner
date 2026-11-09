@@ -84,8 +84,7 @@ int Renderer::FindTheme(const char *name)
     {
         const wchar_t *theme_name = g_Themes[i].name;
         int c = 0;
-        while (theme_name[c] != L'\0' && name[c] != '\0' &&
-               ascii_lower(theme_name[c]) == ascii_lower((wchar_t)(unsigned char)name[c]))
+        while (theme_name[c] != L'\0' && name[c] != '\0' && ascii_lower(theme_name[c]) == ascii_lower((wchar_t)(unsigned char)name[c]))
         {
             c++;
         }
@@ -126,10 +125,8 @@ static const FontData g_Fonts720[FONT_COUNT] = {
 };
 
 Renderer::Renderer()
-    : m_pD3D(NULL), m_pDevice(NULL), m_TextBatchFont(-1), m_TextBatchCount(0), m_ThemeIndex(0),
-      m_pBackgroundTexture(NULL), m_BackgroundTextureTheme(-1),
-      m_BackgroundSeconds(0.0), m_BackgroundTick(0), m_VideoMode(VIDEO_MODE_480I),
-      m_Width(640), m_Height(480), m_OffsetX(0.0f), m_OffsetY(0.0f)
+    : m_pD3D(NULL), m_pDevice(NULL), m_TextBatchFont(-1), m_TextBatchCount(0), m_ThemeIndex(0), m_pBackgroundTexture(NULL), m_BackgroundTextureTheme(-1),
+      m_BackgroundSeconds(0.0), m_BackgroundTick(0), m_VideoMode(VIDEO_MODE_480I), m_Width(640), m_Height(480), m_OffsetX(0.0f), m_OffsetY(0.0f)
 {
     for (int i = 0; i < FONT_COUNT; i++)
     {
@@ -197,8 +194,7 @@ bool Renderer::CreateDevice(VideoMode mode)
 
     // Anti-aliasing for the background's edges: 4 samples at 480, 2 at 720p
     // (memory). LINEAR keeps pixel aligned text and boxes sharp. Off if refused.
-    d3dpp.MultiSampleType = (mode == VIDEO_MODE_720P) ? D3DMULTISAMPLE_2_SAMPLES_MULTISAMPLE_LINEAR
-                                                      : D3DMULTISAMPLE_4_SAMPLES_MULTISAMPLE_LINEAR;
+    d3dpp.MultiSampleType = (mode == VIDEO_MODE_720P) ? D3DMULTISAMPLE_2_SAMPLES_MULTISAMPLE_LINEAR : D3DMULTISAMPLE_4_SAMPLES_MULTISAMPLE_LINEAR;
 
     m_pDevice = NULL;
     if (FAILED(m_pD3D->CreateDevice(0, D3DDEVTYPE_HAL, NULL, D3DCREATE_HARDWARE_VERTEXPROCESSING, &d3dpp, &m_pDevice)) || m_pDevice == NULL)
@@ -296,8 +292,7 @@ bool Renderer::BuildFontAtlas(int font)
         const wchar_t pair[2] = {(wchar_t)(FONT_FIRST_CHAR + g), (wchar_t)(FONT_FIRST_CHAR + g)};
         unsigned one = 0;
         unsigned two = 0;
-        if (FAILED(pFont->GetTextExtent(pair, 1, &one)) || FAILED(pFont->GetTextExtent(pair, 2, &two)) ||
-            two < one || two - one > 255)
+        if (FAILED(pFont->GetTextExtent(pair, 1, &one)) || FAILED(pFont->GetTextExtent(pair, 2, &two)) || two < one || two - one > 255)
         {
             return false;
         }
@@ -375,12 +370,10 @@ bool Renderer::BuildFontAtlas(int font)
         const wchar_t ch = (wchar_t)(FONT_FIRST_CHAR + g);
         const int slot = atlas.advance[g] + 2 * atlas.pad;
         memset(scratch, 0, scratch_width * scratch_height * sizeof(DWORD));
-        pFont->TextOutToMemory(scratch, scratch_width * sizeof(DWORD), scratch_width, scratch_height, D3DFMT_LIN_X8R8G8B8,
-                               &ch, 1, cell + atlas.pad, cell);
+        pFont->TextOutToMemory(scratch, scratch_width * sizeof(DWORD), scratch_width, scratch_height, D3DFMT_LIN_X8R8G8B8, &ch, 1, cell + atlas.pad, cell);
         for (int row = 0; row < cell; row++)
         {
-            memcpy(&pixels[(atlas.v[g] + row) * width + atlas.u[g]], &scratch[(cell + row) * scratch_width + cell],
-                   slot * sizeof(DWORD));
+            memcpy(&pixels[(atlas.v[g] + row) * width + atlas.u[g]], &scratch[(cell + row) * scratch_width + cell], slot * sizeof(DWORD));
         }
     }
     free(scratch);
@@ -539,8 +532,7 @@ void Renderer::Text(Font font, LPCWSTR text, int x, int y, Color color, int alig
     const int cell = m_FontHeights[font];
     if (g_ColorOpaque[color])
     {
-        ScreenRect((FLOAT)screen_x, (FLOAT)screen_y, (FLOAT)(screen_x + width), (FLOAT)(screen_y + cell),
-                   theme.text_background, theme.text_background);
+        ScreenRect((FLOAT)screen_x, (FLOAT)screen_y, (FLOAT)(screen_x + width), (FLOAT)(screen_y + cell), theme.text_background, theme.text_background);
     }
 
     if (m_TextBatchFont != font)
@@ -577,12 +569,24 @@ void Renderer::Text(Font font, LPCWSTR text, int x, int y, Color color, int alig
             const FLOAT v2 = (atlas.v[g] + cell) / tex_h;
 
             TextVertex *q = &g_TextBatch[m_TextBatchCount];
-            q[0].pos = D3DXVECTOR4(x1, y1, 1.0f, 1.0f); q[0].u = u1; q[0].v = v1;
-            q[1].pos = D3DXVECTOR4(x2, y1, 1.0f, 1.0f); q[1].u = u2; q[1].v = v1;
-            q[2].pos = D3DXVECTOR4(x1, y2, 1.0f, 1.0f); q[2].u = u1; q[2].v = v2;
-            q[3].pos = D3DXVECTOR4(x2, y1, 1.0f, 1.0f); q[3].u = u2; q[3].v = v1;
-            q[4].pos = D3DXVECTOR4(x2, y2, 1.0f, 1.0f); q[4].u = u2; q[4].v = v2;
-            q[5].pos = D3DXVECTOR4(x1, y2, 1.0f, 1.0f); q[5].u = u1; q[5].v = v2;
+            q[0].pos = D3DXVECTOR4(x1, y1, 1.0f, 1.0f);
+            q[0].u = u1;
+            q[0].v = v1;
+            q[1].pos = D3DXVECTOR4(x2, y1, 1.0f, 1.0f);
+            q[1].u = u2;
+            q[1].v = v1;
+            q[2].pos = D3DXVECTOR4(x1, y2, 1.0f, 1.0f);
+            q[2].u = u1;
+            q[2].v = v2;
+            q[3].pos = D3DXVECTOR4(x2, y1, 1.0f, 1.0f);
+            q[3].u = u2;
+            q[3].v = v1;
+            q[4].pos = D3DXVECTOR4(x2, y2, 1.0f, 1.0f);
+            q[4].u = u2;
+            q[4].v = v2;
+            q[5].pos = D3DXVECTOR4(x1, y2, 1.0f, 1.0f);
+            q[5].u = u1;
+            q[5].v = v2;
             for (int k = 0; k < 6; k++)
             {
                 q[k].color = diffuse;
@@ -721,16 +725,14 @@ void Renderer::DrawBackground()
     {
         build_background_gradient(theme.background, theme.map_standard, gradient);
         if (m_pBackgroundTexture == NULL &&
-            FAILED(m_pDevice->CreateTexture(BACKGROUND_GRADIENT_WIDTH, BACKGROUND_GRADIENT_HEIGHT, 1, 0, D3DFMT_A8R8G8B8, 0,
-                                            &m_pBackgroundTexture)))
+            FAILED(m_pDevice->CreateTexture(BACKGROUND_GRADIENT_WIDTH, BACKGROUND_GRADIENT_HEIGHT, 1, 0, D3DFMT_A8R8G8B8, 0, &m_pBackgroundTexture)))
         {
             m_pBackgroundTexture = NULL;
         }
         D3DLOCKED_RECT locked;
         if (m_pBackgroundTexture != NULL && SUCCEEDED(m_pBackgroundTexture->LockRect(0, &locked, NULL, 0)))
         {
-            XGSwizzleRect(gradient, 0, NULL, locked.pBits, BACKGROUND_GRADIENT_WIDTH, BACKGROUND_GRADIENT_HEIGHT, NULL,
-                          sizeof(DWORD));
+            XGSwizzleRect(gradient, 0, NULL, locked.pBits, BACKGROUND_GRADIENT_WIDTH, BACKGROUND_GRADIENT_HEIGHT, NULL, sizeof(DWORD));
             m_pBackgroundTexture->UnlockRect(0);
         }
         m_BackgroundTextureTheme = m_ThemeIndex;
