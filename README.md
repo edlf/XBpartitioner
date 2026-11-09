@@ -8,7 +8,10 @@ XBpartitioner updated with new features and lba48v4 support. Requires a lba48 v4
 - 512e/4K sector support
 - Partition table backup restore for HDDs formatted with FATXplorer
 - 720p support
+- File system check and repair
+- Resizing formatted partitions without losing data
 - Not really useful but theme support
+- `fatxtool`, a PC companion for disk images and SSD TRIM
 
 
 ## Settings
@@ -64,40 +67,84 @@ tools\makefonts.bat
 
 ## File system check
 
-Start > Check file system on partition N checks the selected partition's FATX file system. The check itself only reads. It follows every file and folder from the root, then compares with the FAT:
+Start > Check file system checks the selected partition. It walks every folder and file from the root and compares what it finds with the FAT. Nothing is written.
 
-- **Errors** are things the Xbox would read wrong: chains into free or out of range clusters, clusters used twice (cross-linked files or loops), files larger than their chain, damaged folder entries, the same name twice in a folder.
-- **Warnings** are harmless but not clean: lost clusters (marked used, but by no file), chains longer than the file, names with characters the Xbox doesn't allow.
+- **Errors** would make the Xbox read data wrong: chains pointing at free or invalid clusters, clusters used twice, files longer than their chain, broken folder entries, duplicate names.
+- **Warnings** are harmless: lost clusters, chains longer than their file, names with characters the Xbox doesn't allow.
 
-The check runs on the partition as it is on disk, not as edited. It also runs after shrinking a partition to keep the backup table.
+If there are warnings but no errors, the result offers **Repair**. It frees lost clusters, trims over-long chains and fixes FAT entry 0. No file contents change. The partition is unmounted first and checked again afterwards. Partitions with errors are never repaired, and neither is the one XBpartitioner runs from.
 
-When there are no errors but some warnings it can fix, the result offers **Repair**: the same safe repairs as `fatxtool repair` (below), which change nothing a file reads as. It lists the changes and asks first, unmounts the partition so the kernel's cached copy can't undo them, repairs, and checks again. Partitions with errors are never repaired, and neither is the partition XBpartitioner runs from.
+
+## Resizing without a format
+
+You can move the end of a formatted partition and keep its data, as long as the new size suits the FAT. The editor's Status line tells you whether it does, and suggests the nearest sizes that work.
+
+- **Small changes** that keep the FAT the same size only touch the partition table. That's up to roughly one FAT page of clusters: about 32 MB with 16 KB clusters.
+- **Bigger changes** grow or shrink the FAT by whole clusters. Any data in the way is moved, then the FAT and folders are renumbered. This is journaled: if the power goes, the next start offers to finish it, and the partition can't be used until then.
+
+Both need a clean check and enough free space. Shrinking partitions are done first, then the rest of the table, then growing ones, so space freed by one partition can be used by another. The partition XBpartitioner runs from can't be resized this way.
+
+Not supported: crossing about 65,000 clusters (where FAT entries go from 2 to 4 bytes), growing past XBpartitioner's size limit for the cluster size, and changing the cluster size. That last one is PC only, see `recluster` below.
 
 
 ## fatxtool (PC)
 
-The same check on the PC, for disk and partition images, plus a way to make test images. Build it with `tools\fatxtool\build.bat` (Visual Studio 2022 or newer, no XDK needed); it ends up in `tools\fatxtool\build\Release\`.
+A command line companion for disk and partition images, and for an Xbox drive connected to a PC. Build it with `tools\fatxtool\build.bat` (Visual Studio 2022 or newer, no XDK). Commands that write only do so with `--write`. Without it they show what they would do. Work on a copy of your image.
+
+### check, make
 
 ```
-fatxtool check disk.img                  every partition of a whole disk image
+fatxtool check disk.img                  every partition in a disk image
 fatxtool check disk.img --partition 6    only F
 fatxtool check part.img                  a single partition image
-fatxtool make part.img 2G --from games   a formatted image with the games folder in it
+fatxtool make part.img 2G --from games   a new image with a folder copied in
 ```
 
-`check` exits with 0 if there are no errors, 1 if there are, and 2 if it couldn't check. `make` uses the cluster size XBpartitioner would pick for that size, or `--cluster KB`.
+`check` exits with 0 when there are no errors, 1 when there are, 2 when it couldn't check. `make` picks the cluster size XBpartitioner would use, unless you pass `--cluster KB`.
+
+### repair
 
 ```
-fatxtool repair part.img                 shows what it would repair, writes nothing
-fatxtool repair part.img --write         repairs, then checks again
+fatxtool repair part.img --write
 ```
 
-`repair` only does the safe repairs, which change nothing a file reads as: it frees lost clusters, ends chains that are longer than their file, frees the clusters of empty files, and sets FAT entry 0 back. It only runs when the check finds no errors: with errors, clusters that look lost or extra may belong to a damaged or cross-linked file, and freeing them would lose its data. Errors are reported, never repaired. Copy the image before using `--write`.
+Same repairs as on the Xbox, and only when the check finds no errors. With errors, clusters that look lost might belong to a damaged file.
+
+### resize
+
+```
+fatxtool resize disk.img 200M --partition 6 --write
+fatxtool resize disk.img --resume --partition 6
+```
+
+Same as on the Xbox. A partition image changes length; in a disk image the table entry (and its backup copy) changes. Sizes are rounded down to one the FAT allows, and the tool suggests sizes when nothing fits. While the FAT is being renumbered the header reads `XRSZ` instead of `FATX`, so nothing mounts a half-finished partition. `--resume` finishes after a power cut.
+
+### recluster
+
+```
+fatxtool recluster disk.img 64 --partition 6 --write
+fatxtool recluster disk.img --resume --partition 6
+```
+
+Changes the cluster size (16 KB to 1 MB) and keeps every file, folder, attribute and timestamp. Every byte has to move and there's no room for a second copy on the partition itself, so the new file system is built in `<image>.recluster.tmp` first. That's a sparse file needing about as much free space as the partition's data. It's checked, then copied back with the header last. If the copy is interrupted, `--resume` simply copies again.
+
+Bigger clusters waste more space per file, so lots of small files may no longer fit; the tool tells you before writing anything. Clusters over 64 KB need an LBA48 v4 BIOS.
+
+### trim
+
+```
+fatxtool trim \\.\PhysicalDrive2 --write
+fatxtool trim \\.\PhysicalDrive2 --list
+```
+
+The Xbox can't send TRIM (its IDE pass-through has no 48 bit DMA commands), but System information shows whether the drive supports it. With the SSD connected to a PC, `trim` sends TRIM for the free clusters of each FATX partition that checks clean, and nothing else.
+
+Run it as administrator. Disk Management shows the drive number, but don't let Windows initialise the disk. A direct SATA connection works; most USB adapters block the command. `--list` prints the byte ranges instead, e.g. for `blkdiscard -o OFFSET -l LENGTH /dev/sdX` on Linux.
 
 
 ## Tests
 
-The partition table logic (`src/partition.cpp`) has [Google Test](https://github.com/google/googletest) tests in `tests/` that build as a normal Windows console app, no XDK needed. Visual Studio 2022 or newer with the C++ support is requried; Google Test comes from NuGet and is restored into `tests/packages` on the first build.
+The partition table and FATX code has [Google Test](https://github.com/google/googletest) tests in `tests/`, built as a normal Windows console app (no XDK). They need Visual Studio 2022 or newer with C++; Google Test is restored from NuGet on the first build. The resize tests cut the power at every single write and check that the result can be finished.
 
 Open `tests/PartitionTests.sln` and use Test Explorer, or build and run them from a command prompt:
 

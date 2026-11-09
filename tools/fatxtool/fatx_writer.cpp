@@ -45,7 +45,7 @@ private:
     uint32_t m_left;
 };
 
-// Any fixed date: 2001-11-15 12:00
+// A fixed timestamp: 2001-11-15 12:00
 const uint16_t ENTRY_DATE = (15 & 0x1F) | ((11 & 0xF) << 5) | (((2001 - 2000) & 0x7F) << 9);
 const uint16_t ENTRY_TIME = (12 & 0xF) << 11;
 
@@ -74,7 +74,7 @@ bool FatxWriter::Format(uint32_t serial)
         return false;
     }
 
-    // Header: the fields, the rest 0xFF
+    // Header fields; the rest is 0xFF
     std::vector<unsigned char> header(FATX_HEADER_BYTES, 0xFF);
     const uint32_t signature = FATX_signature;
     const uint32_t sectors_per_cluster = m_cluster_bytes / HDD_SECTOR_SIZE;
@@ -188,7 +188,7 @@ bool FatxWriter::AllocateChain(uint32_t count, uint32_t *first)
             cluster = (cluster + 1 < limit) ? cluster + 1 : 1;
             if (++tried >= limit)
             {
-                return false; // Full (what was taken stays: the image is a test one)
+                return false; // Full
             }
         }
         m_fat[cluster] = FATX_FAT_END;
@@ -251,7 +251,7 @@ bool FatxWriter::AddEntry(uint32_t parent, const FatxDirent &entry)
         cluster = next;
     }
 
-    // Full: one more cluster
+    // The folder is full; add a cluster
     uint32_t added;
     if (!AllocateChain(1, &added) || !FillCluster(added, FATX_DIRENT_END))
     {
@@ -278,24 +278,18 @@ bool FatxWriter::MakeDirectory(uint32_t parent, const char *name, uint32_t *clus
     return AddEntry(parent, entry);
 }
 
-bool FatxWriter::AddFile(uint32_t parent, const char *name, uint32_t size, FatxSource &source, uint32_t *first_cluster)
+bool FatxWriter::WriteChain(uint32_t size, FatxSource &source, uint32_t *first)
 {
-    FatxDirent entry;
-    if (!MakeEntry(name, 0, 0, size, &entry))
-    {
-        return false;
-    }
-
     const uint32_t count = (uint32_t)(((uint64_t)size + m_cluster_bytes - 1) / m_cluster_bytes);
-    uint32_t first = 0;
-    if (count > 0 && !AllocateChain(count, &first))
+    *first = 0;
+    if (count > 0 && !AllocateChain(count, first))
     {
         return false;
     }
 
     std::vector<unsigned char> data(m_cluster_bytes);
     uint32_t left = size;
-    for (uint32_t cluster = first; left > 0; cluster = m_fat[cluster])
+    for (uint32_t cluster = *first; left > 0; cluster = m_fat[cluster])
     {
         const uint32_t length = left < m_cluster_bytes ? left : m_cluster_bytes;
         memset(data.data(), 0, m_cluster_bytes);
@@ -305,11 +299,57 @@ bool FatxWriter::AddFile(uint32_t parent, const char *name, uint32_t size, FatxS
         }
         left -= length;
     }
+    return true;
+}
 
+bool FatxWriter::AddFile(uint32_t parent, const char *name, uint32_t size, FatxSource &source, uint32_t *first_cluster)
+{
+    FatxDirent entry;
+    uint32_t first;
+    if (!MakeEntry(name, 0, 0, size, &entry) || !WriteChain(size, source, &first))
+    {
+        return false;
+    }
     entry.first_cluster = first;
     if (first_cluster != NULL)
     {
         *first_cluster = first;
+    }
+    return AddEntry(parent, entry);
+}
+
+bool FatxWriter::AddFile(uint32_t parent, const FatxDirent &like, FatxSource &source, uint32_t *first_cluster)
+{
+    uint32_t first;
+    if (like.name_length == 0 || like.name_length > FATX_MAX_NAME_LENGTH || !WriteChain(like.file_size, source, &first))
+    {
+        return false;
+    }
+    FatxDirent entry = like;
+    entry.attributes &= (unsigned char)~FATX_ATTR_DIRECTORY;
+    entry.first_cluster = first;
+    if (first_cluster != NULL)
+    {
+        *first_cluster = first;
+    }
+    return AddEntry(parent, entry);
+}
+
+bool FatxWriter::MakeDirectory(uint32_t parent, const FatxDirent &like, uint32_t *cluster)
+{
+    uint32_t first;
+    if (like.name_length == 0 || like.name_length > FATX_MAX_NAME_LENGTH || !AllocateChain(1, &first) ||
+        !FillCluster(first, FATX_DIRENT_END))
+    {
+        return false;
+    }
+    FatxDirent entry = like;
+    entry.attributes |= FATX_ATTR_DIRECTORY;
+    entry.first_cluster = first;
+    entry.file_size = 0;
+    if (cluster != NULL)
+    {
+        *cluster = first;
     }
     return AddEntry(parent, entry);
 }

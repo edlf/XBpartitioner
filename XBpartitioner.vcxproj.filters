@@ -18,6 +18,7 @@
     <ClCompile Include="src\layout.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="src\partition.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="src\fatx_check.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="src\fatx_resize.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="src\prometheos_code.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="src\rxdk_compat.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="src\stdafx.cpp"><Filter>Source Files</Filter></ClCompile>
@@ -50,6 +51,7 @@
     <ClInclude Include="src\layout.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="src\partition.hpp"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="src\fatx_check.hpp"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="src\fatx_resize.hpp"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="src\prometheos_code.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="src\stdafx.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="src\themes.h"><Filter>Header Files</Filter></ClInclude>

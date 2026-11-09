@@ -721,7 +721,7 @@ TEST(BackupShrink, LastSectorOn512nDrive)
 
 TEST(BackupShrink, Last4kBlockOn512eDrive)
 {
-    // Not a whole number of 4K blocks: the backup is in the last whole one
+    // The disk ends mid-block, so the backup is in the last whole 4K block
     const uint64_t disk = DISK_1TB + 5;
     XboxPartitionTableManipulator t = WithFTo(DISK_1TB, disk, true);
     ASSERT_EQ(t.GetBackupTableLba(), DISK_1TB - LBA_ALIGNMENT);
@@ -741,7 +741,7 @@ TEST(BackupShrink, NothingWithoutOverlap)
 
 TEST(BackupShrink, NotWhenOneBlockIsntEnough)
 {
-    // F runs 4K past the disk end: losing one block still covers the backup
+    // F runs 4K past the disk end, so dropping one block isn't enough
     XboxPartitionTableManipulator t = WithFTo(DISK_1TB + LBA_ALIGNMENT, DISK_1TB, false);
     ASSERT_TRUE(t.OverlapsBackupTable());
     EXPECT_EQ(t.FindBackupShrinkCandidate(), -1);
@@ -781,7 +781,7 @@ TEST(Fatx, ClusterAt)
 
 TEST(Fatx, ShrinkingBy4kMayMoveTheData)
 {
-    // One cluster less in the FAT crosses a page: everything after it moves
+    // One cluster fewer crosses a FAT page boundary, which would move all data
     const FatxLayout before = FatxLayoutFor(0x100000, 0x4000);
     const FatxLayout after = FatxLayoutFor(0x100000 - LBA_ALIGNMENT, 0x4000);
     EXPECT_NE(before.data_offset, after.data_offset);

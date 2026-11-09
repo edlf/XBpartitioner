@@ -1,4 +1,5 @@
 #include "fatx_check.hpp"
+#include "fatx_resize.hpp" // FATX_RESIZING_SIGNATURE
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -7,19 +8,19 @@
 namespace
 {
 
-// FAT read in chunks this big (a multiple of 4 KB, so of the sector size)
+// FAT read size; a multiple of 4 KB
 const uint32_t FAT_CHUNK_BYTES = 0x10000;
 
-// Progress of the check: FAT scan, directory walk, lost cluster scan
+// Progress milestones: FAT scan, folder walk, lost cluster scan
 const int PROGRESS_SCAN_END = 15;
 const int PROGRESS_WALK_END = 85;
-// A repair's check takes this much, its own pass over the FAT the rest
+// Share of a repair's progress taken by its check
 const int PROGRESS_REPAIR_CHECK_SHARE = 80;
 
 void format_message(char *out, size_t out_size, const char *format, va_list args)
 {
 #ifdef _XBOX
-    _vsnprintf(out, out_size, format, args); // The XDK's runtime has no vsnprintf
+    _vsnprintf(out, out_size, format, args); // No vsnprintf in the XDK runtime
 #else
     vsnprintf(out, out_size, format, args);
 #endif
@@ -31,24 +32,24 @@ char lower_ascii(char c)
     return (c >= 'A' && c <= 'Z') ? (char)(c - 'A' + 'a') : c;
 }
 
-// What the kernel accepts in a name: printable ASCII without these
+// Characters the kernel accepts in a name
 bool is_valid_name_char(unsigned char c)
 {
     return c >= 0x20 && c < 0x7F && strchr("\"*/:<>?\\|", c) == NULL;
 }
 
-// One name in the directory being read, for the duplicate check
+// A name in the current folder, for the duplicate check
 typedef struct
 {
     unsigned char length;
     char name[FATX_MAX_NAME_LENGTH];
 } NameEntry;
 
-// A safe repair found by the walk, see FatxRepair()
+// A repair found during the walk, see FatxRepair()
 enum FixKind
 {
-    FIX_TRIM,       // End the chain after `keep` clusters, the rest is freed
-    FIX_CLEAR_FIRST // Empty file with clusters: first cluster 0, the chain is freed
+    FIX_TRIM,       // Cut the chain after `keep` clusters
+    FIX_CLEAR_FIRST // Empty file that still has a chain
 };
 
 typedef struct
@@ -56,10 +57,10 @@ typedef struct
     FixKind kind;
     uint32_t first_cluster;
     uint32_t keep;
-    uint64_t dirent_offset; // In the partition
+    uint64_t dirent_offset; // From the partition start
 } Fix;
 
-// A directory waiting to be read
+// A folder waiting to be read
 typedef struct
 {
     uint32_t first_cluster;
@@ -100,7 +101,6 @@ public:
             return false;
         }
 
-        // A bit per cluster, the FAT a chunk at a time, one cluster to parse
         const uint64_t limit = m_result->layout.cluster_limit;
         m_referenced = (unsigned char *)calloc((size_t)((limit + 7) / 8), 1);
         m_fat_chunk = (unsigned char *)malloc(FAT_CHUNK_BYTES);
@@ -122,16 +122,15 @@ public:
         return true;
     }
 
-    // Before Run(), when Repair() follows: its share of the progress
+    // Call before Run() when Repair() will follow, to split the progress
     void ShareProgressWithRepair()
     {
         m_check_share = PROGRESS_REPAIR_CHECK_SHARE;
     }
 
-    // After Run() found no errors. writer NULL: a dry run, only counts.
-    // Order, so a power cut leaves at worst lost space: directory entries,
-    // then chain ends (all written before anything is freed), then the
-    // freed clusters.
+    // Call after a Run() with no errors. A NULL writer only counts.
+    // Write order keeps power cuts harmless (lost space at worst): folder
+    // entries, then chain ends, then the freed clusters.
     bool Repair(FatxDevice *writer, FatxRepairResult *repair)
     {
         m_writer = writer;
@@ -149,7 +148,7 @@ public:
                 continue;
             }
 
-            // The cluster to end at; what follows it is no longer the file's
+            // Find where the file should end
             uint32_t last = fix.first_cluster;
             for (uint32_t kept = 1; kept < fix.keep; kept++)
             {
@@ -170,7 +169,7 @@ public:
             return false;
         }
 
-        // Lost clusters, and what was unmarked above
+        // Free lost clusters and the ones released above
         const uint32_t limit = (uint32_t)m_result->layout.cluster_limit;
         for (uint32_t cluster = 1; cluster < limit; cluster++)
         {
@@ -211,12 +210,11 @@ public:
         return true;
     }
 
-    // Something was written before the repair stopped
+    // Whether anything was written before a failure
     bool StoppedPartway() const { return m_wrote || m_write_failed; }
 
 private:
-    // A clean chain (it was walked to its end) back to unused in the bitmap.
-    // In a dry run the FAT isn't changed, so this reads the chain as it is.
+    // Clears a chain from the used bitmap. The chain is known to be intact.
     bool Unmark(uint32_t cluster)
     {
         while (cluster >= 1 && cluster < m_result->layout.cluster_limit)
@@ -236,7 +234,7 @@ private:
         {
             return true;
         }
-        // Entries are 64 bytes and aligned: never across a sector
+        // Entries are aligned, so never span sectors
         unsigned char sector[HDD_SECTOR_SIZE];
         const uint64_t sector_offset = dirent_offset - dirent_offset % HDD_SECTOR_SIZE;
         if (!m_reader.Read(sector_offset, sector, sizeof(sector)))
@@ -254,7 +252,7 @@ private:
         return true;
     }
 
-    // Through the chunk GetFat() holds; written back when it moves on
+    // Edits the cached chunk; it's written when GetFat() moves on or on FlushFat()
     bool SetFat(uint32_t cluster, uint32_t value)
     {
         if (m_writer == NULL)
@@ -341,7 +339,7 @@ private:
         }
     }
 
-    // The check's 0 to 100, scaled to its share
+    // The check reports 0 to 100; scale it to its share
     void SetProgress(int percent)
     {
         SetRawProgress(percent * m_check_share / 100);
@@ -370,13 +368,18 @@ private:
         memcpy(&sectors_per_cluster, header + FATX_SECTORS_PER_CLUSTER_OFFSET, 4);
         memcpy(&root_cluster, header + FATX_ROOT_CLUSTER_OFFSET, 4);
 
+        if (signature == FATX_RESIZING_SIGNATURE)
+        {
+            m_result->status = FATX_CHECK_RESIZING;
+            return false;
+        }
         if (signature != FATX_signature)
         {
             m_result->status = FATX_CHECK_NOT_FATX;
             return false;
         }
 
-        // A power of two up to 1 MB (the Xbox uses 16 KB and up)
+        // A power of two up to 1 MB
         if (sectors_per_cluster == 0 || (sectors_per_cluster & (sectors_per_cluster - 1)) != 0 || sectors_per_cluster > 2048)
         {
             Report(true, "The cluster size in the header is invalid (%u sectors).", sectors_per_cluster);
@@ -404,7 +407,7 @@ private:
         return true;
     }
 
-    // As a 32 bit value, see FATX_FAT_END
+    // Returns 32 bit values, see FATX_FAT_END
     bool GetFat(uint32_t cluster, uint32_t *value)
     {
         const FatxLayout &layout = m_result->layout;
@@ -413,7 +416,7 @@ private:
 
         if (!m_fat_chunk_valid || chunk_offset != m_fat_chunk_offset)
         {
-            // The FAT is a whole number of 4 KB pages: so is the last chunk
+            // The FAT is whole 4 KB pages, so the last chunk is too
             if (!FlushFat())
             {
                 return false;
@@ -454,7 +457,7 @@ private:
         m_referenced[cluster / 8] |= (unsigned char)(1 << (cluster % 8));
         m_referenced_count++;
 
-        // The walk's share of the progress, by clusters reached
+        // Progress by clusters reached
         if (m_result->used_clusters > 0 && (m_referenced_count & 0xFF) == 0)
         {
             const uint64_t done = m_referenced_count < m_result->used_clusters ? m_referenced_count : m_result->used_clusters;
@@ -462,7 +465,7 @@ private:
         }
     }
 
-    // Counts the used and bad clusters (for the progress and the summary)
+    // Counts used and bad clusters
     bool ScanFat()
     {
         const uint32_t limit = (uint32_t)m_result->layout.cluster_limit;
@@ -512,10 +515,9 @@ private:
         return true;
     }
 
-    // Marks a chain's clusters. dir: also reads each cluster as directory
-    // entries (subdirectories are queued). False only if reading failed or
-    // memory ran out; problems with the chain are reported and end it.
-    // *clean: it reached its end marker without a problem.
+    // Marks a chain's clusters as used and, for a folder, reads its entries.
+    // Problems are reported and end the walk; it only returns false on read
+    // or memory failures. *clean is set if the chain ended normally.
     bool FollowChain(uint32_t first, const char *path, bool dir, uint64_t *count, bool *clean = NULL)
     {
         const uint32_t limit = (uint32_t)m_result->layout.cluster_limit;
@@ -619,7 +621,7 @@ private:
 
     bool CheckEntry(const FatxDirent &entry, const char *path, uint64_t dirent_offset)
     {
-        // Printable for the messages; invalid characters become '?'
+        // Make it printable for messages
         char name[FATX_MAX_NAME_LENGTH + 1];
         bool valid_name = true;
         for (unsigned int i = 0; i < entry.name_length; i++)
@@ -698,7 +700,7 @@ private:
         return ok;
     }
 
-    // Two entries with the same name (the Xbox ignores case) in one directory
+    // Reports duplicate names (the Xbox ignores case)
     bool AddName(const FatxDirent &entry, const char *full)
     {
         for (uint32_t i = 0; i < m_name_count; i++)
@@ -738,7 +740,7 @@ private:
         return true;
     }
 
-    // Takes path (freed when done)
+    // Takes ownership of path
     bool PushDir(uint32_t first_cluster, char *path)
     {
         if (m_pending_count == m_pending_capacity)
@@ -760,7 +762,7 @@ private:
         return true;
     }
 
-    // Depth first, with a list instead of recursion (the Xbox stack is small)
+    // Depth first, without recursion (the Xbox stack is small)
     bool WalkDirectories()
     {
         char *root = (char *)malloc(1);
@@ -827,20 +829,20 @@ private:
     FatxProgress *m_progress;
     int m_last_percent;
 
-    unsigned char *m_referenced; // A bit per cluster reached from the root
+    unsigned char *m_referenced; // One bit per cluster reached from the root
     unsigned char *m_fat_chunk;
     uint64_t m_fat_chunk_offset; // In the FAT
     uint32_t m_fat_chunk_length;
     bool m_fat_chunk_valid;
-    bool m_fat_dirty;     // Changed by SetFat(), not written yet
-    FatxDevice *m_writer; // Repair only, NULL for a dry run
+    bool m_fat_dirty;     // Holds unwritten SetFat() changes
+    FatxDevice *m_writer; // NULL unless repairing
     bool m_write_failed;
-    unsigned char *m_cluster; // The directory cluster being read
+    unsigned char *m_cluster; // Folder cluster being read
 
     PendingDir *m_pending;
     uint32_t m_pending_count;
     uint32_t m_pending_capacity;
-    NameEntry *m_names; // In the directory being read
+    NameEntry *m_names; // Names in the current folder
     uint32_t m_name_count;
     uint32_t m_name_capacity;
 
@@ -851,7 +853,7 @@ private:
 
     bool m_out_of_memory;
     uint64_t m_referenced_count;
-    int m_check_share; // Of the progress, see ShareProgressWithRepair()
+    int m_check_share; // See ShareProgressWithRepair()
     bool m_wrote;
 };
 
@@ -862,6 +864,130 @@ bool FatxCheck(FatxReader &reader, uint64_t partition_bytes, FatxCheckResult *re
     memset(result, 0, sizeof(*result));
     Checker checker(reader, partition_bytes, result, progress);
     return checker.Run();
+}
+
+namespace
+{
+
+// Counts used entries in a small range of the FAT, and whether it's all 0
+bool scan_fat_entries(FatxReader &reader, const FatxLayout &layout, uint64_t first, uint64_t limit, uint64_t *used,
+                      bool *all_zero)
+{
+    *used = 0;
+    *all_zero = true;
+    if (first >= limit)
+    {
+        return true;
+    }
+
+    const uint64_t begin = first * layout.bytes_per_entry;
+    const uint64_t end = limit * layout.bytes_per_entry;
+    const uint64_t read_begin = begin - begin % HDD_SECTOR_SIZE;
+    const uint64_t read_end = (end + HDD_SECTOR_SIZE - 1) / HDD_SECTOR_SIZE * HDD_SECTOR_SIZE;
+    unsigned char *buffer = (unsigned char *)malloc((size_t)(read_end - read_begin));
+    if (buffer == NULL || !reader.Read(FATX_HEADER_BYTES + read_begin, buffer, (uint32_t)(read_end - read_begin)))
+    {
+        free(buffer);
+        return false;
+    }
+
+    for (uint64_t byte = begin; byte < end; byte += layout.bytes_per_entry)
+    {
+        const unsigned char *entry = buffer + (byte - read_begin);
+        uint32_t value;
+        if (layout.bytes_per_entry == 2)
+        {
+            uint16_t value16;
+            memcpy(&value16, entry, 2);
+            value = (value16 >= 0xFFF0) ? (0xFFFF0000u | value16) : value16;
+        }
+        else
+        {
+            memcpy(&value, entry, 4);
+        }
+        *all_zero = *all_zero && value == 0;
+        if (value != FATX_FAT_FREE && value != FATX_FAT_BAD)
+        {
+            (*used)++;
+        }
+    }
+    free(buffer);
+    return true;
+}
+
+} // namespace
+
+bool FatxCheckResize(FatxReader &reader, uint64_t old_lba_size, uint64_t new_lba_size, FatxResizeResult *resize,
+                     FatxProgress *progress)
+{
+    memset(resize, 0, sizeof(*resize));
+    resize->status = FATX_RESIZE_NOT_CHECKED;
+
+    unsigned char header[HDD_SECTOR_SIZE];
+    if (!reader.Read(0, header, sizeof(header)))
+    {
+        return false;
+    }
+    uint32_t signature, sectors_per_cluster;
+    memcpy(&signature, header + FATX_SIGNATURE_OFFSET, 4);
+    memcpy(&sectors_per_cluster, header + FATX_SECTORS_PER_CLUSTER_OFFSET, 4);
+    if (signature == FATX_RESIZING_SIGNATURE)
+    {
+        return false; // An unfinished resize must be finished first
+    }
+    if (signature != FATX_signature)
+    {
+        resize->status = FATX_RESIZE_NO_FILE_SYSTEM;
+        return false;
+    }
+    if (sectors_per_cluster == 0 || (sectors_per_cluster & (sectors_per_cluster - 1)) != 0 || sectors_per_cluster > 2048)
+    {
+        return false;
+    }
+    resize->cluster_bytes = sectors_per_cluster * HDD_SECTOR_SIZE;
+
+    FatxInPlaceResizeRange(old_lba_size, resize->cluster_bytes, &resize->min_lba, &resize->max_lba);
+    if (new_lba_size < resize->min_lba || new_lba_size > resize->max_lba)
+    {
+        resize->status = FATX_RESIZE_OUT_OF_RANGE;
+        return false;
+    }
+
+    const FatxLayout before = FatxLayoutFor(old_lba_size, resize->cluster_bytes);
+    const FatxLayout after = FatxLayoutFor(new_lba_size, resize->cluster_bytes);
+    uint64_t used;
+    bool all_zero;
+
+    if (after.cluster_limit >= before.cluster_limit)
+    {
+        // The new clusters' entries are in the FAT's unused tail, which
+        // should be all zeros (free)
+        if (!scan_fat_entries(reader, before, before.cluster_limit, after.cluster_limit, &used, &all_zero))
+        {
+            return false;
+        }
+        resize->status = all_zero ? FATX_RESIZE_OK : FATX_RESIZE_FAT_NOT_CLEAN;
+        return all_zero;
+    }
+
+    // Shrinking: only trust "free" after a clean check
+    FatxCheck(reader, old_lba_size * HDD_SECTOR_SIZE, &resize->check, progress);
+    if (resize->check.status != FATX_CHECK_DONE)
+    {
+        return false;
+    }
+    if (resize->check.errors > 0)
+    {
+        resize->status = FATX_RESIZE_HAS_ERRORS;
+        return false;
+    }
+    if (!scan_fat_entries(reader, before, after.cluster_limit, before.cluster_limit, &used, &all_zero))
+    {
+        return false;
+    }
+    resize->clusters_in_use = used;
+    resize->status = (used == 0) ? FATX_RESIZE_OK : FATX_RESIZE_CLUSTERS_IN_USE;
+    return used == 0;
 }
 
 bool FatxRepair(FatxDevice &device, uint64_t partition_bytes, FatxRepairResult *repair, bool write, FatxProgress *progress)

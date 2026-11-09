@@ -4,6 +4,7 @@
 #include <Xtl.h>
 #include "partition.hpp"
 #include "fatx_check.hpp"
+#include "fatx_resize.hpp"
 #include "Undocumented.h"
 #include "ui.h"
 #include "layout.h"
@@ -47,6 +48,8 @@ struct DriveInfo
     ULONGLONG native_sectors;      // Independent of the BIOS
     unsigned int physical_sector_size;
     bool physical_4k;              // 512e drive
+    unsigned int rotation_rate;    // 1: SSD, 0: not reported, else rpm
+    bool trim;                     // Drive supports TRIM (the Xbox can't send it)
 };
 
 enum BackupStatus
@@ -56,7 +59,7 @@ enum BackupStatus
     BACKUP_FOUND,
     BACKUP_FOUND_LEGACY,  // At the old location (last sector) on a 512e drive
     BACKUP_OVERLAPPED,    // The last partition covers the backup sector
-    BACKUP_OVERLAPPED_MATCH // Covered, but the table there matches the main one
+    BACKUP_OVERLAPPED_MATCH // Covered, but holds a valid copy of the table
 };
 
 // RunMenu() results besides the selected item
@@ -99,8 +102,12 @@ struct EditView
     FLOAT bar_y;
 };
 
+struct FsckJob; // src/app_fsck.cpp
+
 class App
 {
+    friend class XboxResizeTable; // Writes the table from a worker thread
+
 public:
     App();
     ~App();
@@ -127,12 +134,14 @@ private:
     void FadeIn();
     void FadeOut();
 
-    void ShowStatus(LPCWSTR message, Color color);
     void ShowMessage(LPCWSTR title, Color title_color, LPCWSTR message);
     // A one line window ("Saving settings...") around slow work: open it, do
     // the work, close it with what OpenBusyWindow returned
     DWORD OpenBusyWindow(LPCWSTR message);
     void CloseBusyWindow(LPCWSTR message, DWORD opened);
+    // Runs slow work on a worker thread behind the busy window. percent, if
+    // given, is shown after the message.
+    void RunWithBusyWindow(LPTHREAD_START_ROUTINE routine, LPVOID parameter, LPCWSTR message, volatile LONG *percent = NULL);
     void DrawBusyWindow(LPCWSTR message);
     void BusyWindowBox(int *top, int *bottom);
     void DisplaySystemInfo();
@@ -144,7 +153,8 @@ private:
     bool IsBackupTableUsable();
     void CheckForV4TableOnOldBios();
     void WarnUnalignedPartitions();
-    bool ConfirmFormatWarning(bool format_changed);
+    // kept, reason, moved: from FindResizesKeepingData(), or NULL
+    bool ConfirmFormatWarning(bool format_changed, const bool *kept = NULL, LPCWSTR reason = NULL, const bool *moved = NULL);
     bool DisplayNoInfo();
     void CheckTableStatus();
     void RunStartupChecks();
@@ -168,10 +178,10 @@ private:
     void UndoAllChanges();
 
     void WarnBackupOverlapped();
-    // Covered but matching: shrink the last partition by 4 KB to clear it.
-    // False if that isn't possible (nothing was asked).
+    // Offers the 4 KB shrink that uncovers a matching backup. False if it
+    // couldn't be offered.
     bool OfferShrinkForBackup();
-    // Its FATX layout stays and the 4 KB it loses holds no used cluster
+    // Whether the 4 KB shrink is harmless to the file system
     bool ShrinkKeepsData(int partition);
     // Called with the selected item at the start and whenever it changes
     typedef void (App::*MenuPreview)(int item);
@@ -222,15 +232,33 @@ private:
     void DoWriteTable();
     void DoFormatAll();
     void DoFormatOne();
-    // FATX check of the selected partition, or of one partition, offering
-    // the safe repairs when they apply (src/app_fsck.cpp)
+    // File system check, offering repairs when possible (src/app_fsck.cpp)
     void DoCheckFileSystem();
     void CheckFileSystem(int partition);
-    // Check (write false: a dry run of the repairs) or repair, on a thread
-    // behind the busy window
+    // Check or repair on a worker thread (write false: dry run)
     void RunFsckJob(int partition, bool write, LPCWSTR verb, FatxRepairResult *repair);
+    // Whether a table change alone can resize it to new_lba_size
+    void RunResizeCheckJob(int partition, ULONGLONG new_lba_size, FatxResizeResult *resize);
+    void RunFsckThread(int partition, LPCWSTR verb, FsckJob &job);
     bool ShowCheckResult(int partition, const FatxCheckResult &result, LPCWSTR extra_line, bool offer_repair);
     void RepairFileSystem(int partition, const FatxRepairResult &plan);
+    // Finds resized partitions that can keep their data, either by a table
+    // change (kept) or by moving clusters (moved). reason explains the first
+    // one that can't.
+    int FindResizesKeepingData(bool kept[XboxPartitionTableEntryCount], bool moved[XboxPartitionTableEntryCount],
+                               wchar_t *reason, size_t reason_count);
+    // Resize with moves (write false: check only), and resume, on a worker thread
+    void RunMoveResizeJob(int partition, ULONGLONG new_lba_size, bool write, FatxMoveResult *move, bool write_main);
+    void RunResumeJob(int partition, FatxMoveResult *move, bool write_main);
+    bool RunMoveResizes(const bool moved[XboxPartitionTableEntryCount], const ULONGLONG new_sizes[XboxPartitionTableEntryCount],
+                        bool shrinking, bool write_main);
+    // Writes the edited table with those resizes. explained: an error was already shown.
+    bool WriteTableWithResizes(const bool kept[XboxPartitionTableEntryCount], const bool moved[XboxPartitionTableEntryCount],
+                               bool *backup_written, bool *main_written, bool *explained);
+    // At startup: offers to finish interrupted resizes
+    void OfferFinishResizes();
+    // After writing: unmount so the kernel remounts them at the new size
+    void UnmountResized(const bool kept[XboxPartitionTableEntryCount]);
     bool format_partition(const int i);
 
     ULONGLONG get_hdd_size();
@@ -240,11 +268,21 @@ private:
     unsigned int get_cluster_size_from_partition(ANSI_STRING part);
     void RefreshClusterSizes();
     bool CheckIfPartitionTableChanged();
-    int GetChangedPartitions(bool changed[XboxPartitionTableEntryCount], bool existing_only);
+    bool FormatKeptLine(const bool kept[XboxPartitionTableEntryCount], wchar_t *out, size_t out_count);
+    bool FormatMovedLine(const bool moved[XboxPartitionTableEntryCount], wchar_t *out, size_t out_count);
+    bool KeepsLaunchPartition(const bool *kept) const;
+    // kept: partitions to leave out (see FindResizesKeepingData)
+    int GetChangedPartitions(bool changed[XboxPartitionTableEntryCount], bool existing_only, const bool *kept = NULL);
     void FormatPartitionList(const bool marked[XboxPartitionTableEntryCount], wchar_t *out, size_t out_count);
     LARGE_INTEGER get_backup_partition_offset_bytes();
     // With a Titan BIOS, asks whether to write sector 0 too (*main_written)
     bool write_partition_tables(const XboxPartitionTable table, bool *backup_written = NULL, bool *main_written = NULL);
+    // The steps of write_partition_tables(). write_tables_raw() has no dialogs
+    // or editor updates, so a worker thread can call it.
+    bool prepare_table(const XboxPartitionTable &table_in, XboxPartitionTable *table, bool *backup_possible);
+    bool ChooseTablesToWrite(bool backup_possible, bool *write_main);
+    bool write_tables_raw(const XboxPartitionTable &table, bool write_main, bool *backup_written);
+    void reload_after_write(const XboxPartitionTable &written);
     bool erase_partition_tables();
     XboxPartitionTable read_hdd_partition_table(LARGE_INTEGER offset);
     bool read_hdd_sector(ULONGLONG lba, BYTE *sector);

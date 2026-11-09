@@ -498,7 +498,49 @@ void App::DrawEditPanel(const EditView &view)
     }
     else if (moved)
     {
-        swprintf(details[4].value, L"changed, unreadable until formatted");
+        // With the same start, some sizes keep the data. Free space and errors
+        // are checked when writing.
+        const ULONGLONG old_size = m_pTableOriginal->GetPartitionSize(part);
+        const uint32_t cluster_bytes = m_ClusterSizes[part] * 1024;
+        const bool formatted = start == m_pTableOriginal->GetPartitionStart(part) && cluster_bytes != 0;
+        const FatxResizeKind kind = formatted ? FatxClassifyResize(old_size, cluster_bytes, size) : FATX_RESIZE_KIND_FORMAT;
+
+        if (kind == FATX_RESIZE_KIND_IN_PLACE)
+        {
+            swprintf(details[4].value, size > old_size ? L"resized, keeps its data" : L"resized, keeps its data if its end is free");
+            details[4].color = COLOR_GREEN;
+        }
+        else if (kind == FATX_RESIZE_KIND_MOVES)
+        {
+            swprintf(details[4].value, L"resized, keeps its data (clusters move)");
+            details[4].color = COLOR_GREEN;
+        }
+        else if (formatted)
+        {
+            // Suggest the nearest sizes that work
+            const ULONGLONG below = FatxMoveResizeTarget(old_size, cluster_bytes, size);
+            const ULONGLONG above = FatxMoveResizeNextUp(old_size, cluster_bytes, size);
+            wchar_t below_size[32];
+            wchar_t above_size[32];
+            format_human_size(below, below_size);
+            format_human_size(above, above_size);
+            if (below != 0 && above != 0)
+            {
+                swprintf(details[4].value, L"format needed (data kept: %s or %s)", below_size, above_size);
+            }
+            else if (below != 0 || above != 0)
+            {
+                swprintf(details[4].value, L"format needed (data kept: %s)", below != 0 ? below_size : above_size);
+            }
+            else
+            {
+                swprintf(details[4].value, L"changed, unreadable until formatted");
+            }
+        }
+        else
+        {
+            swprintf(details[4].value, L"changed, unreadable until formatted");
+        }
     }
     else
     {

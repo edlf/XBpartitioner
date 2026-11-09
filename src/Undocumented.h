@@ -1177,8 +1177,8 @@ IoDeleteSymbolicLink(
 	);
 
 // IoDismountVolumeByName:
-// Unmounts the file system on a device (e.g. "\Device\Harddisk0\Partition6"),
-// dropping its cached FAT and directories. The next access mounts it again.
+// Unmounts a volume (e.g. "\Device\Harddisk0\Partition6") and drops its
+// cache. It's mounted again on next access.
 NTSYSAPI
 EXPORTNUM(91)
 NTSTATUS

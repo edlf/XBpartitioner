@@ -39,7 +39,7 @@ bool App::SystemInfoNeedsAttention()
 // Shown at startup when SystemInfoNeedsAttention(), and from the menu
 void App::DisplaySystemInfo()
 {
-    InfoRow rows[14]; // At most 12 are added
+    InfoRow rows[14]; // At most 13 are added
     int row_count = 0;
 
 #define ADD_INFO_ROW(row_label, row_color) \
@@ -68,6 +68,28 @@ void App::DisplaySystemInfo()
             swprintf(rows[row_count].value, L"%u bytes", HDD_SECTOR_SIZE);
         }
         ADD_INFO_ROW(L"Sector size", COLOR_WHITE);
+
+        // The Xbox can't send TRIM; fatxtool can
+        Color type_color = COLOR_WHITE;
+        if (m_Drive.trim)
+        {
+            swprintf(rows[row_count].value, L"%s, TRIM: fatxtool trim on a PC",
+                     m_Drive.rotation_rate == 1 ? L"SSD" : L"supports TRIM");
+            type_color = COLOR_GREEN;
+        }
+        else if (m_Drive.rotation_rate == 1)
+        {
+            swprintf(rows[row_count].value, L"SSD, no TRIM");
+        }
+        else if (m_Drive.rotation_rate >= 0x0401 && m_Drive.rotation_rate < 0xFFFF)
+        {
+            swprintf(rows[row_count].value, L"hard drive (%u rpm)", m_Drive.rotation_rate);
+        }
+        else
+        {
+            swprintf(rows[row_count].value, L"not reported");
+        }
+        ADD_INFO_ROW(L"Drive type", type_color);
     }
     else
     {
@@ -215,7 +237,7 @@ void App::DisplayAbout()
     ADD_ABOUT_ROW(L"Based on", L"the original XBpartitioner 1.3");
     ADD_ABOUT_ROW(L"Format fix", L"PrometheOS");
     ADD_ABOUT_ROW(L"Kernel defs", L"everlame, Team Evox, Woodoo");
-    ADD_ABOUT_ROW(L"LBA48", L"oz_paulb/Cerbios/gaasedelen");
+    ADD_ABOUT_ROW(L"LBA48", L"oz_paulb/Cerbios/doom");
     ADD_ABOUT_ROW(L"Built with", L"RXDK by Team Resurgent");
 
 #undef ADD_ABOUT_ROW

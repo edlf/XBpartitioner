@@ -69,14 +69,23 @@
   <ItemGroup>
     <ClCompile Include="partition_tests.cpp" />
     <ClCompile Include="fatx_tests.cpp" />
+    <ClCompile Include="fatx_resize_tests.cpp" />
+    <ClCompile Include="fatx_recluster_tests.cpp" />
+    <ClCompile Include="fatx_trim_tests.cpp" />
     <ClCompile Include="..\src\partition.cpp" />
     <ClCompile Include="..\src\fatx_check.cpp" />
+    <ClCompile Include="..\src\fatx_resize.cpp" />
     <ClCompile Include="..\tools\fatxtool\fatx_writer.cpp" />
+    <ClCompile Include="..\tools\fatxtool\fatx_recluster.cpp" />
+    <ClCompile Include="..\tools\fatxtool\fatx_trim.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\src\partition.hpp" />
+    <ClInclude Include="test_images.hpp" />
     <ClInclude Include="..\src\fatx_check.hpp" />
+    <ClInclude Include="..\src\fatx_resize.hpp" />
     <ClInclude Include="..\tools\fatxtool\fatx_writer.hpp" />
+    <ClInclude Include="..\tools\fatxtool\fatx_recluster.hpp" />
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />

@@ -1,9 +1,8 @@
 #ifndef FATX_WRITER_H_
 #define FATX_WRITER_H_
 
-// Makes FATX partition images on the PC: formats them and adds directories
-// and files. Used by fatxtool and the tests (which then break them on
-// purpose). Not for the Xbox: it keeps the whole FAT in memory.
+// Creates and edits FATX images on the PC, for fatxtool and the tests. Keeps
+// the whole FAT in memory.
 
 #include "fatx_check.hpp"
 #include <vector>
@@ -22,7 +21,7 @@ private:
     std::vector<unsigned char> m_data;
 };
 
-// Where a file's contents come from, read in order
+// Supplies a file's contents in order
 class FatxSource
 {
 public:
@@ -33,29 +32,34 @@ public:
 class FatxWriter
 {
 public:
-    // cluster_bytes 0: what XBpartitioner picks for the size
+    // cluster_bytes 0 picks XBpartitioner's size
     FatxWriter(FatxDevice &device, uint64_t partition_bytes, uint32_t cluster_bytes = 0);
 
-    // A new empty file system; Load() for one that is already there
+    // Format() creates a file system; Load() opens an existing one
     bool Format(uint32_t serial = 0x12345678);
     bool Load();
-    // Writes the FAT back; call it when done
+    // Writes the FAT; call when done
     bool Flush();
 
     uint32_t RootCluster() const { return m_root; }
     uint32_t ClusterBytes() const { return m_cluster_bytes; }
     const FatxLayout &Layout() const { return m_layout; }
+    // Where allocation starts searching (tests use it to place files)
+    void SetNextFree(uint32_t cluster) { m_next_free = cluster; }
     uint64_t ClusterOffset(uint32_t cluster) const;
 
-    // parent: a directory's first cluster. *cluster: the new one's.
+    // parent is a folder's first cluster
     bool MakeDirectory(uint32_t parent, const char *name, uint32_t *cluster = NULL);
     bool AddFile(uint32_t parent, const char *name, uint32_t size, FatxSource &source, uint32_t *first_cluster = NULL);
     bool AddFile(uint32_t parent, const char *name, const void *data, uint32_t size, uint32_t *first_cluster = NULL);
+    // Copy name, attributes, times and size from another entry
+    bool MakeDirectory(uint32_t parent, const FatxDirent &like, uint32_t *cluster = NULL);
+    bool AddFile(uint32_t parent, const FatxDirent &like, FatxSource &source, uint32_t *first_cluster = NULL);
 
-    // Raw access, for breaking images on purpose. 32 bit values, see FATX_FAT_END.
+    // Raw access, for breaking images in tests
     uint32_t GetFat(uint32_t cluster) const;
     void SetFat(uint32_t cluster, uint32_t value);
-    // The index-th used entry of a directory (deleted ones count), false if none
+    // The index-th entry of a folder, counting deleted ones
     bool GetEntry(uint32_t dir, uint32_t index, FatxDirent *entry, uint64_t *offset = NULL);
     bool SetEntry(uint64_t offset, const FatxDirent &entry);
 
@@ -64,13 +68,15 @@ private:
     bool FillCluster(uint32_t cluster, unsigned char value);
     bool AddEntry(uint32_t parent, const FatxDirent &entry);
     bool MakeEntry(const char *name, unsigned char attributes, uint32_t first, uint32_t size, FatxDirent *entry);
+    // Writes data to a new chain (*first is 0 for empty files)
+    bool WriteChain(uint32_t size, FatxSource &source, uint32_t *first);
 
     FatxDevice &m_device;
     uint64_t m_partition_bytes;
     uint32_t m_cluster_bytes;
     FatxLayout m_layout;
     uint32_t m_root;
-    uint32_t m_next_free; // Where the search for a free cluster starts
+    uint32_t m_next_free; // Allocation search start
     std::vector<uint32_t> m_fat;
 };
 

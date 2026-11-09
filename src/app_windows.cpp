@@ -143,15 +143,6 @@ void App::FadeOut()
     m_Ui.EndFrame();
 }
 
-// Status line message; doesn't wait for a button
-void App::ShowStatus(LPCWSTR message, Color color)
-{
-    m_Ui.BeginFrame();
-    DrawMainScreen();
-    m_Ui.Text(FONT_TEXT, message, m_Layout->margin_x, m_Layout->status_y, color);
-    m_Ui.EndFrame();
-}
-
 void App::ShowMessage(LPCWSTR title, Color title_color, LPCWSTR message)
 {
     RunDialog(title, title_color, &message, 1, L"OK", NULL);
@@ -192,6 +183,43 @@ DWORD App::OpenBusyWindow(LPCWSTR message)
     AnimatePanelOpen(m_Layout->dialog_left, top, m_Layout->dialog_right, bottom);
     DrawBusyWindow(message);
     return GetTickCount();
+}
+
+// Same as the main thread's stack (imagebld /stack)
+static const DWORD BUSY_THREAD_STACK = 64 * 1024;
+
+// Runs routine on a worker thread and keeps drawing the busy window until it
+// finishes, so the background keeps moving
+void App::RunWithBusyWindow(LPTHREAD_START_ROUTINE routine, LPVOID parameter, LPCWSTR message, volatile LONG *percent)
+{
+    const DWORD opened = OpenBusyWindow(message);
+
+    HANDLE thread = CreateThread(NULL, BUSY_THREAD_STACK, routine, parameter, 0, NULL);
+    if (thread != NULL)
+    {
+        wchar_t text[120];
+        while (WaitForSingleObject(thread, 0) == WAIT_TIMEOUT)
+        {
+            if (percent != NULL)
+            {
+                _snwprintf(text, ARRAY_COUNT(text), L"%s %d%%", message, (int)*percent);
+                text[ARRAY_COUNT(text) - 1] = L'\0';
+                DrawBusyWindow(text);
+            }
+            else
+            {
+                DrawBusyWindow(message);
+            }
+        }
+        CloseHandle(thread);
+    }
+    else
+    {
+        // No thread available: run it here and let the screen pause
+        routine(parameter);
+    }
+
+    CloseBusyWindow(message, opened);
 }
 
 void App::CloseBusyWindow(LPCWSTR message, DWORD opened)

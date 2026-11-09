@@ -90,6 +90,8 @@ static_assert(sizeof(XB_ATA_PASS_THROUGH) == 16, "XB_ATA_PASS_THROUGH layout is 
 #define ATA_ID_COMMAND_SET_2_WORD 83      // bit 10: 48 bit addressing supported
 #define ATA_ID_LBA48_SECTORS_WORD 100     // 4 words
 #define ATA_ID_SECTOR_SIZE_WORD 106       // physical/logical sector size
+#define ATA_ID_DATA_SET_MANAGEMENT_WORD 169 // Bit 0: TRIM
+#define ATA_ID_ROTATION_RATE_WORD 217     // 1: SSD, 0: not reported, else rpm
 
 // ATA strings store two characters per word, high byte first, padded with spaces
 static void ata_string(const USHORT *words, int word_count, wchar_t *out)
@@ -191,6 +193,11 @@ void App::read_drive_identify()
     }
 
     m_Drive.physical_4k = m_Drive.physical_sector_size >= 4096;
+
+    // This is the drive's answer even through an IDE adapter, which may not
+    // pass TRIM on
+    m_Drive.rotation_rate = identify[ATA_ID_ROTATION_RATE_WORD];
+    m_Drive.trim = (identify[ATA_ID_DATA_SET_MANAGEMENT_WORD] & 0x0001) != 0;
 }
 
 bool App::read_lba48_info(XboxPartitionTable *p_table)
@@ -354,21 +361,14 @@ LARGE_INTEGER App::get_backup_partition_offset_bytes()
     return byte_pos;
 }
 
-// The main table and, when possible, the backup (*backup_written)
-bool App::write_partition_tables(const XboxPartitionTable table_in, bool *backup_written, bool *main_written)
+// Prepares a table for writing and says whether a backup can be written.
+// Returns false if it must not be written; callers explain why beforehand
+// (see RefuseUnwritableTable).
+bool App::prepare_table(const XboxPartitionTable &table_in, XboxPartitionTable *table, bool *backup_possible)
 {
-    if (backup_written != NULL)
-    {
-        *backup_written = false;
-    }
-    if (main_written != NULL)
-    {
-        *main_written = false;
-    }
-
     // Sector 0 says how its LBAs are stored: v4, or v3 (also with force_lba48_v3)
-    XboxPartitionTable table = table_in;
-    table.Version = XboxPartitionTableManipulator::VersionFor(m_FullLba48);
+    *table = table_in;
+    table->Version = XboxPartitionTableManipulator::VersionFor(m_FullLba48);
 
     // Without a known disk size the layout can't be trusted
     if (m_TotalHddSectors == 0)
@@ -376,11 +376,7 @@ bool App::write_partition_tables(const XboxPartitionTable table_in, bool *backup
         return false;
     }
 
-    // No backup without an lba48 patch (the size is the 28 bit one), without
-    // room for it, or when the last partition covers its sector
-    const XboxPartitionTableManipulator to_write(table, m_TotalHddSectors, m_FullLba48, m_Physical4k);
-
-    // Never written; the menu actions explain why first (RefuseUnwritableTable)
+    const XboxPartitionTableManipulator to_write(*table, m_TotalHddSectors, m_FullLba48, m_Physical4k);
     int reserved = 0;
     int first = 0;
     int second = 0;
@@ -388,30 +384,55 @@ bool App::write_partition_tables(const XboxPartitionTable table_in, bool *backup
     {
         return false;
     }
-    const bool write_backup = (m_pKernelTable != NULL) && (m_pTable->GetBackupTableLba() != 0) && !to_write.OverlapsBackupTable();
 
-    // A Titan BIOS only uses the backup, in its own version; sector 0 only if
-    // the user wants it there too, for Cerbios
+    // No backup without an lba48 patch (the size is the 28 bit one), without
+    // room for it, or when the last partition covers its sector
+    *backup_possible = (m_pKernelTable != NULL) && (to_write.GetBackupTableLba() != 0) && !to_write.OverlapsBackupTable();
+    return true;
+}
+
+// A Titan BIOS only reads the backup, so ask whether sector 0 should be
+// written too (for Cerbios). False if nothing the BIOS reads can be written.
+bool App::ChooseTablesToWrite(bool backup_possible, bool *write_main)
+{
+    *write_main = true;
+    if (!m_TitanBios)
+    {
+        return true;
+    }
+    static const LPCWSTR lines[] = {
+        L"Titan patched BIOSes only use the backup table.",
+        L"Also write it to sector 0, for compatibility with",
+        L"Cerbios and other BIOSes that use the table there?",
+    };
+    *write_main = RunDialog(L"Titan BIOS", COLOR_WHITE, lines, ARRAY_COUNT(lines), L"Sector 0 too", L"Backup only");
+    return backup_possible || *write_main;
+}
+
+// Writes the tables to disk and to the kernel, without dialogs or editor
+// updates, so a worker thread can call it. Reload the editor afterwards on
+// the main thread.
+bool App::write_tables_raw(const XboxPartitionTable &table_in, bool write_main, bool *backup_written)
+{
+    *backup_written = false;
+    XboxPartitionTable table;
+    bool write_backup;
+    if (!prepare_table(table_in, &table, &write_backup) || (!write_backup && !write_main))
+    {
+        return false;
+    }
+
     XboxPartitionTable backup = table;
-    bool write_main = true;
     if (m_TitanBios)
     {
         backup.Version = XBOX_TABLE_VERSION_TITAN;
-        static const LPCWSTR lines[] = {
-            L"Titan patched BIOSes only use the backup table.",
-            L"Also write it to sector 0, for compatibility with",
-            L"Cerbios and other BIOSes that use the table there?",
-        };
-        write_main = RunDialog(L"Titan BIOS", COLOR_WHITE, lines, ARRAY_COUNT(lines), L"Sector 0 too", L"Backup only");
-        if (!write_backup && !write_main)
-        {
-            return false; // Nothing the BIOS would see
-        }
     }
 
+    const XboxPartitionTableManipulator to_write(table, m_TotalHddSectors, m_FullLba48, m_Physical4k);
     LARGE_INTEGER RWOffset;
     RWOffset.QuadPart = 0;
-    LARGE_INTEGER RWOffset_backup = get_backup_partition_offset_bytes();
+    LARGE_INTEGER RWOffset_backup;
+    RWOffset_backup.QuadPart = (ULONGLONG)to_write.GetBackupTableLba() * HDD_SECTOR_SIZE;
 
     BYTE PartSector[HDD_SECTOR_SIZE]; // One sector, see partition.hpp
     BYTE BackupSector[HDD_SECTOR_SIZE];
@@ -430,7 +451,8 @@ bool App::write_partition_tables(const XboxPartitionTable table_in, bool *backup
     RtlInitAnsiString(&a_path, "\\Device\\Harddisk0\\Partition0");
     InitializeObjectAttributes(&ObjectAttributes, &a_path, OBJ_CASE_INSENSITIVE, NULL);
     IO_STATUS_BLOCK IoStatusBlock;
-    NTSTATUS status = NtOpenFile(&hDisk, SYNCHRONIZE | GENERIC_ALL, &ObjectAttributes, &IoStatusBlock, 0, FILE_SYNCHRONOUS_IO_ALERT);
+    NTSTATUS status = NtOpenFile(&hDisk, SYNCHRONIZE | GENERIC_ALL, &ObjectAttributes, &IoStatusBlock,
+                                 FILE_SHARE_READ | FILE_SHARE_WRITE, FILE_SYNCHRONOUS_IO_ALERT);
 
     // Backup first: if it fails nothing has been touched yet
     if (status == 0 && write_backup)
@@ -443,12 +465,10 @@ bool App::write_partition_tables(const XboxPartitionTable table_in, bool *backup
         status = NtWriteFile(hDisk, NULL, NULL, NULL, &IoStatusBlock, (PVOID)PartSector, HDD_SECTOR_SIZE, &RWOffset);
     }
 
-    // The kernel and the editor need the new table too (Titan: the one it reads)
+    // The kernel gets the copy it reads; m_TableKernel catches up in reload_lba48()
     if (status == 0 && m_pKernelTable)
     {
-        const XboxPartitionTable &kernel = m_TitanBios ? backup : table;
-        memcpy(m_pKernelTable, &kernel, sizeof(XboxPartitionTable));
-        memcpy(&m_TableKernel, &kernel, sizeof(XboxPartitionTable));
+        memcpy(m_pKernelTable, m_TitanBios ? &backup : &table, sizeof(XboxPartitionTable));
     }
 
     if (hDisk != NULL)
@@ -456,20 +476,13 @@ bool App::write_partition_tables(const XboxPartitionTable table_in, bool *backup
         NtClose(hDisk);
     }
 
-    if (status != 0)
-    {
-        return false;
-    }
+    *backup_written = (status == 0) && write_backup;
+    return status == 0;
+}
 
-    if (backup_written != NULL)
-    {
-        *backup_written = write_backup;
-    }
-    if (main_written != NULL)
-    {
-        *main_written = write_main;
-    }
-
+// Refreshes the editor, the on-disk tables and the cluster sizes after a write
+void App::reload_after_write(const XboxPartitionTable &written)
+{
     if (m_pKernelTable)
     {
         // Rebuilds both editor tables from the updated kernel table
@@ -479,8 +492,8 @@ bool App::write_partition_tables(const XboxPartitionTable table_in, bool *backup
     {
         // No patch: reload_lba48() would fail, so the written table becomes the
         // baseline here. The kernel only sees it after a reboot.
-        m_pTable->LoadNewTable(table);
-        m_pTableOriginal->LoadNewTable(table);
+        m_pTable->LoadNewTable(written);
+        m_pTableOriginal->LoadNewTable(written);
     }
 
     // After the editor tables: reading the backup checks m_pTableOriginal
@@ -491,6 +504,39 @@ bool App::write_partition_tables(const XboxPartitionTable table_in, bool *backup
 
     // Partitions may now point at different sectors
     RefreshClusterSizes();
+}
+
+// The main table and, when possible, the backup (*backup_written)
+bool App::write_partition_tables(const XboxPartitionTable table_in, bool *backup_written, bool *main_written)
+{
+    if (backup_written != NULL)
+    {
+        *backup_written = false;
+    }
+    if (main_written != NULL)
+    {
+        *main_written = false;
+    }
+
+    XboxPartitionTable table;
+    bool backup_possible;
+    bool write_main;
+    bool written_backup;
+    if (!prepare_table(table_in, &table, &backup_possible) || !ChooseTablesToWrite(backup_possible, &write_main) ||
+        !write_tables_raw(table, write_main, &written_backup))
+    {
+        return false;
+    }
+
+    if (backup_written != NULL)
+    {
+        *backup_written = written_backup;
+    }
+    if (main_written != NULL)
+    {
+        *main_written = write_main;
+    }
+    reload_after_write(table);
     return true;
 }
 
@@ -516,7 +562,7 @@ XboxPartitionTable App::read_hdd_partition_table(LARGE_INTEGER offset)
     return table;
 }
 
-// One sector of the whole disk
+// Reads one sector of the disk
 bool App::read_hdd_sector(ULONGLONG lba, BYTE *sector)
 {
     LARGE_INTEGER RWOffset;
@@ -586,9 +632,9 @@ XboxPartitionTable App::read_hdd_backup_partition_table()
     }
     else
     {
-        // Partition data as far as the table knows, but other tools leave a
-        // backup there: a copy of the table in use (sector 0 and the kernel's)
-        // means that block holds no data, see OfferShrinkForBackup()
+        // This sector belongs to a partition, but other tools put a backup
+        // here. If it matches the table in use, the block holds no data
+        // (see OfferShrinkForBackup()).
         table = read_hdd_partition_table(get_backup_partition_offset_bytes());
         if (XboxPartitionTableManipulator::IsTableUsable(table, m_TotalHddSectors) &&
             XboxPartitionTableManipulator::IsTableUsable(m_TableHdd, m_TotalHddSectors) &&

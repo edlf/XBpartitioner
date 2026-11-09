@@ -46,9 +46,12 @@ void App::RunStartupChecks()
         }
     }
 
+    // An interrupted resize leaves a partition unusable, so deal with it early
+    OfferFinishResizes();
+
     WarnUnalignedPartitions();
-    // A matching backup under the last partition can often be kept by a
-    // 4 KB shrink; otherwise (or not possible) the usual warning
+    // A matching backup under the last partition can often be kept with a
+    // 4 KB shrink; otherwise warn as usual
     if (m_BackupStatus != BACKUP_OVERLAPPED_MATCH || !OfferShrinkForBackup())
     {
         WarnBackupOverlapped();
@@ -317,7 +320,7 @@ void App::CheckTableStatus()
 // The last partition covers the backup sector: no backup until that changes
 void App::WarnBackupOverlapped()
 {
-    // Matching: when OfferShrinkForBackup() can't fix it
+    // A matching backup only gets here if OfferShrinkForBackup() couldn't help
     if (m_BackupStatus != BACKUP_OVERLAPPED && m_BackupStatus != BACKUP_OVERLAPPED_MATCH)
     {
         return;
@@ -332,9 +335,9 @@ void App::WarnBackupOverlapped()
     ShowWarning(lines, ARRAY_COUNT(lines));
 }
 
-// The last partition covers the backup sector, but the backup there matches
-// the table in use (another tool put it there), so that 4 KB block holds no
-// data: the partition can give it up and keep its data, no format needed
+// The last partition covers the backup sector, but another tool left a valid
+// backup there, so that 4 KB block holds no data. Shrinking by 4 KB keeps the
+// data and needs no format.
 bool App::OfferShrinkForBackup()
 {
     const int part = m_pTableOriginal->FindBackupShrinkCandidate();
@@ -366,16 +369,16 @@ bool App::OfferShrinkForBackup()
         swprintf(done, backup_written ? L"Partition %d shrunk by 4 KB, backup table written." : L"Partition %d shrunk by 4 KB.", part + 1);
         ShowMessage(L"Done", COLOR_GREEN, done);
 
-        // A mounted volume keeps the old size, and could put a file in the
-        // freed block (where the backup now is) until it's mounted again.
-        // This program's own partition can't be unmounted, but nothing
-        // writes to it: the settings aren't saved once it changed size.
+        // Unmount so the kernel picks up the new size; until then it could
+        // write into the freed block, where the backup now lives. Our own
+        // partition can't be unmounted, but settings stop being saved once
+        // it has changed size, so nothing writes there.
         if (part != m_LaunchPartition)
         {
             IoDismountVolumeByName(&m_PartitionPaths[part]);
         }
 
-        // Shows that its file system still reads as before
+        // Show that the file system still reads fine
         CheckFileSystem(part);
     }
     else
@@ -385,9 +388,9 @@ bool App::OfferShrinkForBackup()
     return true;
 }
 
-// FATX derives its FAT from the partition size, so a size that changes it
-// would make the partition unreadable. The lost 4 KB must also not be part
-// of a cluster in use (the backup there says it isn't; the FAT confirms).
+// Checks the 4 KB shrink is harmless: the FAT size (derived from the
+// partition size) must not change, and the dropped block must not be part
+// of a used cluster.
 bool App::ShrinkKeepsData(int partition)
 {
     const ULONGLONG start = m_pTableOriginal->GetPartitionStart(partition);
@@ -400,14 +403,14 @@ bool App::ShrinkKeepsData(int partition)
     }
 
     FAT_VOLUME_METADATA header;
-    memcpy(&header, sector, HDD_SECTOR_SIZE); // Signature and SectorsPerCluster are at the start
+    memcpy(&header, sector, HDD_SECTOR_SIZE); // The fields needed are in the first sector
     if (header.Signature != FATX_signature)
     {
-        return true; // No file system: no layout to keep
+        return true; // No file system to keep
     }
 
-    // 0 (left by some formatters for big clusters) or garbage: can't check.
-    // Under 4 KB (never on an Xbox) the block would hold several clusters.
+    // Can't check an unknown (0) or odd cluster size. Clusters under 4 KB
+    // don't occur on an Xbox.
     const uint32_t sectors_per_cluster = header.SectorsPerCluster;
     if (sectors_per_cluster < LBA_ALIGNMENT || (sectors_per_cluster & (sectors_per_cluster - 1)) != 0)
     {
@@ -422,14 +425,14 @@ bool App::ShrinkKeepsData(int partition)
         return false;
     }
 
-    // Clusters are at least 4 KB and 4 KB aligned: the block is in one or none
+    // Clusters are at least 4 KB and aligned, so the block is in one cluster or none
     const uint64_t cluster = FatxClusterAt(before, cluster_bytes, (size - LBA_ALIGNMENT) * HDD_SECTOR_SIZE);
     if (cluster == 0)
     {
-        return true; // After the last whole cluster: never used
+        return true; // In the unused tail
     }
 
-    // Its FAT entry: 0 is free. Entries are 2 or 4 bytes, never across sectors.
+    // The cluster must be free (0) in the FAT
     const ULONGLONG entry_byte = start * HDD_SECTOR_SIZE + FATX_HEADER_BYTES + cluster * before.bytes_per_entry;
     if (!read_hdd_sector(entry_byte / HDD_SECTOR_SIZE, sector))
     {

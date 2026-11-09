@@ -6,6 +6,7 @@
 typedef unsigned short uint16_t;
 typedef unsigned int uint32_t;
 typedef unsigned __int64 uint64_t;
+typedef __int64 int64_t;
 
 #define IOCTL_CMD_LBA48_ACCESS 0xcafebabe
 #define IOCTL_SUBCMD_GET_INFO 0
@@ -136,9 +137,8 @@ public:
     // (tables made before the backup moved on 512e drives)
     bool OverlapsBackupTable() const;
     bool OverlapsSector(const uint64_t lba) const;
-    // The partition covering the backup sector when giving up its last 4K
-    // block is enough to clear it (a 4K aligned size, more than one block),
-    // else -1
+    // The partition covering the backup sector, if dropping its last 4K
+    // block would uncover it; otherwise -1
     int FindBackupShrinkCandidate() const;
 
     void SetupPartitionsStock();
@@ -283,21 +283,30 @@ static_assert(sizeof(FAT_VOLUME_METADATA) <= HDD_SECTOR_SIZE * 8, "FAT_VOLUME_ME
 #define ROUND_TO_PAGES(Size)  (((ULONG_PTR)(Size) + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1))
 // Theft over
 
-// The FATX layout the kernel derives from a partition's size: the 4 KB
-// header, then the FAT (2 byte entries under 0xFFF0 clusters, else 4, page
-// rounded), then clusters 1 to cluster_limit - 1
+// The FATX layout the kernel derives from a partition's size: a 4 KB
+// header, the FAT (2 byte entries below 0xFFF0 clusters, otherwise 4,
+// rounded up to 4 KB), then clusters 1 to cluster_limit - 1
 const uint32_t FATX_HEADER_BYTES = 0x1000;
 typedef struct
 {
     uint32_t bytes_per_entry;
     uint64_t bytes_per_fat;
-    uint64_t data_offset;   // Bytes from the partition start to cluster 1
-    uint64_t cluster_limit; // One more than the last cluster's number
+    uint64_t data_offset;   // Where cluster 1 starts
+    uint64_t cluster_limit; // Last cluster number + 1
 } FatxLayout;
 
 FatxLayout FatxLayoutFor(const uint64_t lba_size, const uint32_t cluster_bytes);
-// The cluster holding that byte of the partition, 0 if none (header, FAT,
-// or the unused end after the last whole cluster)
+// The cluster containing a byte offset, or 0 if it's in the header, the FAT
+// or the unused tail
 uint64_t FatxClusterAt(const FatxLayout &layout, const uint32_t cluster_bytes, const uint64_t byte_offset);
+
+// XBpartitioner's cluster size in KB for a partition size: 16 KB up to
+// 256 GB, doubling each time the size doubles
+unsigned int ClusterSizeKbFor(const uint64_t lba_size);
+
+// The size range where the FAT keeps its size, so a resize only needs a
+// table change (capped by ClusterSizeKbFor() when growing). Shrinking also
+// needs the dropped clusters to be free, see FatxCheckResize().
+void FatxInPlaceResizeRange(const uint64_t lba_size, const uint32_t cluster_bytes, uint64_t *min_lba, uint64_t *max_lba);
 
 #endif // PARTITION_H_

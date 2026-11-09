@@ -243,8 +243,7 @@ int XboxPartitionTableManipulator::FindBackupShrinkCandidate() const
             continue;
         }
 
-        // The first one covering it decides: with an overlap there is no
-        // single partition to shrink anyway
+        // Only the first match matters; an overlap leaves nothing sensible to shrink
         if (size <= LBA_ALIGNMENT || !isAlignedTo4k(size) || start + size - LBA_ALIGNMENT > m_backup_table_lba)
         {
             return -1;
@@ -266,8 +265,7 @@ FatxLayout FatxLayoutFor(const uint64_t lba_size, const uint32_t cluster_bytes)
 
     const uint64_t length = lba_size * HDD_SECTOR_SIZE;
 
-    // The FAT has an entry per cluster the whole partition could hold, plus
-    // the reserved first one
+    // One entry per cluster the partition could hold, plus the reserved entry 0
     const uint64_t entries = length / cluster_bytes + 1;
     layout.bytes_per_entry = (entries < 0xFFF0) ? 2 : 4;
     layout.bytes_per_fat = (entries * layout.bytes_per_entry + FATX_HEADER_BYTES - 1) & ~(uint64_t)(FATX_HEADER_BYTES - 1);
@@ -358,6 +356,11 @@ unsigned int XboxPartitionTableManipulator::CalculateClusterSizeForPartition(con
 
 unsigned int XboxPartitionTableManipulator::CalculateClusterSize(const uint64_t lba_size) const
 {
+    return ClusterSizeKbFor(lba_size);
+}
+
+unsigned int ClusterSizeKbFor(const uint64_t lba_size)
+{
     uint32_t clusterSize = 16;
     uint64_t compare = 0x20000000;
     while (lba_size > compare)
@@ -366,6 +369,84 @@ unsigned int XboxPartitionTableManipulator::CalculateClusterSize(const uint64_t 
         clusterSize = clusterSize * 2;
     }
     return clusterSize;
+}
+
+namespace
+{
+
+bool same_fatx_layout(const FatxLayout &layout, const uint64_t lba_size, const uint32_t cluster_bytes)
+{
+    const FatxLayout other = FatxLayoutFor(lba_size, cluster_bytes);
+    return other.bytes_per_entry == layout.bytes_per_entry && other.bytes_per_fat == layout.bytes_per_fat &&
+           other.cluster_limit >= 2;
+}
+
+} // namespace
+
+void FatxInPlaceResizeRange(const uint64_t lba_size, const uint32_t cluster_bytes, uint64_t *min_lba, uint64_t *max_lba)
+{
+    *min_lba = lba_size;
+    *max_lba = lba_size;
+    const FatxLayout layout = FatxLayoutFor(lba_size, cluster_bytes);
+    const uint64_t aligned = lba_size & ~(uint64_t)(LBA_ALIGNMENT - 1);
+    if (cluster_bytes == 0 || aligned == 0 || !same_fatx_layout(layout, aligned, cluster_bytes))
+    {
+        return;
+    }
+
+    // The layout only grows with the size, so search outwards in doubling
+    // steps, then narrow down
+    uint64_t largest = aligned;
+    uint64_t step = LBA_ALIGNMENT;
+    while (step < LBA48_MAX_LBA && same_fatx_layout(layout, largest + step, cluster_bytes))
+    {
+        largest += step;
+        step *= 2;
+    }
+    while (step > LBA_ALIGNMENT)
+    {
+        step /= 2;
+        if (same_fatx_layout(layout, largest + step, cluster_bytes))
+        {
+            largest += step;
+        }
+    }
+
+    uint64_t smallest = aligned;
+    step = LBA_ALIGNMENT;
+    while (smallest > step && same_fatx_layout(layout, smallest - step, cluster_bytes))
+    {
+        smallest -= step;
+        step *= 2;
+    }
+    while (step > LBA_ALIGNMENT)
+    {
+        step /= 2;
+        if (smallest > step && same_fatx_layout(layout, smallest - step, cluster_bytes))
+        {
+            smallest -= step;
+        }
+    }
+
+    // Don't grow past XBpartitioner's limit for the cluster size, or at all if
+    // the partition is already past it
+    const unsigned int cluster_kb = cluster_bytes / 1024;
+    uint64_t rule_max = lba_size;
+    if (ClusterSizeKbFor(lba_size) <= cluster_kb)
+    {
+        rule_max = 0x20000000;
+        while (ClusterSizeKbFor(rule_max * 2) <= cluster_kb && rule_max < LBA48_MAX_LBA)
+        {
+            rule_max *= 2;
+        }
+    }
+    if (largest > rule_max)
+    {
+        largest = (rule_max > lba_size) ? (rule_max & ~(uint64_t)(LBA_ALIGNMENT - 1)) : lba_size;
+    }
+
+    *min_lba = (smallest < lba_size) ? smallest : lba_size;
+    *max_lba = (largest > lba_size) ? largest : lba_size;
 }
 
 void XboxPartitionTableManipulator::SortPartitions(uint64_t *starts, uint64_t *ends) const

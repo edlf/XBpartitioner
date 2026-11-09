@@ -14,7 +14,6 @@ struct Layout
     int title_y;
     int loaded_table_x; // "Current table [...]", right of the title
     int free_space_y;   // "Free: ... of ...", under the legend
-    int status_y;       // Progress messages
     int prompt_y;       // Controls hint
 
     // Rows ("slots", table_row_height apart): headers, a line, "Standard

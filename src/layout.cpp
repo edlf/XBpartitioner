@@ -13,7 +13,6 @@ const Layout g_Layout480 = {
     16,  // title_y
     400, // loaded_table_x
     430, // free_space_y
-    450, // status_y (where the controls hint is, which isn't shown meanwhile)
     450, // prompt_y
 
     // Partition table, as wide as the system information panel
@@ -76,7 +75,6 @@ const Layout g_Layout720 = {
     24,  // title_y
     600, // loaded_table_x
     644, // free_space_y
-    675, // status_y (where the controls hint is, which isn't shown meanwhile)
     675, // prompt_y
 
     // Partition table, as wide as the system information panel

@@ -54,7 +54,7 @@ void App::DisplayStartMenu()
             enabled[i] = true;
         }
         enabled[MENU_FORMAT_SELECTED] = m_pTable->isPartitionEnabled(m_CurrentPart);
-        // What is on disk, so the table as written
+        // Checks what is on disk, i.e. the written table
         enabled[MENU_CHECK_SELECTED] = m_pTableOriginal->isPartitionEnabled(m_CurrentPart);
         enabled[MENU_UNDO_ALL] = CheckIfPartitionTableChanged();
 

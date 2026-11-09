@@ -6,12 +6,12 @@
 #include "prometheos_code.h" // largePartitionFixup
 
 // Lists what will be formatted and calls out E and C. True to go ahead.
-bool App::ConfirmFormatWarning(bool format_changed)
+bool App::ConfirmFormatWarning(bool format_changed, const bool *kept, LPCWSTR reason, const bool *moved)
 {
     bool marked[XboxPartitionTableEntryCount];
     if (format_changed)
     {
-        GetChangedPartitions(marked, false);
+        GetChangedPartitions(marked, false, kept);
     }
     else
     {
@@ -35,10 +35,24 @@ bool App::ConfirmFormatWarning(bool format_changed)
     }
 
     // marked[0] is E, marked[1] is C
-    LPCWSTR lines[4];
+    LPCWSTR lines[7];
     int line_count = 0;
     wchar_t program_line[100];
+    wchar_t kept_line[120];
+    wchar_t moved_line[120];
     lines[line_count++] = message;
+    if (format_changed && kept != NULL && FormatKeptLine(kept, kept_line, ARRAY_COUNT(kept_line)))
+    {
+        lines[line_count++] = kept_line;
+    }
+    if (format_changed && moved != NULL && FormatMovedLine(moved, moved_line, ARRAY_COUNT(moved_line)))
+    {
+        lines[line_count++] = moved_line;
+    }
+    if (format_changed && reason != NULL && reason[0] != L'\0')
+    {
+        lines[line_count++] = reason;
+    }
     if (marked[0])
     {
         lines[line_count++] = L"E holds saves and settings!";
@@ -52,7 +66,7 @@ bool App::ConfirmFormatWarning(bool format_changed)
         FormatLaunchPartitionLine(program_line, L"it will be deleted.");
         lines[line_count++] = program_line;
     }
-    else if (format_changed && MovesLaunchPartition(m_pTable->GetPartitionTable()))
+    else if (format_changed && MovesLaunchPartition(m_pTable->GetPartitionTable()) && !KeepsLaunchPartition(kept))
     {
         // Removed in the new table: not formatted, but gone all the same
         FormatLaunchPartitionLine(program_line, L"it will be unreadable.");
@@ -114,21 +128,35 @@ void App::DoFormatAll()
         return;
     }
 
-    if (!ConfirmFormatWarning(true))
+    // Partitions that keep their data aren't formatted
+    bool kept[XboxPartitionTableEntryCount];
+    bool moved[XboxPartitionTableEntryCount];
+    bool keeps[XboxPartitionTableEntryCount];
+    wchar_t reason[100];
+    FindResizesKeepingData(kept, moved, reason, ARRAY_COUNT(reason));
+    for (int i = 0; i < XboxPartitionTableEntryCount; i++)
+    {
+        keeps[i] = kept[i] || moved[i];
+    }
+
+    if (!ConfirmFormatWarning(true, keeps, reason, moved))
     {
         return;
     }
 
-    XboxPartitionTable table = m_pTable->GetPartitionTable();
-
     // Before writing: the write makes the new table the baseline
     bool to_format[XboxPartitionTableEntryCount];
-    GetChangedPartitions(to_format, false);
+    GetChangedPartitions(to_format, false, keeps);
 
     bool backup_written = false;
-    if (!write_partition_tables(table, &backup_written))
+    bool main_written = false;
+    bool explained = false;
+    if (!WriteTableWithResizes(kept, moved, &backup_written, &main_written, &explained))
     {
-        ShowMessage(L"Error", COLOR_RED, L"The partition table could not be written.");
+        if (!explained)
+        {
+            ShowMessage(L"Error", COLOR_RED, L"The partition table could not be written.");
+        }
         return;
     }
 
@@ -139,19 +167,12 @@ void App::DoFormatAll()
         return;
     }
 
-    ShowStatus(L"Partition table written...", COLOR_GREEN);
-    Sleep(500);
-
     int attempted = 0;
     int formatted = 0;
     for (int i = 0; i < XboxPartitionTableEntryCount; i++)
     {
         if (to_format[i])
         {
-            wchar_t format_str[50];
-            swprintf(format_str, L"Formatting partition %d with %dk clusters...", i + 1, m_pTable->CalculateClusterSizeForPartition(i));
-            ShowStatus(format_str, COLOR_GREEN);
-
             attempted++;
             if (format_partition(i))
             {
@@ -178,10 +199,25 @@ void App::DoWriteTable()
         return;
     }
 
-    // FATX derives its layout from the size: moved or resized means unreadable
+    // Moving or resizing makes a partition unreadable, unless the resize can
+    // keep its data
+    bool kept[XboxPartitionTableEntryCount];
+    bool moved[XboxPartitionTableEntryCount];
+    bool keeps[XboxPartitionTableEntryCount];
+    wchar_t reason[100];
+    FindResizesKeepingData(kept, moved, reason, ARRAY_COUNT(reason));
+    for (int i = 0; i < XboxPartitionTableEntryCount; i++)
+    {
+        keeps[i] = kept[i] || moved[i];
+    }
+    wchar_t kept_line[120];
+    const bool any_kept = FormatKeptLine(keeps, kept_line, ARRAY_COUNT(kept_line));
+    wchar_t moved_line[120];
+    const bool any_moved = FormatMovedLine(moved, moved_line, ARRAY_COUNT(moved_line));
+
     bool resized[XboxPartitionTableEntryCount];
-    const int resized_count = GetChangedPartitions(resized, true);
-    const bool moves_program = MovesLaunchPartition(m_pTable->GetPartitionTable());
+    const int resized_count = GetChangedPartitions(resized, true, keeps);
+    const bool moves_program = MovesLaunchPartition(m_pTable->GetPartitionTable()) && !KeepsLaunchPartition(keeps);
     if (resized_count > 0 || moves_program)
     {
         wchar_t list[100];
@@ -192,13 +228,25 @@ void App::DoWriteTable()
         wchar_t program_line[100];
         FormatLaunchPartitionLine(program_line, L"it will be unreadable.");
 
-        LPCWSTR lines[4];
+        LPCWSTR lines[7];
         int line_count = 0;
         if (resized_count > 0)
         {
             lines[line_count++] = line1;
             lines[line_count++] = L"Their data is unreadable until they are formatted.";
             lines[line_count++] = L"Use Start > Partition table > Write table and format.";
+        }
+        if (reason[0] != L'\0')
+        {
+            lines[line_count++] = reason;
+        }
+        if (any_kept)
+        {
+            lines[line_count++] = kept_line;
+        }
+        if (any_moved)
+        {
+            lines[line_count++] = moved_line;
         }
         if (moves_program)
         {
@@ -211,10 +259,18 @@ void App::DoWriteTable()
     }
     else
     {
-        static const LPCWSTR lines[] = {
-            L"The partition table will be written to the hard drive.",
-        };
-        if (!RunDialog(L"Write table", COLOR_WHITE, lines, ARRAY_COUNT(lines), L"Write", L"Cancel"))
+        LPCWSTR lines[3];
+        int line_count = 0;
+        lines[line_count++] = L"The partition table will be written to the hard drive.";
+        if (any_kept)
+        {
+            lines[line_count++] = kept_line;
+        }
+        if (any_moved)
+        {
+            lines[line_count++] = moved_line;
+        }
+        if (!RunDialog(L"Write table", COLOR_WHITE, lines, line_count, L"Write", L"Cancel"))
         {
             return;
         }
@@ -222,7 +278,8 @@ void App::DoWriteTable()
 
     bool backup_written = false;
     bool main_written = false;
-    if (write_partition_tables(m_pTable->GetPartitionTable(), &backup_written, &main_written))
+    bool explained = false;
+    if (WriteTableWithResizes(kept, moved, &backup_written, &main_written, &explained))
     {
         LPCWSTR result = L"The partition table was written.";
         if (!main_written)
@@ -239,7 +296,7 @@ void App::DoWriteTable()
         }
         ShowMessage(L"Done", COLOR_GREEN, result);
     }
-    else
+    else if (!explained)
     {
         ShowMessage(L"Error", COLOR_RED, L"The partition table could not be written.");
     }
@@ -266,10 +323,6 @@ void App::DoFormatOne()
     {
         return;
     }
-
-    wchar_t format_str[50];
-    swprintf(format_str, L"Formatting partition %d with %dk clusters...", m_CurrentPart + 1, m_pTable->CalculateClusterSizeForPartition(m_CurrentPart));
-    ShowStatus(format_str, COLOR_GREEN);
 
     if (format_partition(m_CurrentPart))
     {
@@ -320,6 +373,24 @@ void App::DoEraseTable()
     }
 }
 
+// Formatting runs on a worker thread (see RunWithBusyWindow)
+struct FormatJob
+{
+    PANSI_STRING path;
+    ULONG cluster_bytes;
+    bool formatted;
+    bool fixed_up;
+};
+
+static DWORD WINAPI format_thread(LPVOID parameter)
+{
+    FormatJob *job = (FormatJob *)parameter;
+    // Returns a BOOL, not an NTSTATUS
+    job->formatted = XapiFormatFATVolumeEx(job->path, job->cluster_bytes) != FALSE;
+    job->fixed_up = job->formatted && largePartitionFixup(job->path, job->cluster_bytes);
+    return 0;
+}
+
 bool App::format_partition(const int i)
 {
     // Last line of defence, the callers explain it first.
@@ -351,19 +422,23 @@ bool App::format_partition(const int i)
         m_ThemeSaveBlocked = true;
     }
 
-    const ULONG cluster_size_bytes = cluster_size << 10;
+    FormatJob job;
+    job.path = &m_PartitionPaths[i];
+    job.cluster_bytes = cluster_size << 10;
+    job.formatted = false;
+    job.fixed_up = false;
 
-    // Returns a BOOL, not an NTSTATUS
-    const bool formatted = XapiFormatFATVolumeEx(&m_PartitionPaths[i], cluster_size_bytes) != FALSE;
-    const bool fixed_up = formatted && largePartitionFixup(&m_PartitionPaths[i], cluster_size_bytes);
+    wchar_t busy[80];
+    swprintf(busy, L"Formatting partition %d (%c) with %d KB clusters...", i + 1, partition_letter(i), cluster_size);
+    RunWithBusyWindow(format_thread, &job, busy);
 
     // The header changed (or is half written): re-read it
     m_ClusterSizes[i] = get_cluster_size_from_partition(m_PartitionPaths[i]);
 
-    if (!formatted || !fixed_up)
+    if (!job.formatted || !job.fixed_up)
     {
         wchar_t error[60];
-        if (!formatted)
+        if (!job.formatted)
         {
             swprintf(error, L"Partition %d could not be formatted.", i + 1);
         }
@@ -400,7 +475,7 @@ bool App::CheckIfPartitionTableChanged()
 
 // Marks partitions enabled now whose start or size changed since the last
 // write; existing_only: only those enabled before. Returns the count.
-int App::GetChangedPartitions(bool changed[XboxPartitionTableEntryCount], bool existing_only)
+int App::GetChangedPartitions(bool changed[XboxPartitionTableEntryCount], bool existing_only, const bool *kept)
 {
     int count = 0;
 
@@ -409,6 +484,7 @@ int App::GetChangedPartitions(bool changed[XboxPartitionTableEntryCount], bool e
         const bool was_enabled = m_pTableOriginal->isPartitionEnabled(i);
         changed[i] = m_pTable->isPartitionEnabled(i) &&
                      (!existing_only || was_enabled) &&
+                     (kept == NULL || !kept[i]) &&
                      (!was_enabled ||
                       m_pTable->GetPartitionStart(i) != m_pTableOriginal->GetPartitionStart(i) ||
                       m_pTable->GetPartitionSize(i) != m_pTableOriginal->GetPartitionSize(i));
@@ -419,6 +495,40 @@ int App::GetChangedPartitions(bool changed[XboxPartitionTableEntryCount], bool e
     }
 
     return count;
+}
+
+// "Resized, data kept: 6 (F)"; false if there are none
+bool App::FormatKeptLine(const bool kept[XboxPartitionTableEntryCount], wchar_t *out, size_t out_count)
+{
+    wchar_t list[100];
+    FormatPartitionList(kept, list, ARRAY_COUNT(list));
+    if (list[0] == L'\0')
+    {
+        return false;
+    }
+    _snwprintf(out, out_count, L"Resized, data kept: %s", list);
+    out[out_count - 1] = L'\0';
+    return true;
+}
+
+// "Clusters move in: 6 (F)"; false if there are none
+bool App::FormatMovedLine(const bool moved[XboxPartitionTableEntryCount], wchar_t *out, size_t out_count)
+{
+    wchar_t list[100];
+    FormatPartitionList(moved, list, ARRAY_COUNT(list));
+    if (list[0] == L'\0')
+    {
+        return false;
+    }
+    _snwprintf(out, out_count, L"Clusters move in: %s (don't switch off).", list);
+    out[out_count - 1] = L'\0';
+    return true;
+}
+
+// Whether our own partition is resized but keeps its data
+bool App::KeepsLaunchPartition(const bool *kept) const
+{
+    return kept != NULL && m_LaunchPartition >= 0 && kept[m_LaunchPartition];
 }
 
 // "1 (E), 2 (C), 6 (F)" for the marked partitions
