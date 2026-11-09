@@ -54,7 +54,8 @@ enum BackupStatus
     BACKUP_MISSING,       // Location known but no valid table there
     BACKUP_FOUND,
     BACKUP_FOUND_LEGACY,  // At the old location (last sector) on a 512e drive
-    BACKUP_OVERLAPPED     // The last partition covers the backup sector
+    BACKUP_OVERLAPPED,    // The last partition covers the backup sector
+    BACKUP_OVERLAPPED_MATCH // Covered, but the table there matches the main one
 };
 
 // RunMenu() results besides the selected item
@@ -166,6 +167,11 @@ private:
     void UndoAllChanges();
 
     void WarnBackupOverlapped();
+    // Covered but matching: shrink the last partition by 4 KB to clear it.
+    // False if that isn't possible (nothing was asked).
+    bool OfferShrinkForBackup();
+    // Its FATX layout stays and the 4 KB it loses holds no used cluster
+    bool ShrinkKeepsData(int partition);
     // Called with the selected item at the start and whenever it changes
     typedef void (App::*MenuPreview)(int item);
     int RunMenu(LPCWSTR title, const LPCWSTR *labels, const bool *enabled, int count, int initial = 0, bool submenu = false,
@@ -231,6 +237,7 @@ private:
     bool write_partition_tables(const XboxPartitionTable table, bool *backup_written = NULL, bool *main_written = NULL);
     bool erase_partition_tables();
     XboxPartitionTable read_hdd_partition_table(LARGE_INTEGER offset);
+    bool read_hdd_sector(ULONGLONG lba, BYTE *sector);
     XboxPartitionTable read_hdd_main_partition_table();
     XboxPartitionTable read_hdd_backup_partition_table();
 

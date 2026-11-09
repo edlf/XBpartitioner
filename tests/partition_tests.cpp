@@ -692,3 +692,103 @@ TEST(TableChecks, IsTableUsable)
     }
     EXPECT_FALSE(XboxPartitionTableManipulator::IsTableUsable(none_in_use, DISK_1TB));
 }
+
+// F from the first free sector to end_lba, on a disk of disk_lba sectors
+XboxPartitionTableManipulator WithFTo(uint64_t end_lba, uint64_t disk_lba, bool physical_4k)
+{
+    XboxPartitionTableManipulator t(disk_lba, true, physical_4k);
+    t.SetupPartitionsStock();
+    t.EnablePartition(5);
+    XboxPartitionTable table = t.GetPartitionTable();
+    const uint64_t size = end_lba - XBOX_PART6_LBA_START;
+    table.TableEntries[5].LBAStart = XBOX_PART6_LBA_START;
+    table.TableEntries[5].LBASize = (uint32_t)size;
+    table.TableEntries[5].LBASize_high = (uint16_t)(size >> 32);
+    return XboxPartitionTableManipulator(table, disk_lba, true, physical_4k);
+}
+
+TEST(BackupShrink, LastSectorOn512nDrive)
+{
+    XboxPartitionTableManipulator t = WithFTo(DISK_1TB, DISK_1TB, false);
+    ASSERT_TRUE(t.OverlapsBackupTable());
+    ASSERT_EQ(t.FindBackupShrinkCandidate(), 5);
+
+    t.PartitionDecreaseSizeBy(5, LBA_ALIGNMENT);
+    EXPECT_FALSE(t.OverlapsBackupTable());
+    EXPECT_EQ(PartEnd(t, 5), DISK_1TB - LBA_ALIGNMENT);
+    EXPECT_EQ(t.FindBackupShrinkCandidate(), -1);
+}
+
+TEST(BackupShrink, Last4kBlockOn512eDrive)
+{
+    // Not a whole number of 4K blocks: the backup is in the last whole one
+    const uint64_t disk = DISK_1TB + 5;
+    XboxPartitionTableManipulator t = WithFTo(DISK_1TB, disk, true);
+    ASSERT_EQ(t.GetBackupTableLba(), DISK_1TB - LBA_ALIGNMENT);
+    ASSERT_EQ(t.FindBackupShrinkCandidate(), 5);
+
+    t.PartitionDecreaseSizeBy(5, LBA_ALIGNMENT);
+    EXPECT_FALSE(t.OverlapsBackupTable());
+}
+
+TEST(BackupShrink, NothingWithoutOverlap)
+{
+    XboxPartitionTableManipulator t(DISK_1TB, true, true);
+    t.SetupPartitionsFOnly();
+    EXPECT_FALSE(t.OverlapsBackupTable());
+    EXPECT_EQ(t.FindBackupShrinkCandidate(), -1);
+}
+
+TEST(BackupShrink, NotWhenOneBlockIsntEnough)
+{
+    // F runs 4K past the disk end: losing one block still covers the backup
+    XboxPartitionTableManipulator t = WithFTo(DISK_1TB + LBA_ALIGNMENT, DISK_1TB, false);
+    ASSERT_TRUE(t.OverlapsBackupTable());
+    EXPECT_EQ(t.FindBackupShrinkCandidate(), -1);
+}
+
+TEST(BackupShrink, NotWithUnalignedSize)
+{
+    XboxPartitionTableManipulator t = WithFTo(DISK_1TB + 3, DISK_1TB + 3, false);
+    ASSERT_TRUE(t.OverlapsBackupTable());
+    EXPECT_EQ(t.FindBackupShrinkCandidate(), -1);
+}
+
+TEST(Fatx, Layout)
+{
+    // 512 MB, 16 KB clusters: 0x8001 entries of 2 bytes, page rounded
+    const FatxLayout layout = FatxLayoutFor(0x100000, 0x4000);
+    EXPECT_EQ(layout.bytes_per_entry, 2u);
+    EXPECT_EQ(layout.bytes_per_fat, 0x11000u);
+    EXPECT_EQ(layout.data_offset, 0x12000u);
+    EXPECT_EQ(layout.cluster_limit, 32764u);
+
+    // 4 byte entries from 0xFFF0 on (with the reserved one)
+    EXPECT_EQ(FatxLayoutFor(0xFFEEULL * 0x20, 0x4000).bytes_per_entry, 2u);
+    EXPECT_EQ(FatxLayoutFor(0xFFEFULL * 0x20, 0x4000).bytes_per_entry, 4u);
+}
+
+TEST(Fatx, ClusterAt)
+{
+    const FatxLayout layout = FatxLayoutFor(0x100000, 0x4000);
+    EXPECT_EQ(FatxClusterAt(layout, 0x4000, 0), 0u);                         // header
+    EXPECT_EQ(FatxClusterAt(layout, 0x4000, layout.data_offset - 1), 0u);    // FAT
+    EXPECT_EQ(FatxClusterAt(layout, 0x4000, layout.data_offset), 1u);
+    EXPECT_EQ(FatxClusterAt(layout, 0x4000, layout.data_offset + 0x4000), 2u);
+    // The last 4 KB are after the last whole cluster
+    EXPECT_EQ(FatxClusterAt(layout, 0x4000, 0x20000000 - 0x1000), 0u);
+}
+
+TEST(Fatx, ShrinkingBy4kMayMoveTheData)
+{
+    // One cluster less in the FAT crosses a page: everything after it moves
+    const FatxLayout before = FatxLayoutFor(0x100000, 0x4000);
+    const FatxLayout after = FatxLayoutFor(0x100000 - LBA_ALIGNMENT, 0x4000);
+    EXPECT_NE(before.data_offset, after.data_offset);
+
+    // Usually it doesn't
+    const FatxLayout before2 = FatxLayoutFor(0x100040, 0x4000);
+    const FatxLayout after2 = FatxLayoutFor(0x100040 - LBA_ALIGNMENT, 0x4000);
+    EXPECT_EQ(before2.bytes_per_fat, after2.bytes_per_fat);
+    EXPECT_EQ(before2.bytes_per_entry, after2.bytes_per_entry);
+}

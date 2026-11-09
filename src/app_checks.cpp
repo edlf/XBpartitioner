@@ -47,7 +47,12 @@ void App::RunStartupChecks()
     }
 
     WarnUnalignedPartitions();
-    WarnBackupOverlapped();
+    // A matching backup under the last partition can often be kept by a
+    // 4 KB shrink; otherwise (or not possible) the usual warning
+    if (m_BackupStatus != BACKUP_OVERLAPPED_MATCH || !OfferShrinkForBackup())
+    {
+        WarnBackupOverlapped();
+    }
     CheckTableStatus();
 }
 
@@ -312,7 +317,8 @@ void App::CheckTableStatus()
 // The last partition covers the backup sector: no backup until that changes
 void App::WarnBackupOverlapped()
 {
-    if (m_BackupStatus != BACKUP_OVERLAPPED)
+    // Matching: when OfferShrinkForBackup() can't fix it
+    if (m_BackupStatus != BACKUP_OVERLAPPED && m_BackupStatus != BACKUP_OVERLAPPED_MATCH)
     {
         return;
     }
@@ -324,4 +330,105 @@ void App::WarnBackupOverlapped()
         L"shrink the last partition, or use a new partition table.",
     };
     ShowWarning(lines, ARRAY_COUNT(lines));
+}
+
+// The last partition covers the backup sector, but the backup there matches
+// the table in use (another tool put it there), so that 4 KB block holds no
+// data: the partition can give it up and keep its data, no format needed
+bool App::OfferShrinkForBackup()
+{
+    const int part = m_pTableOriginal->FindBackupShrinkCandidate();
+    if (part < 0 || !ShrinkKeepsData(part))
+    {
+        return false;
+    }
+
+    wchar_t line1[80];
+    swprintf(line1, L"Partition %d (%c) covers the backup table sector, but", part + 1, partition_letter(part));
+    const LPCWSTR lines[] = {
+        line1,
+        L"the backup there matches the main partition table,",
+        L"so its last 4 KB hold no data. Shrink it by 4 KB so",
+        L"the backup is kept? Its data stays, no format needed.",
+    };
+    if (!RunDialog(L"Backup table", COLOR_WARNING, lines, ARRAY_COUNT(lines), L"Shrink", L"No"))
+    {
+        return true;
+    }
+
+    XboxPartitionTableManipulator shrunk(m_pTableOriginal->GetPartitionTable(), m_TotalHddSectors, m_FullLba48, m_Physical4k);
+    shrunk.PartitionDecreaseSizeBy(part, LBA_ALIGNMENT);
+
+    bool backup_written = false;
+    if (write_partition_tables(shrunk.GetPartitionTable(), &backup_written))
+    {
+        wchar_t done[80];
+        swprintf(done, backup_written ? L"Partition %d shrunk by 4 KB, backup table written." : L"Partition %d shrunk by 4 KB.", part + 1);
+        ShowMessage(L"Done", COLOR_GREEN, done);
+    }
+    else
+    {
+        ShowMessage(L"Error", COLOR_RED, L"The partition table could not be written.");
+    }
+    return true;
+}
+
+// FATX derives its FAT from the partition size, so a size that changes it
+// would make the partition unreadable. The lost 4 KB must also not be part
+// of a cluster in use (the backup there says it isn't; the FAT confirms).
+bool App::ShrinkKeepsData(int partition)
+{
+    const ULONGLONG start = m_pTableOriginal->GetPartitionStart(partition);
+    const ULONGLONG size = m_pTableOriginal->GetPartitionSize(partition);
+
+    BYTE sector[HDD_SECTOR_SIZE];
+    if (!read_hdd_sector(start, sector))
+    {
+        return false;
+    }
+
+    FAT_VOLUME_METADATA header;
+    memcpy(&header, sector, HDD_SECTOR_SIZE); // Signature and SectorsPerCluster are at the start
+    if (header.Signature != FATX_signature)
+    {
+        return true; // No file system: no layout to keep
+    }
+
+    // 0 (left by some formatters for big clusters) or garbage: can't check
+    const uint32_t sectors_per_cluster = header.SectorsPerCluster;
+    if (sectors_per_cluster == 0 || (sectors_per_cluster & (sectors_per_cluster - 1)) != 0)
+    {
+        return false;
+    }
+    const uint32_t cluster_bytes = sectors_per_cluster * HDD_SECTOR_SIZE;
+
+    const FatxLayout before = FatxLayoutFor(size, cluster_bytes);
+    const FatxLayout after = FatxLayoutFor(size - LBA_ALIGNMENT, cluster_bytes);
+    if (before.bytes_per_entry != after.bytes_per_entry || before.bytes_per_fat != after.bytes_per_fat)
+    {
+        return false;
+    }
+
+    // Clusters are at least 16 KB and 4 KB aligned: the block is in one or none
+    const uint64_t cluster = FatxClusterAt(before, cluster_bytes, (size - LBA_ALIGNMENT) * HDD_SECTOR_SIZE);
+    if (cluster == 0)
+    {
+        return true; // After the last whole cluster: never used
+    }
+
+    // Its FAT entry: 0 is free. Entries are 2 or 4 bytes, never across sectors.
+    const ULONGLONG entry_byte = start * HDD_SECTOR_SIZE + FATX_HEADER_BYTES + cluster * before.bytes_per_entry;
+    if (!read_hdd_sector(entry_byte / HDD_SECTOR_SIZE, sector))
+    {
+        return false;
+    }
+    const BYTE *entry = sector + (entry_byte % HDD_SECTOR_SIZE);
+    for (uint32_t i = 0; i < before.bytes_per_entry; i++)
+    {
+        if (entry[i] != 0)
+        {
+            return false;
+        }
+    }
+    return true;
 }

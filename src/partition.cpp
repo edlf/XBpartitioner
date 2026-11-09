@@ -223,6 +223,70 @@ bool XboxPartitionTableManipulator::OverlapsSector(const uint64_t lba) const
     return false;
 }
 
+int XboxPartitionTableManipulator::FindBackupShrinkCandidate() const
+{
+    if (!OverlapsBackupTable())
+    {
+        return -1;
+    }
+
+    for (int i = 0; i < XboxPartitionTableEntryCount; i++)
+    {
+        if (!isPartitionEnabled(i))
+        {
+            continue;
+        }
+        const uint64_t start = GetPartitionStart(i);
+        const uint64_t size = GetPartitionSize(i);
+        if (start > m_backup_table_lba || m_backup_table_lba >= start + size)
+        {
+            continue;
+        }
+
+        // The first one covering it decides: with an overlap there is no
+        // single partition to shrink anyway
+        if (size <= LBA_ALIGNMENT || !isAlignedTo4k(size) || start + size - LBA_ALIGNMENT > m_backup_table_lba)
+        {
+            return -1;
+        }
+        return i;
+    }
+
+    return -1;
+}
+
+FatxLayout FatxLayoutFor(const uint64_t lba_size, const uint32_t cluster_bytes)
+{
+    FatxLayout layout;
+    memset(&layout, 0, sizeof(layout));
+    if (cluster_bytes == 0)
+    {
+        return layout;
+    }
+
+    const uint64_t length = lba_size * HDD_SECTOR_SIZE;
+
+    // The FAT has an entry per cluster the whole partition could hold, plus
+    // the reserved first one
+    const uint64_t entries = length / cluster_bytes + 1;
+    layout.bytes_per_entry = (entries < 0xFFF0) ? 2 : 4;
+    layout.bytes_per_fat = (entries * layout.bytes_per_entry + FATX_HEADER_BYTES - 1) & ~(uint64_t)(FATX_HEADER_BYTES - 1);
+    layout.data_offset = FATX_HEADER_BYTES + layout.bytes_per_fat;
+    layout.cluster_limit = (length > layout.data_offset) ? (length - layout.data_offset) / cluster_bytes + 1 : 0;
+    return layout;
+}
+
+uint64_t FatxClusterAt(const FatxLayout &layout, const uint32_t cluster_bytes, const uint64_t byte_offset)
+{
+    if (cluster_bytes == 0 || byte_offset < layout.data_offset)
+    {
+        return 0;
+    }
+
+    const uint64_t cluster = (byte_offset - layout.data_offset) / cluster_bytes + 1;
+    return (cluster < layout.cluster_limit) ? cluster : 0;
+}
+
 void XboxPartitionTableManipulator::SetPartitionName(const uint16_t partition_number, const char *name)
 {
     if (partition_number >= XboxPartitionTableEntryCount)

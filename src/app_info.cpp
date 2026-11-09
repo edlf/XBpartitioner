@@ -173,6 +173,9 @@ void App::DisplaySystemInfo()
     case BACKUP_OVERLAPPED:
         swprintf(value, L"none, last partition covers it");
         break;
+    case BACKUP_OVERLAPPED_MATCH:
+        swprintf(value, L"matches, but last partition covers it");
+        break;
     default:
         if (m_pKernelTable == NULL)
         {

@@ -507,34 +507,42 @@ XboxPartitionTable App::read_hdd_partition_table(LARGE_INTEGER offset)
     // A failed read gives a table without magic
     XboxPartitionTable table;
     memset(&table, 0, sizeof(table));
-    LARGE_INTEGER RWOffset = offset;
+
+    BYTE PartSector[HDD_SECTOR_SIZE];
+    if (read_hdd_sector((ULONGLONG)offset.QuadPart / HDD_SECTOR_SIZE, PartSector))
+    {
+        memcpy(&table, PartSector, HDD_SECTOR_SIZE);
+    }
+    return table;
+}
+
+// One sector of the whole disk
+bool App::read_hdd_sector(ULONGLONG lba, BYTE *sector)
+{
+    LARGE_INTEGER RWOffset;
+    RWOffset.QuadPart = lba * HDD_SECTOR_SIZE;
 
     HANDLE hDisk = NULL;
     NTSTATUS status;
     ANSI_STRING a_path;
     OBJECT_ATTRIBUTES ObjectAttributes;
     IO_STATUS_BLOCK IoStatusBlock;
-    BYTE PartSector[HDD_SECTOR_SIZE];
 
     RtlInitAnsiString(&a_path, "\\Device\\Harddisk0\\Partition0");
     InitializeObjectAttributes(&ObjectAttributes, &a_path, OBJ_CASE_INSENSITIVE, NULL);
-    memset(PartSector, 0, sizeof(PartSector));
+    memset(sector, 0, HDD_SECTOR_SIZE);
 
     status = NtOpenFile(&hDisk, SYNCHRONIZE | GENERIC_READ, &ObjectAttributes, &IoStatusBlock,
                         FILE_SHARE_READ | FILE_SHARE_WRITE, FILE_SYNCHRONOUS_IO_ALERT);
     if (status == 0)
     {
-        status = NtReadFile(hDisk, NULL, NULL, NULL, &IoStatusBlock, (PVOID)PartSector, HDD_SECTOR_SIZE, &RWOffset);
-    }
-    if (status == 0)
-    {
-        memcpy(&table, PartSector, HDD_SECTOR_SIZE);
+        status = NtReadFile(hDisk, NULL, NULL, NULL, &IoStatusBlock, (PVOID)sector, HDD_SECTOR_SIZE, &RWOffset);
     }
     if (hDisk != NULL)
     {
         NtClose(hDisk);
     }
-    return table;
+    return status == 0;
 }
 
 XboxPartitionTable App::read_hdd_main_partition_table()
@@ -572,6 +580,21 @@ XboxPartitionTable App::read_hdd_backup_partition_table()
         if (XboxPartitionTableManipulator::HasMagic(table))
         {
             m_BackupStatus = BACKUP_FOUND;
+            return table;
+        }
+        memset(&table, 0, sizeof(table));
+    }
+    else
+    {
+        // Partition data as far as the table knows, but other tools leave a
+        // backup there: a copy of the table in use (sector 0 and the kernel's)
+        // means that block holds no data, see OfferShrinkForBackup()
+        table = read_hdd_partition_table(get_backup_partition_offset_bytes());
+        if (XboxPartitionTableManipulator::IsTableUsable(table, m_TotalHddSectors) &&
+            XboxPartitionTableManipulator::IsTableUsable(m_TableHdd, m_TotalHddSectors) &&
+            same_table_but_version(table, m_TableHdd) && same_table_but_version(table, m_TableKernel))
+        {
+            m_BackupStatus = BACKUP_OVERLAPPED_MATCH;
             return table;
         }
         memset(&table, 0, sizeof(table));
