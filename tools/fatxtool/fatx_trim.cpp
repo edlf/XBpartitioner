@@ -42,6 +42,9 @@ const UCHAR ATA_DSM_TRIM = 0x01;
 const UCHAR ATA_STATUS_ERROR = 0x01;
 
 const uint32_t BUFFER_BYTES = 1024 * 1024;
+// Unbuffered I/O must be whole, aligned blocks: 4 KB suits drives with 512
+// byte or 4K sectors, and files on any volume
+const uint32_t BLOCK_BYTES = 4096;
 const uint64_t TRIM_ENTRY_MAX_SECTORS = 0xFFFF;
 const uint32_t TRIM_ENTRIES_PER_BLOCK = HDD_SECTOR_SIZE / 8;
 
@@ -99,7 +102,7 @@ bool FatxFreeRanges(FatxReader &reader, uint64_t partition_bytes, std::vector<Fa
     return true;
 }
 
-WindowsDisk::WindowsDisk() : m_handle(INVALID_HANDLE_VALUE), m_size(0), m_buffer(NULL)
+WindowsDisk::WindowsDisk() : m_handle(INVALID_HANDLE_VALUE), m_writable(false), m_size(0), m_buffer(NULL)
 {
 }
 
@@ -115,22 +118,30 @@ WindowsDisk::~WindowsDisk()
     }
 }
 
-bool WindowsDisk::Open(const char *path, bool trim, unsigned long *error)
+bool WindowsDisk::Open(const char *path, bool write, unsigned long *error)
 {
-    // ATA pass-through needs write access, even for IDENTIFY
-    HANDLE handle =
-        CreateFileA(path, GENERIC_READ | (trim ? GENERIC_WRITE : 0), FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, FILE_FLAG_NO_BUFFERING, NULL);
+    // Write through: a write is on the disk when it returns, so the resize's
+    // journal order holds
+    const DWORD flags = FILE_FLAG_NO_BUFFERING | (write ? FILE_FLAG_WRITE_THROUGH : 0);
+    HANDLE handle = CreateFileA(path, GENERIC_READ | (write ? GENERIC_WRITE : 0), FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, flags, NULL);
     if (handle == INVALID_HANDLE_VALUE)
     {
         *error = GetLastError();
         return false;
     }
     m_handle = handle;
+    m_writable = write;
 
     LARGE_INTEGER length;
     DWORD returned = 0;
     m_buffer = (unsigned char *)VirtualAlloc(NULL, BUFFER_BYTES, MEM_COMMIT, PAGE_READWRITE);
-    if (m_buffer == NULL || !DeviceIoControl(handle, IOCTL_DISK_GET_LENGTH, NULL, 0, &length, sizeof(length), &returned, NULL))
+    if (m_buffer == NULL)
+    {
+        *error = GetLastError();
+        return false;
+    }
+    // A file has no disk length
+    if (!DeviceIoControl(handle, IOCTL_DISK_GET_LENGTH, NULL, 0, &length, sizeof(length), &returned, NULL) && !GetFileSizeEx(handle, &length))
     {
         *error = GetLastError();
         return false;
@@ -139,22 +150,46 @@ bool WindowsDisk::Open(const char *path, bool trim, unsigned long *error)
     return true;
 }
 
+void WindowsDisk::Blocks(uint64_t offset, uint32_t length, uint64_t *begin, uint32_t *skip, uint32_t *part, uint32_t *whole) const
+{
+    *begin = offset - offset % BLOCK_BYTES;
+    *skip = (uint32_t)(offset - *begin);
+    *part = BUFFER_BYTES - *skip;
+    *part = (*part < length) ? *part : length;
+    *whole = (*skip + *part + BLOCK_BYTES - 1) / BLOCK_BYTES * BLOCK_BYTES;
+    // The last block may be cut short by the end of the disk: whole sectors to there
+    if (*begin + *whole > m_size && m_size > *begin)
+    {
+        const uint64_t to_end = (m_size - *begin + HDD_SECTOR_SIZE - 1) / HDD_SECTOR_SIZE * HDD_SECTOR_SIZE;
+        if (to_end >= *skip + *part && to_end < *whole)
+        {
+            *whole = (uint32_t)to_end;
+        }
+    }
+}
+
+bool WindowsDisk::Transfer(uint64_t begin, uint32_t whole, bool write)
+{
+    LARGE_INTEGER position;
+    position.QuadPart = (LONGLONG)begin;
+    DWORD done = 0;
+    if (!SetFilePointerEx((HANDLE)m_handle, position, NULL, FILE_BEGIN))
+    {
+        return false;
+    }
+    const BOOL ok = write ? WriteFile((HANDLE)m_handle, m_buffer, whole, &done, NULL) : ReadFile((HANDLE)m_handle, m_buffer, whole, &done, NULL);
+    return ok && done == whole;
+}
+
 bool WindowsDisk::Read(uint64_t offset, void *buffer, uint32_t length)
 {
-    // Unbuffered reads must be whole, aligned sectors
     unsigned char *out = (unsigned char *)buffer;
     while (length > 0)
     {
-        const uint64_t begin = offset - offset % HDD_SECTOR_SIZE;
-        const uint32_t skip = (uint32_t)(offset - begin);
-        uint32_t part = BUFFER_BYTES - skip;
-        part = (part < length) ? part : length;
-        const uint32_t whole = (skip + part + HDD_SECTOR_SIZE - 1) / HDD_SECTOR_SIZE * HDD_SECTOR_SIZE;
-
-        LARGE_INTEGER position;
-        position.QuadPart = (LONGLONG)begin;
-        DWORD done = 0;
-        if (!SetFilePointerEx((HANDLE)m_handle, position, NULL, FILE_BEGIN) || !ReadFile((HANDLE)m_handle, m_buffer, whole, &done, NULL) || done != whole)
+        uint64_t begin;
+        uint32_t skip, part, whole;
+        Blocks(offset, length, &begin, &skip, &part, &whole);
+        if (!Transfer(begin, whole, false))
         {
             return false;
         }
@@ -164,6 +199,40 @@ bool WindowsDisk::Read(uint64_t offset, void *buffer, uint32_t length)
         length -= part;
     }
     return true;
+}
+
+bool WindowsDisk::Write(uint64_t offset, const void *buffer, uint32_t length)
+{
+    if (!m_writable)
+    {
+        return false;
+    }
+    const unsigned char *in = (const unsigned char *)buffer;
+    while (length > 0)
+    {
+        uint64_t begin;
+        uint32_t skip, part, whole;
+        Blocks(offset, length, &begin, &skip, &part, &whole);
+        // Partly covered blocks keep the rest of what's on the disk
+        if ((skip != 0 || part != whole) && !Transfer(begin, whole, false))
+        {
+            return false;
+        }
+        memcpy(m_buffer + skip, in, part);
+        if (!Transfer(begin, whole, true))
+        {
+            return false;
+        }
+        in += part;
+        offset += part;
+        length -= part;
+    }
+    return true;
+}
+
+bool WindowsDisk::Sync()
+{
+    return m_writable && FlushFileBuffers((HANDLE)m_handle) != FALSE;
 }
 
 bool WindowsDisk::Command(void *task, unsigned char *data, uint32_t length, bool data_out, bool dma, bool lba48)

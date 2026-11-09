@@ -1,4 +1,3 @@
-#include "stdafx.h"
 #include "background.h"
 
 #include <math.h> // sin, cos, floor, sqrt

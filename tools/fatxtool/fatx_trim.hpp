@@ -32,20 +32,26 @@ class FatxOffsetReader : public FatxReader
 };
 
 // A physical disk on Windows (\\.\PhysicalDriveN; needs administrator
-// rights). Reads, and TRIMs through ATA pass-through. Never writes data.
-class WindowsDisk : public FatxReader
+// rights), or a file (for the tests). Unbuffered: reads and writes go
+// straight to the disk, in whole 4 KB blocks; a write that only covers part
+// of a block reads it first. TRIMs through ATA pass-through.
+class WindowsDisk : public FatxDevice
 {
   public:
     WindowsDisk();
     ~WindowsDisk();
 
-    // trim opens it for ATA commands too
-    bool Open(const char *path, bool trim, unsigned long *error);
+    // write: for Write() and for ATA commands (TRIM needs it, even IDENTIFY)
+    bool Open(const char *path, bool write, unsigned long *error);
     uint64_t Size() const
     {
         return m_size;
     }
     bool Read(uint64_t offset, void *buffer, uint32_t length) override;
+    // Only when opened for writing
+    bool Write(uint64_t offset, const void *buffer, uint32_t length) override;
+    // Flushes the drive's write cache
+    bool Sync() override;
 
     // ATA IDENTIFY; fails if the connection blocks ATA commands (often USB)
     bool Identify(uint16_t identify[256]);
@@ -54,8 +60,12 @@ class WindowsDisk : public FatxReader
 
   private:
     bool Command(void *task, unsigned char *data, uint32_t length, bool data_out, bool dma, bool lba48);
+    // The whole blocks around length bytes at offset that fit the buffer
+    void Blocks(uint64_t offset, uint32_t length, uint64_t *begin, uint32_t *skip, uint32_t *part, uint32_t *whole) const;
+    bool Transfer(uint64_t begin, uint32_t whole, bool write);
 
     void *m_handle;
+    bool m_writable;
     uint64_t m_size;
     unsigned char *m_buffer; // Page aligned, for unbuffered I/O
 };

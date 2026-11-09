@@ -71,6 +71,7 @@
     <ClCompile Include="fatx_writer.cpp" />
     <ClCompile Include="fatx_recluster.cpp" />
     <ClCompile Include="fatx_trim.cpp" />
+    <ClCompile Include="pc_image.cpp" />
     <ClCompile Include="..\..\src\fatx_check.cpp" />
     <ClCompile Include="..\..\src\fatx_resize.cpp" />
     <ClCompile Include="..\..\src\partition.cpp" />
@@ -79,6 +80,7 @@
     <ClInclude Include="fatx_writer.hpp" />
     <ClInclude Include="fatx_recluster.hpp" />
     <ClInclude Include="fatx_trim.hpp" />
+    <ClInclude Include="pc_image.hpp" />
     <ClInclude Include="..\..\src\fatx_check.hpp" />
     <ClInclude Include="..\..\src\fatx_resize.hpp" />
     <ClInclude Include="..\..\src\partition.hpp" />

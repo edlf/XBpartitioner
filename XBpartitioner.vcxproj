@@ -153,6 +153,7 @@ if not exist "$(OutDir)XISO" mkdir "$(OutDir)XISO"
   <ItemGroup>
     <ClInclude Include="src\app_internal.h" />
     <ClInclude Include="src\background.h" />
+    <ClInclude Include="src\d3dcolor.h" />
     <ClInclude Include="src\font_table.h" />
     <ClInclude Include="src\font_table_720.h" />
     <ClInclude Include="src\font_text.h" />
@@ -165,6 +166,7 @@ if not exist "$(OutDir)XISO" mkdir "$(OutDir)XISO"
     <ClInclude Include="src\fatx_resize.hpp" />
     <ClInclude Include="src\prometheos_code.h" />
     <ClInclude Include="src\stdafx.h" />
+    <ClInclude Include="src\theme.h" />
     <ClInclude Include="src\themes.h" />
     <ClInclude Include="src\Undocumented.h" />
     <ClInclude Include="src\ui.h" />

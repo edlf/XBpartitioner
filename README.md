@@ -93,6 +93,8 @@ Not supported: crossing about 65,000 clusters (where FAT entries go from 2 to 4 
 
 A command line companion for disk and partition images, and for an Xbox drive connected to a PC. Build it with `tools\fatxtool\build.bat` (Visual Studio 2022 or newer, no XDK). Commands that write only do so with `--write`. Without it they show what they would do. Work on a copy of your image.
 
+`check`, `repair`, `resize` and `trim` also take an Xbox drive, as `\\.\PhysicalDriveN` (Disk Management shows the number; run as administrator). With `--write` they change the drive itself, the partition table and its backup included, so back it up first and close FATXplorer or anything else that has it open. A partition can grow as far as XBpartitioner allows: up to the next partition, or to the end of the disk, leaving its backup table alone. `recluster` needs an image, since it builds a full copy first.
+
 ### check, make
 
 ```
@@ -143,6 +145,22 @@ The Xbox can't send TRIM (its IDE pass-through has no 48 bit DMA commands), but 
 
 Run it as administrator. Disk Management shows the drive number, but don't let Windows initialise the disk. A direct SATA connection works; most USB adapters block the command. `--list` prints the byte ranges instead, e.g. for `blkdiscard -o OFFSET -l LENGTH /dev/sdX` on Linux.
 
+
+## fatxgui (PC)
+
+A window for the same work as fatxtool, built with `tools\fatxgui\build.bat` (Visual Studio 2022 or newer, no XDK): `tools\fatxgui\build\Release\fatxgui.exe`, one file with nothing to install.
+
+Open a disk image, a partition image or an Xbox drive (or drop an image on the window). It shows the partitions, their file systems and how much is in use. For the selected partition:
+
+- **Check** and **Repair**. Repair shows what it would do and asks first.
+- **Resize, keeping the data**: type a size and the status says whether the data can be kept, or suggests the nearest sizes that keep it. Disk image partitions can grow up to the next partition.
+- **Cluster size**: checks that the files fit, then asks. It needs free space next to the image, like `recluster`.
+- **Finish**: an interrupted resize or cluster size change shows up when the image is opened, with a button to finish it.
+- **New image**: like `make`, empty or filled from a folder.
+
+Like fatxtool, it also works on Xbox drives connected to the PC: check, repair, resize and finish a resize are written straight to the drive (the partition table and its backup included), and **TRIM** frees an SSD's unused space. Back the drive up first, and close FATXplorer or anything else that has it open. Changing the cluster size needs an image, since it builds a full copy first. Drives need administrator rights, and the window offers to restart with them. Only drives with an Xbox partition table are listed, so never the Windows one. With images, work on a copy.
+
+It has the Xbox app's themes and moving background. Pick a theme at the top right; it's remembered in `fatxgui.ini` next to the `.exe`.
 
 ## Tests
 

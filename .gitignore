@@ -69,3 +69,6 @@ tests/packages/
 
 # fatxtool builds
 tools/fatxtool/build/
+
+# fatxgui builds
+tools/fatxgui/build/

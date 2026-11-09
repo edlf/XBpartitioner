@@ -1,7 +1,7 @@
 #ifndef BACKGROUND_H_
 #define BACKGROUND_H_
 
-#include <xtl.h>
+#include "d3dcolor.h"
 
 // Moving background: a smooth, tilted grid of triangles with waves swaying
 // across it, scrolling up and left, lit from the top left, in the theme's

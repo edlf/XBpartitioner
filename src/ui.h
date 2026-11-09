@@ -4,6 +4,8 @@
 #include <xtl.h>
 #include <xfont.h>
 
+#include "theme.h"
+
 // Drawing is in pixels of a 4:3 area (640x480, or 960x720 for 720p),
 // centered on the screen and drawn 1:1; positions come from a Layout per mode.
 
@@ -12,41 +14,6 @@ enum VideoMode
     VIDEO_MODE_480I = 0,
     VIDEO_MODE_480P = 1,
     VIDEO_MODE_720P = 2
-};
-
-// Text colors by role, named after the default theme's. Order must match
-// Theme::text and g_ColorOpaque in ui.cpp.
-enum Color
-{
-    COLOR_WHITE = 0,
-    COLOR_RED,
-    COLOR_GREEN,
-    COLOR_BLUE,
-    COLOR_YELLOW,
-    COLOR_WHITE_BG,
-    COLOR_RED_BG,
-    COLOR_GREY,
-    COLOR_DARK_YELLOW,
-    COLOR_LIGHT_GREY, // Body text on warning screens
-    COLOR_WARNING,    // Warning screen title
-    COLOR_COUNT
-};
-
-struct Theme
-{
-    LPCWSTR name;
-    D3DCOLOR background;        // Behind everything
-    D3DCOLOR text[COLOR_COUNT]; // Indexed by Color
-    D3DCOLOR text_background;   // Box behind the *_BG text colors
-    D3DCOLOR panel;             // Menus, dialogs, the table (the alpha shows what's behind)
-    D3DCOLOR panel_border;
-    D3DCOLOR panel_line;        // Under titles and the table headers
-    D3DCOLOR selection;         // Selection bars, the selected button or key
-    D3DCOLOR button;            // Dialog buttons and keypad keys
-    D3DCOLOR map_free;          // Disk map: free space,
-    D3DCOLOR map_standard;      // standard partitions (1-5),
-    D3DCOLOR map_extended;      // extended partitions (6-14)
-    D3DCOLOR map_selected;      // and the selected one
 };
 
 enum Font

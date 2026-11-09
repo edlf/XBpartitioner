@@ -1,4 +1,3 @@
-#include "stdafx.h"
 #include "themes.h"
 
 // The first one (Outrun) is the default. The text roles keep their meaning

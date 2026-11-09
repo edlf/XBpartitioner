@@ -12,6 +12,7 @@
 #include "fatx_resize.hpp"
 #include "fatx_recluster.hpp"
 #include "fatx_trim.hpp"
+#include "pc_image.hpp"
 
 #include <filesystem>
 #include <stdio.h>
@@ -35,8 +36,9 @@ void usage()
             "Usage:\n"
             "  fatxtool check <image> [--partition N] [--offset BYTES] [--size BYTES]\n"
             "      Checks FATX file systems without writing. <image> is a partition\n"
-            "      image or a whole disk image; for a disk, every partition is checked\n"
-            "      unless you pick one (1 = E, 2 = C, 3 = X, 4 = Y, 5 = Z, 6 = F...).\n"
+            "      image, a whole disk image, or an Xbox drive (\\\\.\\PhysicalDriveN, as\n"
+            "      administrator); for a disk, every partition is checked unless you\n"
+            "      pick one (1 = E, 2 = C, 3 = X, 4 = Y, 5 = Z, 6 = F...).\n"
             "      Exits with 0 (no errors), 1 (errors) or 2 (couldn't check).\n"
             "\n"
             "  fatxtool repair <image> [--write] [--partition N] [--offset BYTES] [--size BYTES]\n"
@@ -54,7 +56,7 @@ void usage()
             "  fatxtool recluster <image> --resume [--partition N]\n"
             "      Changes the cluster size (16 to 1024 KB), keeping every file. Builds\n"
             "      the new file system in <image>.recluster.tmp, then copies it back.\n"
-            "      --resume repeats the copy after a power cut.\n"
+            "      --resume repeats the copy after a power cut. Images only.\n"
             "\n"
             "  fatxtool trim <disk> [--partition N] [--list] [--write]\n"
             "      TRIMs the free clusters of every FATX partition that checks clean.\n"
@@ -66,7 +68,9 @@ void usage()
             "      Creates a formatted partition image, optionally filled from DIR.\n"
             "      Sizes take K, M, G or T.\n"
             "\n"
-            "Commands that change anything only do so with --write. Work on a copy.\n");
+            "Commands that change anything only do so with --write. Work on a copy of\n"
+            "an image; on a drive, repair and resize write to the drive itself:\n"
+            "back it up first.\n");
 }
 
 // Parses "512M", "8G" or "4096" into bytes; 0 if invalid
@@ -113,39 +117,6 @@ uint64_t parse_size(const char *text)
     return (*end == '\0') ? value * scale : 0;
 }
 
-// E, C, X, Y, Z, then F, G, ...
-char partition_letter(int index)
-{
-    static const char standard[] = "ECXYZ";
-    return (index < XBOX_STANDARD_PARTITION_COUNT) ? standard[index] : (char)('F' + index - XBOX_STANDARD_PARTITION_COUNT);
-}
-
-// A file, starting at base (a partition inside a disk image)
-class FileDevice : public FatxDevice
-{
-  public:
-    FileDevice(FILE *file, uint64_t base) : m_file(file), m_base(base)
-    {
-    }
-    bool Read(uint64_t offset, void *buffer, uint32_t length) override
-    {
-        return _fseeki64(m_file, (__int64)(m_base + offset), SEEK_SET) == 0 && fread(buffer, 1, length, m_file) == length;
-    }
-    bool Write(uint64_t offset, const void *buffer, uint32_t length) override
-    {
-        return _fseeki64(m_file, (__int64)(m_base + offset), SEEK_SET) == 0 && fwrite(buffer, 1, length, m_file) == length;
-    }
-    // Flushes past Windows' cache
-    bool Sync() override
-    {
-        return fflush(m_file) == 0 && _commit(_fileno(m_file)) == 0;
-    }
-
-  private:
-    FILE *m_file;
-    uint64_t m_base;
-};
-
 class ConsoleProgress : public FatxProgress
 {
   public:
@@ -162,12 +133,6 @@ class ConsoleProgress : public FatxProgress
         }
     }
 };
-
-uint64_t file_size(FILE *file)
-{
-    _fseeki64(file, 0, SEEK_END);
-    return (uint64_t)_ftelli64(file);
-}
 
 enum Mode
 {
@@ -267,12 +232,12 @@ void print_repairs(const FatxRepairResult *repair, bool done)
 }
 
 // Checks or repairs one partition; returns its exit code
-int check_partition(FILE *file, uint64_t offset, uint64_t size, const char *label, Mode mode)
+int check_partition(FatxDevice &disk, uint64_t offset, uint64_t size, const char *label, Mode mode, bool drive)
 {
     printf("%s: %I64u MB at byte %I64u\n", label, size >> 20, offset);
     fflush(stdout); // Progress goes to stderr
 
-    FileDevice device(file, offset);
+    FatxOffsetDevice device(disk, offset);
     ConsoleProgress progress;
 
     if (mode == MODE_CHECK)
@@ -304,7 +269,8 @@ int check_partition(FILE *file, uint64_t offset, uint64_t size, const char *labe
         if (mode == MODE_REPAIR_DRY_RUN)
         {
             print_repairs(repair, false);
-            printf("  Nothing written: add --write to do it (copy the image first).\n");
+            printf(drive ? "  Nothing written: add --write to do it (back the drive up first).\n"
+                         : "  Nothing written: add --write to do it (copy the image first).\n");
             break;
         }
         print_repairs(repair, true);
@@ -364,21 +330,30 @@ int command_partitions(int argc, char **argv, Mode mode)
         }
     }
 
-    FILE *file = NULL;
-    if (fopen_s(&file, path, mode == MODE_REPAIR_WRITE ? "r+b" : "rb") != 0 || file == NULL)
+    DiskTarget target;
+    std::string error;
+    if (!target.Open(path, mode == MODE_REPAIR_WRITE, false, &error))
     {
-        fprintf(stderr, "Can't open %s\n", path);
+        fprintf(stderr, "%s\n", error.c_str());
         return EXIT_FAILED;
     }
-    const uint64_t image_size = file_size(file);
+    const uint64_t image_size = target.Size();
+    const bool drive = target.IsDrive();
 
     XboxPartitionTable table;
-    memset(&table, 0, sizeof(table));
-    _fseeki64(file, 0, SEEK_SET);
-    fread(&table, 1, sizeof(table), file);
+    const bool has_table = target.ReadTable(&table);
+    if (drive && !has_table && !manual)
+    {
+        fprintf(stderr, "No Xbox partition table on %s.\n", path);
+        return EXIT_FAILED;
+    }
+    if (drive && mode == MODE_REPAIR_WRITE)
+    {
+        printf("Writing to the drive itself.\n");
+    }
 
     int code = EXIT_CLEAN;
-    if (!manual && XboxPartitionTableManipulator::HasMagic(table))
+    if (!manual && has_table)
     {
         // A disk image: go through its table
         const bool high_bits = table.Version != XBOX_TABLE_VERSION_LBA48_V3;
@@ -399,7 +374,7 @@ int command_partitions(int argc, char **argv, Mode mode)
                 printf("%s: ends past the end of the image, not checked.\n", label);
                 continue;
             }
-            const int result = check_partition(file, start * HDD_SECTOR_SIZE, sectors * HDD_SECTOR_SIZE, label, mode);
+            const int result = check_partition(target.Device(), start * HDD_SECTOR_SIZE, sectors * HDD_SECTOR_SIZE, label, mode, drive);
             code = (result > code) ? result : code;
             checked++;
         }
@@ -421,94 +396,9 @@ int command_partitions(int argc, char **argv, Mode mode)
             size = (image_size > offset) ? image_size - offset : 0;
         }
         size -= size % HDD_SECTOR_SIZE;
-        code = check_partition(file, offset, size, "Partition", mode);
+        code = check_partition(target.Device(), offset, size, "Partition", mode, drive);
     }
-
-    fclose(file);
     return code;
-}
-
-// The file name if the Xbox accepts it, otherwise empty
-std::string xbox_name(const fs::path &path)
-{
-    const std::string name = path.filename().string();
-    if (name.empty() || name.size() > FATX_MAX_NAME_LENGTH)
-    {
-        return std::string();
-    }
-    for (char c : name)
-    {
-        const unsigned char u = (unsigned char)c;
-        if (u < 0x20 || u >= 0x7F || strchr("\"*/:<>?\\|", u) != NULL)
-        {
-            return std::string();
-        }
-    }
-    return name;
-}
-
-class StreamSource : public FatxSource
-{
-  public:
-    explicit StreamSource(FILE *file) : m_file(file)
-    {
-    }
-    bool Read(void *buffer, uint32_t length) override
-    {
-        return fread(buffer, 1, length, m_file) == length;
-    }
-
-  private:
-    FILE *m_file;
-};
-
-bool copy_tree(FatxWriter &writer, const fs::path &from, uint32_t dir, int *skipped)
-{
-    std::error_code error;
-    for (const fs::directory_entry &item : fs::directory_iterator(from, error))
-    {
-        const std::string name = xbox_name(item.path());
-        if (name.empty())
-        {
-            fprintf(stderr, "Skipped (name too long or not allowed): %s\n", item.path().string().c_str());
-            (*skipped)++;
-            continue;
-        }
-
-        if (item.is_directory(error))
-        {
-            uint32_t sub;
-            if (!writer.MakeDirectory(dir, name.c_str(), &sub) || !copy_tree(writer, item.path(), sub, skipped))
-            {
-                return false;
-            }
-            continue;
-        }
-
-        const uint64_t size = item.file_size(error);
-        if (error || size > 0xFFFFFFFFULL)
-        {
-            fprintf(stderr, "Skipped (4 GB or bigger, or unreadable): %s\n", item.path().string().c_str());
-            (*skipped)++;
-            continue;
-        }
-        FILE *file = NULL;
-        if (_wfopen_s(&file, item.path().wstring().c_str(), L"rb") != 0 || file == NULL)
-        {
-            fprintf(stderr, "Skipped (can't open): %s\n", item.path().string().c_str());
-            (*skipped)++;
-            continue;
-        }
-        StreamSource source(file);
-        const bool ok = writer.AddFile(dir, name.c_str(), (uint32_t)size, source);
-        fclose(file);
-        if (!ok)
-        {
-            fprintf(stderr, "Couldn't add %s (image full?)\n", item.path().string().c_str());
-            return false;
-        }
-    }
-    return !error;
 }
 
 int command_make(int argc, char **argv)
@@ -570,7 +460,7 @@ int command_make(int argc, char **argv)
     int skipped = 0;
     if (ok && from != NULL)
     {
-        ok = copy_tree(writer, fs::u8path(from), writer.RootCluster(), &skipped);
+        ok = copy_tree(writer, fs::u8path(from), writer.RootCluster(), &skipped, [](const std::string &line) { fprintf(stderr, "%s\n", line.c_str()); });
     }
     ok = writer.Flush() && ok;
     fclose(file);
@@ -594,75 +484,6 @@ void print_mb(const char *label, uint64_t lba)
 {
     printf("%s%I64u.%02I64u MB", label, (lba * HDD_SECTOR_SIZE) >> 20, ((lba * HDD_SECTOR_SIZE) % (1 << 20)) * 100 >> 20);
 }
-
-// Updates backup copies of the table, found in the last sector or the
-// last 4K block
-void update_backup_tables(FILE *file, uint64_t image_size, const XboxPartitionTable &old_table, const XboxPartitionTable &new_table)
-{
-    const uint64_t sectors = image_size / HDD_SECTOR_SIZE;
-    const uint64_t candidates[] = {(sectors & ~(uint64_t)(LBA_ALIGNMENT - 1)) - LBA_ALIGNMENT, sectors - 1};
-    for (uint64_t lba : candidates)
-    {
-        XboxPartitionTable backup;
-        if (_fseeki64(file, (__int64)(lba * HDD_SECTOR_SIZE), SEEK_SET) != 0 || fread(&backup, 1, sizeof(backup), file) != sizeof(backup))
-        {
-            continue;
-        }
-        XboxPartitionTable a = backup;
-        XboxPartitionTable b = old_table;
-        a.Version = b.Version = 0;
-        if (memcmp(&a, &b, sizeof(a)) != 0)
-        {
-            continue;
-        }
-        XboxPartitionTable updated = new_table;
-        updated.Version = backup.Version; // Keep a Titan backup's version
-        _fseeki64(file, (__int64)(lba * HDD_SECTOR_SIZE), SEEK_SET);
-        fwrite(&updated, 1, sizeof(updated), file);
-    }
-}
-
-// Stores a new partition size: the file length for a partition image, or
-// the table entry (and backup) for a disk image
-class ImageTable : public FatxResizeTable
-{
-  public:
-    // index -1 means a partition image
-    ImageTable(FILE *file, int index) : m_file(file), m_index(index)
-    {
-    }
-
-    bool SetSize(uint64_t new_lba_size) override
-    {
-        if (m_index < 0)
-        {
-            return fflush(m_file) == 0 && _chsize_s(_fileno(m_file), (__int64)(new_lba_size * HDD_SECTOR_SIZE)) == 0;
-        }
-
-        XboxPartitionTable table;
-        if (_fseeki64(m_file, 0, SEEK_SET) != 0 || fread(&table, 1, sizeof(table), m_file) != sizeof(table))
-        {
-            return false;
-        }
-        const XboxPartitionTable old_table = table;
-        XboxPartitionTableEntry &entry = table.TableEntries[m_index];
-        entry.LBASize = (uint32_t)new_lba_size;
-        if (table.Version != XBOX_TABLE_VERSION_LBA48_V3)
-        {
-            entry.LBASize_high = (uint16_t)(new_lba_size >> 32);
-        }
-        if (_fseeki64(m_file, 0, SEEK_SET) != 0 || fwrite(&table, 1, sizeof(table), m_file) != sizeof(table))
-        {
-            return false;
-        }
-        update_backup_tables(m_file, file_size(m_file), old_table, table);
-        return fflush(m_file) == 0;
-    }
-
-  private:
-    FILE *m_file;
-    int m_index;
-};
 
 // Checks a partition after it was changed
 int check_resized(FatxDevice &device, uint64_t lba_size, ConsoleProgress &progress)
@@ -699,7 +520,7 @@ void print_keeping_sizes(FatxDevice &device, uint64_t old_lba, uint64_t new_lba)
 }
 
 // Resizes by moving clusters; returns the exit code
-int resize_with_moves(FatxDevice &device, ImageTable &table, uint64_t old_lba, uint64_t new_lba, bool write, ConsoleProgress &progress)
+int resize_with_moves(FatxDevice &device, FatxResizeTable &table, uint64_t old_lba, uint64_t new_lba, bool write, bool drive, ConsoleProgress &progress)
 {
     FatxMoveResult *move = new FatxMoveResult;
     FatxResizeWithMoves(device, old_lba, new_lba, table, write, move, &progress);
@@ -728,7 +549,8 @@ int resize_with_moves(FatxDevice &device, ImageTable &table, uint64_t old_lba, u
     switch (move->status)
     {
     case FATX_MOVE_PLANNED:
-        printf("  Nothing written: add --write to do it (copy the image first).\n");
+        printf(drive ? "  Nothing written: add --write to do it (back the drive up first).\n"
+                     : "  Nothing written: add --write to do it (copy the image first).\n");
         code = EXIT_CLEAN;
         break;
     case FATX_MOVE_DONE:
@@ -820,19 +642,23 @@ int command_resize(int argc, char **argv)
     }
     const uint64_t new_lba = new_bytes / HDD_SECTOR_SIZE;
 
-    FILE *file = NULL;
-    if (fopen_s(&file, path, (write || resume) ? "r+b" : "rb") != 0 || file == NULL)
+    DiskTarget target;
+    std::string error;
+    if (!target.Open(path, write || resume, false, &error))
     {
-        fprintf(stderr, "Can't open %s\n", path);
+        fprintf(stderr, "%s\n", error.c_str());
         return EXIT_FAILED;
     }
-    const uint64_t image_size = file_size(file);
+    const uint64_t image_size = target.Size();
+    const bool drive = target.IsDrive();
 
     XboxPartitionTable table;
-    memset(&table, 0, sizeof(table));
-    _fseeki64(file, 0, SEEK_SET);
-    fread(&table, 1, sizeof(table), file);
-    const bool disk_image = XboxPartitionTableManipulator::HasMagic(table);
+    const bool disk_image = target.ReadTable(&table);
+    if (drive && !disk_image)
+    {
+        fprintf(stderr, "No Xbox partition table on %s.\n", path);
+        return EXIT_FAILED;
+    }
 
     uint64_t start = 0;
     uint64_t old_lba = image_size / HDD_SECTOR_SIZE;
@@ -840,29 +666,26 @@ int command_resize(int argc, char **argv)
     {
         if (only < 1 || only > (int)XboxPartitionTableEntryCount || table.TableEntries[only - 1].Flags != PE_PARTFLAGS_IN_USE)
         {
-            fprintf(stderr, "A disk image needs --partition N, for a partition in its table.\n");
-            fclose(file);
+            fprintf(stderr, "A disk needs --partition N, for a partition in its table.\n");
             return EXIT_FAILED;
         }
-        // The high bits only count from v4 on
-        const XboxPartitionTableManipulator editor(table, image_size / HDD_SECTOR_SIZE, table.Version != XBOX_TABLE_VERSION_LBA48_V3, false);
+        // The high bits only count from v4 on. 4K: keeps clear of the last 4K
+        // block, where XBpartitioner puts the backup on 512e drives (and the
+        // last sector, where it goes otherwise, is inside or past it).
+        const XboxPartitionTableManipulator editor(table, image_size / HDD_SECTOR_SIZE, table.Version != XBOX_TABLE_VERSION_LBA48_V3, true);
         start = editor.GetPartitionStart(only - 1);
         old_lba = editor.GetPartitionSize(only - 1);
 
-        // Check it fits in the image and next to the other partitions
-        bool fits = resume || (start + new_lba) * HDD_SECTOR_SIZE <= image_size;
-        for (int i = 0; i < XboxPartitionTableEntryCount && fits; i++)
+        // Growing stops where XBpartitioner stops it: at the next partition,
+        // or before the backup table at the end of the disk
+        if (!resume && new_lba > old_lba && new_lba - old_lba > editor.GetGrowthLimit(only - 1))
         {
-            if (i != only - 1 && editor.isPartitionEnabled(i) && editor.GetPartitionStart(i) < start + new_lba &&
-                start < editor.GetPartitionStart(i) + editor.GetPartitionSize(i))
-            {
-                fits = false;
-            }
-        }
-        if (!fits)
-        {
-            fprintf(stderr, "Partition %d can't grow that far: the image ends or another partition is in the way.\n", only);
-            fclose(file);
+            const uint64_t most = (old_lba + editor.GetGrowthLimit(only - 1)) * HDD_SECTOR_SIZE;
+            fprintf(stderr,
+                    "Partition %d can't grow that far: at most to %I64u.%02I64u MB (the next partition, or the end of the disk and its backup table).\n",
+                    only,
+                    most >> 20,
+                    ((most % (1 << 20)) * 100) >> 20);
             return EXIT_FAILED;
         }
         printf("Partition %d (%c): ", only, partition_letter(only - 1));
@@ -870,26 +693,29 @@ int command_resize(int argc, char **argv)
     else if (only != 0)
     {
         fprintf(stderr, "--partition needs a whole disk image (with a partition table).\n");
-        fclose(file);
         return EXIT_FAILED;
     }
     else
     {
         printf("Partition: ");
     }
+    if (drive && (write || resume))
+    {
+        printf("(writing to the drive itself) ");
+    }
 
-    FileDevice device(file, start * HDD_SECTOR_SIZE);
-    ImageTable table_writer(file, disk_image ? only - 1 : -1);
+    FatxOffsetDevice device(target.Device(), start * HDD_SECTOR_SIZE);
+    std::unique_ptr<FatxResizeTable> table_owner = target.Table(disk_image ? only - 1 : -1);
+    FatxResizeTable &table_writer = *table_owner;
     ConsoleProgress progress;
     int code = EXIT_CLEAN;
 
     uint64_t interrupted_old, interrupted_new;
     const bool interrupted = FatxFindInterruptedResize(device, &interrupted_old, &interrupted_new);
-    std::error_code error;
-    if (!interrupted && fs::exists(std::string(path) + ".recluster", error))
+    std::error_code fs_error;
+    if (!interrupted && !drive && fs::exists(std::string(path) + ".recluster", fs_error))
     {
         printf("unfinished cluster size change: finish it with fatxtool recluster %s --resume.\n", path);
-        fclose(file);
         return EXIT_FAILED;
     }
     if (resume || interrupted)
@@ -897,7 +723,6 @@ int command_resize(int argc, char **argv)
         if (!interrupted)
         {
             printf("no interrupted resize to finish.\n");
-            fclose(file);
             return EXIT_FAILED;
         }
         print_mb("interrupted resize from ", interrupted_old);
@@ -906,7 +731,6 @@ int command_resize(int argc, char **argv)
         if (!resume)
         {
             printf("  Finish it first: fatxtool resize %s --resume%s.\n", path, disk_image ? " --partition N" : "");
-            fclose(file);
             return EXIT_FAILED;
         }
         fflush(stdout);
@@ -922,7 +746,6 @@ int command_resize(int argc, char **argv)
             code = EXIT_FAILED;
         }
         delete move;
-        fclose(file);
         return code;
     }
 
@@ -950,7 +773,7 @@ int command_resize(int argc, char **argv)
         printf("  Not FATX: there is no data to keep.\n");
         break;
     case FATX_RESIZE_OUT_OF_RANGE:
-        code = resize_with_moves(device, table_writer, old_lba, new_lba, write, progress);
+        code = resize_with_moves(device, table_writer, old_lba, new_lba, write, drive, progress);
         break;
     case FATX_RESIZE_CLUSTERS_IN_USE:
         printf("  %I64u clusters past the new end are in use%s.\n",
@@ -978,7 +801,8 @@ int command_resize(int argc, char **argv)
 
     if (in_place && !write)
     {
-        printf("  Nothing written: add --write to do it (copy the image first).\n");
+        printf(drive ? "  Nothing written: add --write to do it (back the drive up first).\n"
+                     : "  Nothing written: add --write to do it (copy the image first).\n");
     }
     else if (in_place && write)
     {
@@ -993,102 +817,10 @@ int command_resize(int argc, char **argv)
             code = check_resized(device, new_lba, progress);
         }
     }
-
-    fclose(file);
     return code;
 }
 
 // ---- recluster
-
-const char RECLUSTER_MAGIC[8] = {'X', 'B', 'P', 'R', 'C', 'L', '0', '1'};
-
-#pragma pack(push, 1)
-typedef struct
-{
-    char magic[8];
-    uint64_t partition_offset; // Bytes into the image
-    uint64_t lba_size;
-    uint32_t new_cluster_bytes;
-    uint32_t range_count;
-} ReclusterPlanHeader;
-#pragma pack(pop)
-
-uint32_t fnv1a(const void *data, size_t length, uint32_t hash = 2166136261u)
-{
-    const unsigned char *bytes = (const unsigned char *)data;
-    for (size_t i = 0; i < length; i++)
-    {
-        hash = (hash ^ bytes[i]) * 16777619u;
-    }
-    return hash;
-}
-
-// Saves <image>.recluster, the list of what to copy from the .tmp file.
-// Written to a .part file first, then renamed.
-bool save_recluster_plan(const std::string &path, const ReclusterPlanHeader &header, const std::vector<FatxRange> &ranges)
-{
-    const std::string part = path + ".part";
-    FILE *file = NULL;
-    if (fopen_s(&file, part.c_str(), "wb") != 0 || file == NULL)
-    {
-        return false;
-    }
-    uint32_t checksum = fnv1a(&header, sizeof(header));
-    bool ok = fwrite(&header, 1, sizeof(header), file) == sizeof(header);
-    for (const FatxRange &range : ranges)
-    {
-        checksum = fnv1a(&range, sizeof(range), checksum);
-        ok = ok && fwrite(&range, 1, sizeof(range), file) == sizeof(range);
-    }
-    ok = ok && fwrite(&checksum, 1, sizeof(checksum), file) == sizeof(checksum);
-    ok = ok && fflush(file) == 0 && _commit(_fileno(file)) == 0;
-    fclose(file);
-    std::error_code error;
-    if (ok)
-    {
-        fs::rename(part, path, error);
-    }
-    return ok && !error;
-}
-
-bool load_recluster_plan(const std::string &path, ReclusterPlanHeader *header, std::vector<FatxRange> *ranges)
-{
-    FILE *file = NULL;
-    if (fopen_s(&file, path.c_str(), "rb") != 0 || file == NULL)
-    {
-        return false;
-    }
-    bool ok = fread(header, 1, sizeof(*header), file) == sizeof(*header) && memcmp(header->magic, RECLUSTER_MAGIC, sizeof(RECLUSTER_MAGIC)) == 0;
-    uint32_t checksum = fnv1a(header, sizeof(*header));
-    for (uint32_t i = 0; ok && i < header->range_count; i++)
-    {
-        FatxRange range;
-        ok = fread(&range, 1, sizeof(range), file) == sizeof(range);
-        checksum = fnv1a(&range, sizeof(range), checksum);
-        ranges->push_back(range);
-    }
-    uint32_t stored = 0;
-    ok = ok && fread(&stored, 1, sizeof(stored), file) == sizeof(stored) && stored == checksum;
-    fclose(file);
-    return ok;
-}
-
-// Unwritten parts then take no space (NTFS only)
-void make_sparse(FILE *file)
-{
-#ifndef FSCTL_SET_SPARSE
-#define FSCTL_SET_SPARSE 0x000900C4
-#endif
-    DWORD returned = 0;
-    DeviceIoControl((HANDLE)_get_osfhandle(_fileno(file)), FSCTL_SET_SPARSE, NULL, 0, NULL, 0, &returned, NULL);
-}
-
-void remove_recluster_files(const std::string &plan_path, const std::string &build_path)
-{
-    std::error_code error;
-    fs::remove(plan_path, error);
-    fs::remove(build_path, error);
-}
 
 // Copies the built file system back; also used by --resume
 int copy_reclustered(FILE *image, uint64_t partition_offset, uint64_t lba_size, const std::string &plan_path, const std::string &build_path,
@@ -1142,6 +874,11 @@ int command_recluster(int argc, char **argv)
             usage();
             return EXIT_FAILED;
         }
+    }
+    if (DiskTarget::IsDrivePath(path))
+    {
+        fprintf(stderr, "recluster needs an image: it builds the new file system as a full copy first.\n");
+        return EXIT_FAILED;
     }
     const std::string plan_path = path + ".recluster";
     const std::string build_path = path + ".recluster.tmp";
@@ -1337,22 +1074,6 @@ int command_recluster(int argc, char **argv)
 }
 
 // ---- trim
-
-// Decodes an IDENTIFY string (byte swapped)
-std::string identify_string(const uint16_t *words, int count)
-{
-    std::string text;
-    for (int i = 0; i < count; i++)
-    {
-        text += (char)(words[i] >> 8);
-        text += (char)(words[i] & 0xFF);
-    }
-    while (!text.empty() && (text.back() == ' ' || text.back() == '\0'))
-    {
-        text.pop_back();
-    }
-    return text;
-}
 
 int command_trim(int argc, char **argv)
 {
