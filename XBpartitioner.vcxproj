@@ -125,6 +125,7 @@ if not exist "$(OutDir)XISO" mkdir "$(OutDir)XISO"
     <ClCompile Include="src\background.cpp" />
     <ClCompile Include="src\layout.cpp" />
     <ClCompile Include="src\partition.cpp" />
+    <ClCompile Include="src\fatx_check.cpp" />
     <ClCompile Include="src\prometheos_code.cpp" />
     <!-- Library helpers can't be built with whole program optimization -->
     <ClCompile Include="src\rxdk_compat.cpp">
@@ -137,6 +138,7 @@ if not exist "$(OutDir)XISO" mkdir "$(OutDir)XISO"
     <ClCompile Include="src\app_checks.cpp" />
     <ClCompile Include="src\app_disk.cpp" />
     <ClCompile Include="src\app_editor.cpp" />
+    <ClCompile Include="src\app_fsck.cpp" />
     <ClCompile Include="src\app_info.cpp" />
     <ClCompile Include="src\app_input.cpp" />
     <ClCompile Include="src\app_mainscreen.cpp" />
@@ -158,6 +160,7 @@ if not exist "$(OutDir)XISO" mkdir "$(OutDir)XISO"
     <ClInclude Include="src\font_title_720.h" />
     <ClInclude Include="src\layout.h" />
     <ClInclude Include="src\partition.hpp" />
+    <ClInclude Include="src\fatx_check.hpp" />
     <ClInclude Include="src\prometheos_code.h" />
     <ClInclude Include="src\stdafx.h" />
     <ClInclude Include="src\themes.h" />

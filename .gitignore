@@ -66,3 +66,6 @@ tests/packages/
 
 # RXDK builds (xbe, ISO, objects)
 /build/
+
+# fatxtool builds
+tools/fatxtool/build/

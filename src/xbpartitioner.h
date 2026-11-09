@@ -3,6 +3,7 @@
 
 #include <Xtl.h>
 #include "partition.hpp"
+#include "fatx_check.hpp"
 #include "Undocumented.h"
 #include "ui.h"
 #include "layout.h"
@@ -221,6 +222,15 @@ private:
     void DoWriteTable();
     void DoFormatAll();
     void DoFormatOne();
+    // FATX check of the selected partition, or of one partition, offering
+    // the safe repairs when they apply (src/app_fsck.cpp)
+    void DoCheckFileSystem();
+    void CheckFileSystem(int partition);
+    // Check (write false: a dry run of the repairs) or repair, on a thread
+    // behind the busy window
+    void RunFsckJob(int partition, bool write, LPCWSTR verb, FatxRepairResult *repair);
+    bool ShowCheckResult(int partition, const FatxCheckResult &result, LPCWSTR extra_line, bool offer_repair);
+    void RepairFileSystem(int partition, const FatxRepairResult &plan);
     bool format_partition(const int i);
 
     ULONGLONG get_hdd_size();

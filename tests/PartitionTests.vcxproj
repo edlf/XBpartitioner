@@ -40,7 +40,7 @@
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
       <SDLCheck>true</SDLCheck>
-      <AdditionalIncludeDirectories>$(MSBuildThisFileDirectory)..\src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(MSBuildThisFileDirectory)..\src;$(MSBuildThisFileDirectory)..\tools\fatxtool;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
     <Link>
@@ -68,10 +68,15 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="partition_tests.cpp" />
+    <ClCompile Include="fatx_tests.cpp" />
     <ClCompile Include="..\src\partition.cpp" />
+    <ClCompile Include="..\src\fatx_check.cpp" />
+    <ClCompile Include="..\tools\fatxtool\fatx_writer.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\src\partition.hpp" />
+    <ClInclude Include="..\src\fatx_check.hpp" />
+    <ClInclude Include="..\tools\fatxtool\fatx_writer.hpp" />
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />

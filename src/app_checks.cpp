@@ -365,6 +365,18 @@ bool App::OfferShrinkForBackup()
         wchar_t done[80];
         swprintf(done, backup_written ? L"Partition %d shrunk by 4 KB, backup table written." : L"Partition %d shrunk by 4 KB.", part + 1);
         ShowMessage(L"Done", COLOR_GREEN, done);
+
+        // A mounted volume keeps the old size, and could put a file in the
+        // freed block (where the backup now is) until it's mounted again.
+        // This program's own partition can't be unmounted, but nothing
+        // writes to it: the settings aren't saved once it changed size.
+        if (part != m_LaunchPartition)
+        {
+            IoDismountVolumeByName(&m_PartitionPaths[part]);
+        }
+
+        // Shows that its file system still reads as before
+        CheckFileSystem(part);
     }
     else
     {
@@ -394,9 +406,10 @@ bool App::ShrinkKeepsData(int partition)
         return true; // No file system: no layout to keep
     }
 
-    // 0 (left by some formatters for big clusters) or garbage: can't check
+    // 0 (left by some formatters for big clusters) or garbage: can't check.
+    // Under 4 KB (never on an Xbox) the block would hold several clusters.
     const uint32_t sectors_per_cluster = header.SectorsPerCluster;
-    if (sectors_per_cluster == 0 || (sectors_per_cluster & (sectors_per_cluster - 1)) != 0)
+    if (sectors_per_cluster < LBA_ALIGNMENT || (sectors_per_cluster & (sectors_per_cluster - 1)) != 0)
     {
         return false;
     }
@@ -409,7 +422,7 @@ bool App::ShrinkKeepsData(int partition)
         return false;
     }
 
-    // Clusters are at least 16 KB and 4 KB aligned: the block is in one or none
+    // Clusters are at least 4 KB and 4 KB aligned: the block is in one or none
     const uint64_t cluster = FatxClusterAt(before, cluster_bytes, (size - LBA_ALIGNMENT) * HDD_SECTOR_SIZE);
     if (cluster == 0)
     {

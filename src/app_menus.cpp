@@ -9,6 +9,7 @@ enum MenuItem
 {
     MENU_EDIT_PARTITION = 0,
     MENU_FORMAT_SELECTED,
+    MENU_CHECK_SELECTED,
     MENU_UNDO_ALL,
     MENU_PARTITION_TABLE,
     MENU_SYSTEM_INFO,
@@ -31,10 +32,14 @@ void App::DisplayStartMenu()
         wchar_t format_label[60];
         swprintf(format_label, L"Format partition %d (%d KB clusters)", m_CurrentPart + 1, m_pTable->CalculateClusterSizeForPartition(m_CurrentPart));
 
+        wchar_t check_label[60];
+        swprintf(check_label, L"Check file system on partition %d", m_CurrentPart + 1);
+
         // Indexed by MenuItem
         const LPCWSTR labels[MENU_ITEM_COUNT] = {
             edit_label,
             format_label,
+            check_label,
             L"Undo all changes since the last write",
             L"Partition table...",
             L"System information",
@@ -49,6 +54,8 @@ void App::DisplayStartMenu()
             enabled[i] = true;
         }
         enabled[MENU_FORMAT_SELECTED] = m_pTable->isPartitionEnabled(m_CurrentPart);
+        // What is on disk, so the table as written
+        enabled[MENU_CHECK_SELECTED] = m_pTableOriginal->isPartitionEnabled(m_CurrentPart);
         enabled[MENU_UNDO_ALL] = CheckIfPartitionTableChanged();
 
         selected = RunMenu(L"Menu", labels, enabled, MENU_ITEM_COUNT, selected, false);
@@ -60,6 +67,9 @@ void App::DisplayStartMenu()
             return;
         case MENU_FORMAT_SELECTED:
             DoFormatOne();
+            return;
+        case MENU_CHECK_SELECTED:
+            DoCheckFileSystem();
             return;
         case MENU_PARTITION_TABLE:
             if (DisplayPartitionTableMenu())

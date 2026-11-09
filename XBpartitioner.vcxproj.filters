@@ -17,6 +17,7 @@
     <ClCompile Include="src\background.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="src\layout.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="src\partition.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="src\fatx_check.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="src\prometheos_code.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="src\rxdk_compat.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="src\stdafx.cpp"><Filter>Source Files</Filter></ClCompile>
@@ -26,6 +27,7 @@
     <ClCompile Include="src\app_checks.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="src\app_disk.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="src\app_editor.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="src\app_fsck.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="src\app_info.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="src\app_input.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="src\app_mainscreen.cpp"><Filter>Source Files</Filter></ClCompile>
@@ -47,6 +49,7 @@
     <ClInclude Include="src\font_title_720.h"><Filter>Header Files\Fonts</Filter></ClInclude>
     <ClInclude Include="src\layout.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="src\partition.hpp"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="src\fatx_check.hpp"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="src\prometheos_code.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="src\stdafx.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="src\themes.h"><Filter>Header Files</Filter></ClInclude>

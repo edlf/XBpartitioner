@@ -1176,6 +1176,17 @@ IoDeleteSymbolicLink(
 	IN PANSI_STRING SymbolicLinkName
 	);
 
+// IoDismountVolumeByName:
+// Unmounts the file system on a device (e.g. "\Device\Harddisk0\Partition6"),
+// dropping its cached FAT and directories. The next access mounts it again.
+NTSYSAPI
+EXPORTNUM(91)
+NTSTATUS
+NTAPI
+IoDismountVolumeByName(
+	IN PANSI_STRING DeviceName
+	);
+
 
 // ObReferenceObjectByHandle:
 // Turns a handle into a kernel object pointer.  The ObjectType parameter
