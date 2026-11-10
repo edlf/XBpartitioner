@@ -4,6 +4,7 @@
 #include "xbpartitioner.h"
 #include "app_internal.h"
 #include "fatx_check.hpp"
+#include "fatx_format.hpp"
 #include "fatx_resize.hpp"
 
 // One partition, accessed through the whole-disk device
@@ -99,7 +100,8 @@ enum FsckJobKind
     JOB_RESIZE_CHECK, // Can a table change alone keep the data?
     JOB_MOVE_RESIZE,  // Resize with moves, or check it can be done
     JOB_RESUME,       // Finish an interrupted resize
-    JOB_USAGE         // Read how much is in use
+    JOB_USAGE,        // Read how much is in use
+    JOB_FORMAT        // A new, empty file system
 };
 
 // Disk work for a worker thread, so the screen keeps animating
@@ -115,6 +117,8 @@ struct FsckJob : public FatxProgress
     FatxMoveResult *move;
     FatxResizeTable *table;
     FatxUsage *usage;
+    uint32_t cluster_bytes; // JOB_FORMAT
+    uint32_t serial;
     bool ok;
     volatile LONG percent; // Read by the main thread
 
@@ -141,6 +145,9 @@ static DWORD WINAPI fsck_thread(LPVOID parameter)
         break;
     case JOB_USAGE:
         job->ok = FatxReadUsage(device, job->lba_size, job->usage, job);
+        break;
+    case JOB_FORMAT:
+        job->ok = FatxFormat(device, job->lba_size, job->cluster_bytes, job->serial, job);
         break;
     default:
         FatxRepair(device, job->lba_size * HDD_SECTOR_SIZE, job->repair, job->write, job);
@@ -189,6 +196,8 @@ static void init_job(FsckJob *job, FsckJobKind kind)
     job->move = NULL;
     job->table = NULL;
     job->usage = NULL;
+    job->cluster_bytes = 0;
+    job->serial = 0;
     job->ok = false;
     job->percent = 0;
 }
@@ -238,6 +247,20 @@ bool App::EnsureUsage(int partition)
     job.usage = &m_Usage[partition];
     RunFsckThread(partition, L"Reading", job);
     m_UsageKnown[partition] = job.ok;
+    return job.ok;
+}
+
+bool App::RunFormatJob(int partition, uint32_t cluster_bytes)
+{
+    // A volume serial that differs from format to format, like the kernel's
+    FILETIME now;
+    GetSystemTimeAsFileTime(&now);
+    FsckJob job;
+    init_job(&job, JOB_FORMAT);
+    job.write = true;
+    job.cluster_bytes = cluster_bytes;
+    job.serial = (now.dwLowDateTime ^ now.dwHighDateTime ^ GetTickCount()) * 2654435761u + (uint32_t)partition;
+    RunFsckThread(partition, L"Formatting", job);
     return job.ok;
 }
 

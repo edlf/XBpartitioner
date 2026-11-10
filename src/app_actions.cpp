@@ -3,7 +3,6 @@
 #include "stdafx.h"
 #include "xbpartitioner.h"
 #include "app_internal.h"
-#include "prometheos_code.h" // largePartitionFixup
 
 // Lists what will be formatted and calls out E and C. True to go ahead.
 bool App::ConfirmFormatWarning(bool format_changed, const bool *kept, LPCWSTR reason, const bool *moved)
@@ -378,24 +377,6 @@ void App::DoEraseTable()
     }
 }
 
-// Formatting runs on a worker thread (see RunWithBusyWindow)
-struct FormatJob
-{
-    PANSI_STRING path;
-    ULONG cluster_bytes;
-    bool formatted;
-    bool fixed_up;
-};
-
-static DWORD WINAPI format_thread(LPVOID parameter)
-{
-    FormatJob *job = (FormatJob *)parameter;
-    // Returns a BOOL, not an NTSTATUS
-    job->formatted = XapiFormatFATVolumeEx(job->path, job->cluster_bytes) != FALSE;
-    job->fixed_up = job->formatted && largePartitionFixup(job->path, job->cluster_bytes);
-    return 0;
-}
-
 bool App::format_partition(const int i)
 {
     // Last line of defence, the callers explain it first.
@@ -406,8 +387,10 @@ bool App::format_partition(const int i)
         return false;
     }
 
-    // v3 kernels only mount clusters up to 64 KB
-    const int cluster_size = m_pTable->CalculateClusterSizeForPartition(i);
+    // From the partition's size on disk, the one that's formatted (any size,
+    // stock or not, for every partition). v3 kernels only mount clusters up
+    // to 64 KB.
+    const int cluster_size = m_pTableOriginal->CalculateClusterSizeForPartition(i);
     const unsigned int max_cluster = m_pTable->GetMaxClusterSize();
     if (max_cluster != 0 && (unsigned int)cluster_size > max_cluster)
     {
@@ -427,34 +410,29 @@ bool App::format_partition(const int i)
         m_ThemeSaveBlocked = true;
     }
 
-    FormatJob job;
-    job.path = &m_PartitionPaths[i];
-    job.cluster_bytes = cluster_size << 10;
-    job.formatted = false;
-    job.fixed_up = false;
-
-    wchar_t busy[80];
-    swprintf(busy, L"Formatting partition %d (%c) with %d KB clusters...", i + 1, partition_letter(i), cluster_size);
-    RunWithBusyWindow(format_thread, &job, busy);
-
-    // The header changed (or is half written): re-read it
-    m_ClusterSizes[i] = get_cluster_size_from_partition(m_PartitionPaths[i]);
-
-    if (!job.formatted || !job.fixed_up)
+    // The kernel's cached view of the old file system must not write over the new one
+    const NTSTATUS dismounted = IoDismountVolumeByName(&m_PartitionPaths[i]);
+    if (!NT_SUCCESS(dismounted))
     {
-        wchar_t error[60];
-        if (!job.formatted)
-        {
-            swprintf(error, L"Partition %d could not be formatted.", i + 1);
-        }
-        else
-        {
-            swprintf(error, L"Partition %d: setting the cluster size failed.", i + 1);
-        }
+        wchar_t error[80];
+        swprintf(error, L"Partition %d: unmounting failed (0x%08X), not formatted.", i + 1, dismounted);
         ShowMessage(L"Error", COLOR_RED, error);
         return false;
     }
 
+    const bool formatted = RunFormatJob(i, (uint32_t)cluster_size << 10);
+
+    // The header changed (or the old one is wiped): re-read it
+    m_ClusterSizes[i] = get_cluster_size_from_partition(m_PartitionPaths[i]);
+    m_UsageKnown[i] = false;
+
+    if (!formatted)
+    {
+        wchar_t error[80];
+        swprintf(error, L"Partition %d could not be formatted (write error).", i + 1);
+        ShowMessage(L"Error", COLOR_RED, error);
+        return false;
+    }
     return true;
 }
 

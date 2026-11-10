@@ -74,8 +74,10 @@
     <ClCompile Include="fatx_recluster_tests.cpp" />
     <ClCompile Include="fatx_trim_tests.cpp" />
     <ClCompile Include="pc_disk_tests.cpp" />
+    <ClCompile Include="fatx_format_tests.cpp" />
     <ClCompile Include="..\src\partition.cpp" />
     <ClCompile Include="..\src\fatx_check.cpp" />
+    <ClCompile Include="..\src\fatx_format.cpp" />
     <ClCompile Include="..\src\fatx_resize.cpp" />
     <ClCompile Include="..\tools\fatxtool\fatx_writer.cpp" />
     <ClCompile Include="..\tools\fatxtool\fatx_recluster.cpp" />

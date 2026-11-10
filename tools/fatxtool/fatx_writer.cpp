@@ -1,4 +1,5 @@
 #include "fatx_writer.hpp"
+#include "fatx_format.hpp"
 #include <string.h>
 
 bool FatxMemoryDevice::Read(uint64_t offset, void *buffer, uint32_t length)
@@ -69,33 +70,15 @@ uint64_t FatxWriter::ClusterOffset(uint32_t cluster) const
     return m_layout.data_offset + (uint64_t)(cluster - 1) * m_cluster_bytes;
 }
 
+// The same format as the Xbox app's (fatx_format), then opened for adding to
 bool FatxWriter::Format(uint32_t serial)
 {
-    if (m_layout.cluster_limit < 2)
+    if (m_layout.cluster_limit < 2 || !FatxFormat(m_device, m_partition_bytes / HDD_SECTOR_SIZE, m_cluster_bytes, serial) || !Load())
     {
         return false;
     }
-
-    // Header fields; the rest is 0xFF
-    std::vector<unsigned char> header(FATX_HEADER_BYTES, 0xFF);
-    const uint32_t signature = FATX_signature;
-    const uint32_t sectors_per_cluster = m_cluster_bytes / HDD_SECTOR_SIZE;
-    const uint16_t unknown = 0;
-    memcpy(&header[FATX_SIGNATURE_OFFSET], &signature, 4);
-    memcpy(&header[4], &serial, 4);
-    memcpy(&header[FATX_SECTORS_PER_CLUSTER_OFFSET], &sectors_per_cluster, 4);
-    memcpy(&header[FATX_ROOT_CLUSTER_OFFSET], &m_root, 4);
-    memcpy(&header[16], &unknown, 2);
-    if (!m_device.Write(0, header.data(), (uint32_t)header.size()))
-    {
-        return false;
-    }
-
-    m_fat.assign((size_t)m_layout.cluster_limit, FATX_FAT_FREE);
-    m_fat[0] = FATX_FAT_MEDIA;
-    m_fat[m_root] = FATX_FAT_END;
     m_next_free = m_root + 1;
-    return FillCluster(m_root, FATX_DIRENT_END) && Flush();
+    return true;
 }
 
 bool FatxWriter::Load()

@@ -9,6 +9,7 @@ XBpartitioner updated with new features and lba48v4 support. Requires a lba48 v4
 - Partition table backup restore for HDDs formatted with FATXplorer
 - 720p support
 - File system check and repair
+- Its own FATX formatter, the same one the PC tools use, for clusters from 16 KB to 1 MB
 - Resizing formatted partitions without losing data
 - Not really useful but theme support
 - `fatxtool`, a PC companion for disk images and SSD TRIM

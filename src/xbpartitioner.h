@@ -260,6 +260,9 @@ class App
     // Resize with moves (write false: check only), and resume, on a worker thread
     void RunMoveResizeJob(int partition, ULONGLONG new_lba_size, bool write, FatxMoveResult *move, bool write_main);
     void RunResumeJob(int partition, FatxMoveResult *move, bool write_main);
+    // Formats a partition (fatx_format), on a worker thread. It must be
+    // unmounted first. False if a write failed.
+    bool RunFormatJob(int partition, uint32_t cluster_bytes);
     // Reads a formatted partition's usage if it isn't known yet. False if it
     // isn't FATX or can't be read.
     bool EnsureUsage(int partition);
