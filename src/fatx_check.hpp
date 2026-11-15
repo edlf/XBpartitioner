@@ -16,6 +16,12 @@ class FatxReader
     {
     }
     virtual bool Read(uint64_t offset, void *buffer, uint32_t length) = 0;
+    // What it's on, which decides how the header counts a cluster (see
+    // FatxClusterBytes()); unknown leaves it to the header
+    virtual FatxMedium Medium() const
+    {
+        return FATX_MEDIUM_UNKNOWN;
+    }
 };
 
 // A writable partition, for repairs

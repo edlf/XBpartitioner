@@ -24,7 +24,8 @@ struct DialogText
 {
     std::string title;
     std::vector<std::string> lines;
-    std::string button; // Empty: a message with OK only
+    std::string button;        // Empty: a message with OK only
+    std::string second_button; // Choose() only
 };
 
 // One confirmation or message at a time
@@ -32,6 +33,8 @@ class Dialogs
 {
   public:
     void Ask(DialogText text, std::unique_ptr<DialogAction> action);
+    // Two answers and Cancel
+    void Choose(DialogText text, std::unique_ptr<DialogAction> first, std::unique_ptr<DialogAction> second);
 
     void Tell(const std::string &title, std::vector<std::string> lines);
 
@@ -45,15 +48,16 @@ class Dialogs
         return m_text;
     }
 
-    // The button (accept), or Cancel or OK; the action may open the next dialog
-    void Answer(bool accept);
+    // 1 or 2 for a button, 0 for Cancel or OK; the action may open the next dialog
+    void Answer(int button);
 
     void Draw(float scale);
 
   private:
     bool m_open = false;
     DialogText m_text;
-    std::unique_ptr<DialogAction> m_action; // Run when the button is chosen
+    std::unique_ptr<DialogAction> m_action;        // Run when the button is chosen
+    std::unique_ptr<DialogAction> m_second_action; // Run for the second button
 };
 
 // lines, then a warning about what writing to src means

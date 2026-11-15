@@ -30,7 +30,27 @@ class CheckWork : public PartitionWork
         auto result = std::make_unique<FatxCheckResult>();
         FatxCheck(reader, Bytes(), result.get(), &progress);
         m_log.Check(*result);
+        if (result->status == FATX_CHECK_DONE && result->errors == 0)
+        {
+            RememberFat(io);
+        }
     }
+
+    // Clean: changes can skip their own check while the FAT stays like this
+    void OnFinished() override
+    {
+        m_commands.RememberCleanFat(m_src, m_part, m_clean_fat);
+    }
+
+  private:
+    void RememberFat(SourceIo &io)
+    {
+        FatxOffsetDevice device(io.Disk(), Offset());
+        FatxWriter fat(device, Bytes());
+        m_clean_fat = fat.Load() ? fat.FatFingerprint() : 0;
+    }
+
+    uint64_t m_clean_fat = 0;
 };
 
 // The repair itself, after the user agreed

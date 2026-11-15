@@ -5,6 +5,8 @@
 // the whole FAT in memory.
 
 #include "fatx_check.hpp"
+#include "fatx_resize.hpp" // FatxUsage
+#include <set>
 #include <vector>
 
 // In memory, for the tests
@@ -48,8 +50,17 @@ class FatxWriter
     // Format() creates a file system; Load() opens an existing one
     bool Format(uint32_t serial = 0x12345678);
     bool Load();
+    // For a volume that holds data: from now on each change reaches the disk
+    // in an order a power cut can't break (lost space at worst): a file's
+    // data, then its FAT entries, then its folder entry, flushing between
+    void WriteThrough();
     // Writes the FAT; call when done
     bool Flush();
+    uint64_t FreeClusters() const;
+    // How full it is, from the FAT in memory, as FatxReadUsage() counts it
+    FatxUsage Usage() const;
+    // A hash of the whole FAT: when it's unchanged, so is every chain
+    uint64_t FatFingerprint() const;
 
     uint32_t RootCluster() const
     {
@@ -86,7 +97,19 @@ class FatxWriter
     bool SetEntry(uint64_t offset, const FatxDirent &entry);
 
   private:
+    // Every FAT change goes through here, so the sectors to write are known
+    void Put(uint32_t cluster, uint32_t value);
+    // The FAT sectors changed since the last call
+    bool WriteChangedFat();
+    // With WriteThrough(): the FAT changes on the disk, past its cache
+    bool Settle();
+    bool SyncIfWriteThrough();
     bool AllocateChain(uint32_t count, uint32_t *first);
+    // A chain this writer allocated, back to free (nothing points at it yet)
+    void FreeChain(uint32_t first);
+    // Taking the end slot moves the end marker on first, so what was after
+    // it in the cluster never shows up as entries
+    bool WriteEntryAt(uint64_t cluster_offset, uint32_t slot, const FatxDirent &entry, bool was_end);
     bool FillCluster(uint32_t cluster, unsigned char value);
     bool AddEntry(uint32_t parent, const FatxDirent &entry);
     bool MakeEntry(const char *name, unsigned char attributes, uint32_t first, uint32_t size, FatxDirent *entry);
@@ -100,6 +123,8 @@ class FatxWriter
     uint32_t m_root;
     uint32_t m_next_free; // Allocation search start
     std::vector<uint32_t> m_fat;
+    std::set<uint64_t> m_changed_fat_sectors;
+    bool m_write_through;
 };
 
 #endif // FATX_WRITER_H_

@@ -58,15 +58,49 @@ class FatxOffsetDevice : public FatxDevice
     {
         return m_inner.Sync();
     }
+    FatxMedium Medium() const override
+    {
+        return m_inner.Medium();
+    }
 
   private:
     FatxDevice &m_inner;
     uint64_t m_base;
 };
 
+// A disk or image, saying what medium it is (see FatxClusterBytes())
+class FatxMediumDevice : public FatxDevice
+{
+  public:
+    FatxMediumDevice(FatxDevice &inner, FatxMedium medium) : m_inner(inner), m_medium(medium)
+    {
+    }
+    bool Read(uint64_t offset, void *buffer, uint32_t length) override
+    {
+        return m_inner.Read(offset, buffer, length);
+    }
+    bool Write(uint64_t offset, const void *buffer, uint32_t length) override
+    {
+        return m_inner.Write(offset, buffer, length);
+    }
+    bool Sync() override
+    {
+        return m_inner.Sync();
+    }
+    FatxMedium Medium() const override
+    {
+        return m_medium;
+    }
+
+  private:
+    FatxDevice &m_inner;
+    const FatxMedium m_medium;
+};
+
 // Updates backup copies of the table, found in the last sector or the
-// last 4K block (only copies that match the old table)
-void update_backup_tables(FatxDevice &disk, uint64_t disk_bytes, const XboxPartitionTable &old_table, const XboxPartitionTable &new_table);
+// last 4K block (only copies that match the old table). False if one of
+// them couldn't be written.
+bool update_backup_tables(FatxDevice &disk, uint64_t disk_bytes, const XboxPartitionTable &old_table, const XboxPartitionTable &new_table);
 
 // Stores a new partition size in a disk's table: sector 0, then the backup
 class DiskTable : public FatxResizeTable
@@ -145,8 +179,9 @@ class DiskTarget
 
     static bool IsDrivePath(const std::filesystem::path &path);
 
-    // write: for repairs and resizes; on a drive it first checks Windows
-    // allows writing (sector 0 is written back as it is). ata: for TRIM.
+    // write: for repairs and resizes; on a drive with an Xbox partition table
+    // it first checks Windows allows writing (sector 0 is written back as it
+    // is). ata: for TRIM.
     bool Open(const std::filesystem::path &path, bool write, bool ata, std::string *error);
 
     bool IsDrive() const

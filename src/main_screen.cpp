@@ -78,7 +78,7 @@ void MainScreen::Draw()
     m_ui.DrawBackground();
 
     wchar_t title[100];
-    swprintf(title, L"%s - LBA48 patch v%d", PROGRAM_NAME_AND_VERSION, m_tables.Lba48Version());
+    FormatWide(title, ArrayLength(title), L"%s - LBA48 patch v%d", PROGRAM_NAME_AND_VERSION, m_tables.Lba48Version());
     m_ui.Text(FONT_TEXT, title, m_layout->title_x, m_layout->title_y, COLOR_WHITE);
 
     DrawLoadedTableName();
@@ -103,7 +103,7 @@ void MainScreen::DrawTable()
     m_ui.Outline((FLOAT)left, (FLOAT)top, (FLOAT)right, (FLOAT)bottom, Colors().panel_border);
 
     // As wide as the rows, so the columns line up
-    wchar_t row[80];
+    wchar_t row[TABLE_ROW_TEXT_COUNT];
     const int header_top = TableSlotTop(0);
     FormatTableHeader(row);
     m_ui.Text(FONT_TABLE, row, TableCenterX(), m_ui.TextYCentered(FONT_TABLE, header_top, header_top + bar_height), COLOR_GREY, XFONT_CENTER);
@@ -251,7 +251,7 @@ void MainScreen::DrawDiskMapPartition(int partition, const DiskMapArea &area, D3
 // Marker against the written table: * changed, + new, - removed.
 void MainScreen::FormatTableHeader(wchar_t *row)
 {
-    swprintf(row, L"%-4s  %-12s  %-12s  %9s  %-5s  ", L"Part", L"Start", L"End", L"Size", L"FATX");
+    FormatWide(row, TABLE_ROW_TEXT_COUNT, L"%-4s  %-12s  %-12s  %9s  %-5s  ", L"Part", L"Start", L"End", L"Size", L"FATX");
 }
 
 void MainScreen::FormatPartitionRow(const int partition_number, wchar_t *row)
@@ -265,7 +265,7 @@ void MainScreen::FormatPartitionRow(const int partition_number, wchar_t *row)
 
     if (!enabled && !was_enabled)
     {
-        swprintf(row, L"%2d %c  %-46s", partition_number + 1, letter, L"unused");
+        FormatWide(row, TABLE_ROW_TEXT_COUNT, L"%2d %c  %-46s", partition_number + 1, letter, L"unused");
         return;
     }
 
@@ -295,18 +295,18 @@ void MainScreen::FormatPartitionRow(const int partition_number, wchar_t *row)
     wchar_t cluster_str[16];
     if (cluster_size == 0 || lba_size == 0)
     {
-        swprintf(cluster_str, L"");
+        FormatWide(cluster_str, ArrayLength(cluster_str), L"");
     }
     else if (cluster_size < m_session.Edited().CalculateClusterSize(lba_size))
     {
-        swprintf(cluster_str, L"ERROR");
+        FormatWide(cluster_str, ArrayLength(cluster_str), L"ERROR");
     }
     else
     {
-        swprintf(cluster_str, L"%uKB", cluster_size);
+        FormatWide(cluster_str, ArrayLength(cluster_str), L"%uKB", cluster_size);
     }
 
-    swprintf(row, L"%2d %c  %-12s  %-12s  %9s  %-5s %c", partition_number + 1, letter, start_str, end_str, size_str, cluster_str, marker);
+    FormatWide(row, TABLE_ROW_TEXT_COUNT, L"%2d %c  %-12s  %-12s  %9s  %-5s %c", partition_number + 1, letter, start_str, end_str, size_str, cluster_str, marker);
 }
 
 void MainScreen::DrawFreeSpace()
@@ -321,7 +321,7 @@ void MainScreen::DrawFreeSpace()
     FormatHumanSize(usable_lbas, usable_size);
 
     wchar_t size_line[100];
-    swprintf(size_line, L"Free: %s of %s", free_size, usable_size);
+    FormatWide(size_line, ArrayLength(size_line), L"Free: %s of %s", free_size, usable_size);
     m_ui.Text(FONT_TEXT, size_line, m_layout->margin_x, m_layout->free_space_y, COLOR_WHITE);
 
     m_ui.Text(FONT_TEXT, L"* changed   + new   - removed", m_layout->table_right - m_layout->menu_text_inset, m_layout->legend_y, COLOR_GREY, XFONT_RIGHT);

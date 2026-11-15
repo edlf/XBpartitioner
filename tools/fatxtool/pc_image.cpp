@@ -7,6 +7,7 @@
 #include <windows.h>
 
 #include "pc_image.hpp"
+#include "fatx_edit.hpp"
 
 #include <io.h>
 #include <string.h>
@@ -40,14 +41,17 @@ bool FileDevice::Sync()
     return fflush(m_file) == 0 && _commit(_fileno(m_file)) == 0;
 }
 
-void update_backup_tables(FatxDevice &disk, uint64_t disk_bytes, const XboxPartitionTable &old_table, const XboxPartitionTable &new_table)
+bool update_backup_tables(FatxDevice &disk, uint64_t disk_bytes, const XboxPartitionTable &old_table, const XboxPartitionTable &new_table)
 {
     const uint64_t sectors = disk_bytes / HDD_SECTOR_SIZE;
-    const uint64_t candidates[] = {(sectors & ~(uint64_t)(LBA_ALIGNMENT - 1)) - LBA_ALIGNMENT, sectors - 1};
+    const uint64_t last_block = sectors & ~(uint64_t)(LBA_ALIGNMENT - 1);
+    const uint64_t candidates[] = {(last_block > LBA_ALIGNMENT) ? last_block - LBA_ALIGNMENT : 0, (sectors > 1) ? sectors - 1 : 0};
+    bool all_written = true;
     for (uint64_t lba : candidates)
     {
         XboxPartitionTable backup;
-        if (!disk.Read(lba * HDD_SECTOR_SIZE, &backup, sizeof(backup)))
+        // Sector 0 is the main table, not a backup (tiny images)
+        if (lba == 0 || !disk.Read(lba * HDD_SECTOR_SIZE, &backup, sizeof(backup)))
         {
             continue;
         }
@@ -60,8 +64,9 @@ void update_backup_tables(FatxDevice &disk, uint64_t disk_bytes, const XboxParti
         }
         XboxPartitionTable updated = new_table;
         updated.Version = backup.Version; // Keep a Titan backup's version
-        disk.Write(lba * HDD_SECTOR_SIZE, &updated, sizeof(updated));
+        all_written = disk.Write(lba * HDD_SECTOR_SIZE, &updated, sizeof(updated)) && all_written;
     }
+    return all_written;
 }
 
 bool DiskTable::SetSize(uint64_t new_lba_size)
@@ -78,12 +83,13 @@ bool DiskTable::SetSize(uint64_t new_lba_size)
     {
         entry.LBASize_high = (uint16_t)(new_lba_size >> 32);
     }
-    if (!m_disk.Write(0, &table, sizeof(table)))
+    // The backups first, like XBpartitioner: a backup is only recognised by
+    // matching sector 0, so once sector 0 changed a stale one is never found
+    if (!update_backup_tables(m_disk, m_disk_bytes, old_table, table) || !m_disk.Sync())
     {
         return false;
     }
-    update_backup_tables(m_disk, m_disk_bytes, old_table, table);
-    return m_disk.Sync();
+    return m_disk.Write(0, &table, sizeof(table)) && m_disk.Sync();
 }
 
 bool ImageTable::SetSize(uint64_t new_lba_size)
@@ -191,19 +197,7 @@ void make_sparse(FILE *file)
 std::string xbox_name(const fs::path &path)
 {
     const std::string name = path.filename().string();
-    if (name.empty() || name.size() > FATX_MAX_NAME_LENGTH)
-    {
-        return std::string();
-    }
-    for (char c : name)
-    {
-        const unsigned char u = (unsigned char)c;
-        if (u < 0x20 || u >= 0x7F || strchr("\"*/:<>?\\|", u) != NULL)
-        {
-            return std::string();
-        }
-    }
-    return name;
+    return fatx_name_allowed(name) ? name : std::string();
 }
 
 namespace
@@ -332,9 +326,13 @@ bool DiskTarget::Open(const fs::path &path, bool write, bool ata, std::string *e
             return false;
         }
         m_size = m_drive->Size();
-        // Windows refuses writes to disks with mounted volumes: find out now
-        unsigned char sector[HDD_SECTOR_SIZE];
-        if (write && (!m_drive->Read(0, sector, sizeof(sector)) || !m_drive->Write(0, sector, sizeof(sector))))
+        // Windows refuses writes to disks with mounted volumes: find out now,
+        // by writing sector 0 back as it is. Only on an Xbox drive, so a wrong
+        // drive number never gets a write (its commands then refuse it, or the
+        // first real write reports the problem).
+        XboxPartitionTable sector;
+        if (write && (!m_drive->Read(0, &sector, sizeof(sector)) ||
+                      (PartitionTableEditor::HasMagic(sector) && !m_drive->Write(0, &sector, sizeof(sector)))))
         {
             *error = "Windows doesn't allow writing to " + name + " (error " + std::to_string(GetLastError()) + "). Is a volume on it mounted?";
             m_drive.reset();

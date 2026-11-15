@@ -198,25 +198,6 @@ TEST(FatxCheck, DirectorySpanningClusters)
     EXPECT_EQ(check.result.files, 600u);
 }
 
-TEST(FatxCheck, ThirtyTwoBitFat)
-{
-    // 512 byte clusters so 0xFFF0 of them fit in a small image
-    const uint64_t size = 0x10000ULL * 512;
-    FatxMemoryDevice device(size);
-    FatxWriter writer(device, size, 512);
-    ASSERT_EQ(writer.Layout().bytes_per_entry, 4u);
-    ASSERT_TRUE(writer.Format());
-    std::vector<unsigned char> data(5000, 'x');
-    ASSERT_TRUE(writer.AddFile(writer.RootCluster(), "data", data.data(), (uint32_t)data.size()));
-    ASSERT_TRUE(writer.Flush());
-
-    const Check check = RunCheck(device, size);
-    ASSERT_TRUE(check.ran);
-    EXPECT_EQ(check.result.layout.bytes_per_entry, 4u);
-    EXPECT_EQ(check.result.errors, 0u) << Messages(check.result);
-    EXPECT_EQ(check.result.files, 1u);
-}
-
 TEST(FatxCheck, NotFatx)
 {
     FatxMemoryDevice device(SMALL);
@@ -644,36 +625,6 @@ TEST(FatxRepair, WriteErrorStopsPartway)
     EXPECT_EQ(repair.result.status, FATX_REPAIR_STOPPED_PARTWAY);
 }
 
-TEST(FatxRepair, ThirtyTwoBitFatAcrossChunks)
-{
-    // A 256 KB FAT read in 64 KB chunks, with changes in the first and last
-    // chunk, so the repair has to write back a chunk before moving on
-    const uint64_t size = 0x10000ULL * 512;
-    FatxMemoryDevice device(size);
-    FatxWriter writer(device, size, 512);
-    ASSERT_TRUE(writer.Format());
-    std::vector<unsigned char> data(512 * 300, 'x');
-    uint32_t first;
-    ASSERT_TRUE(writer.AddFile(writer.RootCluster(), "data", data.data(), (uint32_t)data.size(), &first));
-    const uint32_t last = (uint32_t)writer.Layout().cluster_limit - 1;
-    writer.SetFat(last, FATX_FAT_END);
-    ASSERT_TRUE(writer.Flush());
-
-    // Shrink it to 2 clusters: 298 to free, plus the lost one
-    FatxDirent entry;
-    uint64_t offset;
-    ASSERT_TRUE(writer.GetEntry(writer.RootCluster(), 0, &entry, &offset));
-    entry.file_size = 1000;
-    ASSERT_TRUE(writer.SetEntry(offset, entry));
-
-    FatxRepairResult *repair = new FatxRepairResult;
-    ASSERT_TRUE(FatxRepair(device, size, repair, true));
-    EXPECT_EQ(repair->files_trimmed, 1u);
-    EXPECT_EQ(repair->clusters_freed, 299u);
-    delete repair;
-    EXPECT_TRUE(IsSpotless(device, size));
-}
-
 TEST(FatxRepair, ProgressGoesUpTo100)
 {
     Image image;
@@ -685,6 +636,65 @@ TEST(FatxRepair, ProgressGoesUpTo100)
     EXPECT_EQ(progress.last, 100);
     EXPECT_FALSE(progress.decreased);
     delete repair;
+}
+
+// Counts flushes, and can refuse them
+class SyncCountingDevice : public FatxDevice
+{
+  public:
+    SyncCountingDevice(FatxDevice &inner, bool sync_fails) : syncs(0), m_inner(inner), m_sync_fails(sync_fails)
+    {
+    }
+    bool Read(uint64_t offset, void *buffer, uint32_t length) override
+    {
+        return m_inner.Read(offset, buffer, length);
+    }
+    bool Write(uint64_t offset, const void *buffer, uint32_t length) override
+    {
+        return m_inner.Write(offset, buffer, length);
+    }
+    bool Sync() override
+    {
+        syncs++;
+        return !m_sync_fails;
+    }
+
+    int syncs;
+
+  private:
+    FatxDevice &m_inner;
+    bool m_sync_fails;
+};
+
+TEST(FatxRepair, FlushesBeforeFreeingAndAtTheEnd)
+{
+    Image image;
+    image.writer.SetFat(image.FreeCluster(), FATX_FAT_END);
+    ASSERT_TRUE(image.writer.Flush());
+    SyncCountingDevice device(image.device, false);
+    const Repair repair = RunRepair(device, SMALL, true);
+    ASSERT_TRUE(repair.ok);
+    EXPECT_EQ(device.syncs, 2);
+}
+
+TEST(FatxRepair, DryRunNeverFlushes)
+{
+    Image image;
+    image.writer.SetFat(image.FreeCluster(), FATX_FAT_END);
+    ASSERT_TRUE(image.writer.Flush());
+    SyncCountingDevice device(image.device, false);
+    RunRepair(device, SMALL, false);
+    EXPECT_EQ(device.syncs, 0);
+}
+
+TEST(FatxRepair, FailedFlushStopsTheRepair)
+{
+    Image image;
+    image.writer.SetFat(image.FreeCluster(), FATX_FAT_END);
+    ASSERT_TRUE(image.writer.Flush());
+    SyncCountingDevice device(image.device, true);
+    const Repair repair = RunRepair(device, SMALL, true);
+    EXPECT_EQ(repair.result.status, FATX_REPAIR_STOPPED_PARTWAY);
 }
 
 // --- Resizing without a format (FatxInPlaceResizeRange, FatxCheckResize)

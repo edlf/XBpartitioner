@@ -65,6 +65,9 @@ class TableWriter
     void EraseTables();
     // Start > Format partition: only the layout on disk
     void FormatOne(int part);
+    // A write that didn't finish, unless already explained: whether the
+    // backup made it, else nothing_written
+    void ShowWriteFailure(const TableWriteOutcome &outcome, LPCWSTR nothing_written);
 
     // Once D:'s partition has changed, writing through D: would hit the wrong
     // sectors, so the settings aren't saved anymore
@@ -103,7 +106,7 @@ class TableWriter
     void ReportWrite(const TableWriteOutcome &outcome);
     void FormatAfterWrite(const PartitionSet &to_format, const TableWriteOutcome &outcome);
     // "Partition N (X) holds this program: <what>"
-    void FormatLaunchPartitionLine(wchar_t *out, LPCWSTR what);
+    void FormatLaunchPartitionLine(wchar_t *out, size_t out_count, LPCWSTR what);
     // True if table moves, resizes or removes the partition this program runs from
     bool MovesLaunchPartition(const XboxPartitionTable &table) const;
     bool KeepsLaunchPartition(const PartitionSet &kept) const;
@@ -123,6 +126,10 @@ class TableWriter
     bool RunMoveResizes(const PartitionSet &partitions, const ULONGLONG new_sizes[XboxPartitionTableEntryCount], bool write_main);
     // False, after explaining it, if it didn't finish
     bool RunMoveResize(int partition, ULONGLONG new_size, bool write_main);
+    // Shrinks with moves finished, but the table after them wasn't written
+    void ExplainRestNotWritten(const PartitionSet &shrunk);
+    // False, after explaining it, if the partition couldn't be unmounted
+    bool DismountForResize(int partition);
     void ExplainStoppedResize(int partition, const FatxMoveResult &move);
     InterruptedResize FindInterruptedResize(int partition);
     void OfferFinishResize(int partition);
@@ -136,6 +143,8 @@ class TableWriter
     // updates, so a worker thread can call it.
     TableWritePlan PlanTableWrite(const XboxPartitionTable &table_in);
     TableWriteOutcome WriteTablesRaw(const XboxPartitionTable &table, bool write_main);
+    // A table already planned (the Titan question answered), then the reload
+    TableWriteOutcome WritePlanned(const XboxPartitionTable &table, bool write_main);
     void ReloadAfterWrite(const XboxPartitionTable &written);
     bool ErasePartitionTables();
 

@@ -116,3 +116,10 @@ TEST_F(FilesystemCacheTest, RefreshOfOnePartitionKeepsTheOthers)
     m_cache.Refresh(UNFORMATTED);
     EXPECT_TRUE(m_cache.Usage(FORMATTED).IsKnown());
 }
+
+TEST_F(FilesystemCacheTest, IndexOutsideTheTableReadsAsUnformatted)
+{
+    EXPECT_EQ(m_cache.ClusterSizeKb(-1), 0u);
+    EXPECT_FALSE(m_cache.EnsureUsage((int)XboxPartitionTableEntryCount));
+    EXPECT_FALSE(m_cache.Usage(-1).IsKnown());
+}

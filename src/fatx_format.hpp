@@ -12,10 +12,17 @@
 
 #include "fatx_check.hpp"
 
-// cluster_bytes: a power of two up to 1 MB; the Xbox uses 16 KB and up
-// (ClusterSizeKbFor() gives XBpartitioner's choice), smaller ones are for
-// tests. serial: the volume serial number in the header.
-// The partition must not be mounted.
+// A hard drive partition. cluster_bytes: a power of two from 16 KB to 1 MB
+// (ClusterSizeKbFor() gives XBpartitioner's choice). serial: the volume
+// serial number in the header. The partition must not be mounted.
 bool FatxFormat(FatxDevice &device, uint64_t lba_size, uint32_t cluster_bytes, uint32_t serial, FatxProgress *progress = NULL);
+
+// What the Xbox formats memory units with, whatever their size
+const uint32_t FATX_MEMORY_UNIT_CLUSTER_BYTES = 16 * 1024;
+
+// A memory unit, or a USB stick used as one: the whole device, its cluster
+// size counted in 4 KB sectors (see FatxClusterBytes()). cluster_bytes: a
+// power of two from 4 KB to 64 KB; the Xbox uses 16 KB.
+bool FatxFormatMemoryUnit(FatxDevice &device, uint64_t lba_size, uint32_t cluster_bytes, uint32_t serial, FatxProgress *progress = NULL);
 
 #endif // FATX_FORMAT_H_

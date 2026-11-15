@@ -97,6 +97,59 @@ TEST(DiskTable, WritesSectorZeroAndTheBackups)
     EXPECT_EQ(memcmp(&untouched, &other, sizeof(other)), 0);
 }
 
+// Writes fail from one offset on, like a bad sector at the end of the disk
+class FailingTailDevice : public FatxDevice
+{
+  public:
+    FailingTailDevice(FatxDevice &inner, uint64_t fail_from) : m_inner(inner), m_fail_from(fail_from)
+    {
+    }
+    bool Read(uint64_t offset, void *buffer, uint32_t length) override
+    {
+        return m_inner.Read(offset, buffer, length);
+    }
+    bool Write(uint64_t offset, const void *buffer, uint32_t length) override
+    {
+        return offset < m_fail_from && m_inner.Write(offset, buffer, length);
+    }
+
+  private:
+    FatxDevice &m_inner;
+    uint64_t m_fail_from;
+};
+
+TEST(DiskTable, FailedBackupWriteLeavesSectorZeroAlone)
+{
+    const uint64_t disk_bytes = 1024 * MB;
+    const uint64_t sectors = disk_bytes / HDD_SECTOR_SIZE;
+    SparseDevice disk;
+    const XboxPartitionTable old_table = MakeTable(2048, 64 * MB / HDD_SECTOR_SIZE);
+    ASSERT_TRUE(disk.Write(0, &old_table, sizeof(old_table)));
+    ASSERT_TRUE(disk.Write((sectors - 1) * HDD_SECTOR_SIZE, &old_table, sizeof(old_table)));
+
+    FailingTailDevice failing(disk, (sectors - 1) * HDD_SECTOR_SIZE);
+    DiskTable table(failing, disk_bytes, 5);
+    EXPECT_FALSE(table.SetSize(4096));
+
+    XboxPartitionTable main;
+    ASSERT_TRUE(disk.Read(0, &main, sizeof(main)));
+    EXPECT_EQ(EntrySize(main), EntrySize(old_table));
+}
+
+TEST(DiskTable, TinyImageNeverTakesSectorZeroForABackup)
+{
+    // 8 sectors: the last 4K block starts at sector 0
+    SparseDevice disk;
+    const XboxPartitionTable old_table = MakeTable(2, 4);
+    ASSERT_TRUE(disk.Write(0, &old_table, sizeof(old_table)));
+    const XboxPartitionTable new_table = MakeTable(2, 6);
+    EXPECT_TRUE(update_backup_tables(disk, LBA_ALIGNMENT * HDD_SECTOR_SIZE, old_table, new_table));
+
+    XboxPartitionTable main;
+    ASSERT_TRUE(disk.Read(0, &main, sizeof(main)));
+    EXPECT_EQ(EntrySize(main), 4u);
+}
+
 TEST(DiskTable, RefusesWithoutATable)
 {
     SparseDevice disk;

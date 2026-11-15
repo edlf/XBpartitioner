@@ -30,6 +30,11 @@ class ResizeWork : public PartitionWork
         }
         FatxOffsetDevice device(io.Disk(), Offset());
         std::unique_ptr<FatxResizeTable> table = io.Table(m_part.index);
+        if (!table)
+        {
+            m_log.Add(TONE_ERROR, "  No partition table to hold the new size: not resized.");
+            return;
+        }
 
         auto resize = std::make_unique<FatxResizeResult>();
         SubProgress check_progress(progress, 0, 20);
@@ -116,6 +121,11 @@ class ResumeResizeWork : public PartitionWork
         }
         FatxOffsetDevice device(io.Disk(), Offset());
         std::unique_ptr<FatxResizeTable> table = io.Table(m_part.index);
+        if (!table)
+        {
+            m_log.Add(TONE_ERROR, "  No partition table to hold the new size: not finished.");
+            return;
+        }
         auto move = std::make_unique<FatxMoveResult>();
         if (FatxResumeResize(device, *table, move.get(), &progress))
         {

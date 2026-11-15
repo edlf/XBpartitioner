@@ -72,8 +72,9 @@ TableWritePlan PartitionTableStore::Prepare(const XboxPartitionTable &table) con
     plan.table = table;
     plan.table.Version = PartitionTableEditor::VersionFor(m_full_lba48);
 
-    // Without a known disk size the layout can't be trusted
-    if (m_total_sectors == 0)
+    // Without a known disk size the layout can't be trusted. Without the magic
+    // Manipulate() would check the stock layout instead of what gets written.
+    if (m_total_sectors == 0 || !PartitionTableEditor::HasMagic(plan.table))
     {
         return plan;
     }
@@ -110,13 +111,16 @@ TableWriteOutcome PartitionTableStore::Write(const XboxPartitionTable &table, bo
     }
 
     const TableSectorWrite sectors = {write_backup ? &backup : NULL, Manipulate(plan.table).GetBackupTableLba(), write_main ? &plan.table : NULL};
+    const TableSectorsWritten sectors_written = m_hdd.WriteTableSectors(sectors);
     TableWriteOutcome outcome = TableWriteOutcome::NotWritten();
-    outcome.written = m_hdd.WriteTableSectors(sectors);
-    outcome.main_written = outcome.written && write_main;
-    outcome.backup_written = outcome.written && write_backup;
+    outcome.main_written = sectors_written.main;
+    outcome.backup_written = sectors_written.backup;
+    outcome.written = (outcome.main_written || !write_main) && (outcome.backup_written || !write_backup);
 
-    // The kernel gets the copy it reads; KernelTable() catches up when re-read
-    if (outcome.written && HasLba48Patch())
+    // The kernel gets the copy its BIOS reads, once that copy is on disk;
+    // KernelTable() catches up when re-read
+    const bool kernel_copy_written = m_titan_bios ? outcome.backup_written : outcome.main_written;
+    if (kernel_copy_written && HasLba48Patch())
     {
         memcpy(m_kernel_memory, m_titan_bios ? &backup : &plan.table, sizeof(XboxPartitionTable));
     }

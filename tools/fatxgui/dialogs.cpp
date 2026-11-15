@@ -25,7 +25,17 @@ void Dialogs::Ask(DialogText text, std::unique_ptr<DialogAction> action)
 {
     m_open = true;
     m_text = std::move(text);
+    m_text.second_button.clear();
     m_action = std::move(action);
+    m_second_action.reset();
+}
+
+void Dialogs::Choose(DialogText text, std::unique_ptr<DialogAction> first, std::unique_ptr<DialogAction> second)
+{
+    m_open = true;
+    m_text = std::move(text);
+    m_action = std::move(first);
+    m_second_action = std::move(second);
 }
 
 void Dialogs::Tell(const std::string &title, std::vector<std::string> lines)
@@ -33,13 +43,15 @@ void Dialogs::Tell(const std::string &title, std::vector<std::string> lines)
     Ask(DialogText{title, std::move(lines), std::string()}, nullptr);
 }
 
-void Dialogs::Answer(bool accept)
+void Dialogs::Answer(int button)
 {
     m_open = false;
-    std::unique_ptr<DialogAction> action = std::move(m_action);
-    if (accept && action)
+    std::unique_ptr<DialogAction> first = std::move(m_action);
+    std::unique_ptr<DialogAction> second = std::move(m_second_action);
+    DialogAction *chosen = (button == 1) ? first.get() : (button == 2) ? second.get() : nullptr;
+    if (chosen != nullptr)
     {
-        action->Run();
+        chosen->Run();
     }
 }
 
@@ -62,16 +74,21 @@ void Dialogs::Draw(float scale)
     }
     ImGui::Spacing();
     bool close = false;
-    bool accept = false;
+    int chosen = 0;
     if (m_text.button.empty())
     {
         close = ImGui::Button("OK", ImVec2(100 * scale, 0));
     }
     else
     {
-        accept = ImGui::Button(m_text.button.c_str(), ImVec2(120 * scale, 0));
+        chosen = ImGui::Button(m_text.button.c_str(), ImVec2(0, 0)) ? 1 : 0;
+        if (!m_text.second_button.empty())
+        {
+            ImGui::SameLine();
+            chosen = ImGui::Button(m_text.second_button.c_str(), ImVec2(0, 0)) ? 2 : chosen;
+        }
         ImGui::SameLine();
-        close = ImGui::Button("Cancel", ImVec2(100 * scale, 0)) || accept;
+        close = ImGui::Button("Cancel", ImVec2(100 * scale, 0)) || chosen != 0;
     }
     if (close)
     {
@@ -80,7 +97,7 @@ void Dialogs::Draw(float scale)
     ImGui::EndPopup();
     if (close)
     {
-        Answer(accept);
+        Answer(chosen);
     }
 }
 

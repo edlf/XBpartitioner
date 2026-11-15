@@ -43,7 +43,8 @@ class ActivityLog
 
     std::vector<LogLine> Lines() const;
 
-    // Scrolls to the end when lines were added
+    // Scrolls to the end when lines were added. Lines can be selected (click,
+    // Ctrl+click, Shift+click, Ctrl+A) and copied (Ctrl+C, right-click menu).
     void Draw(const Theme &theme);
 
     // ---- Results, like fatxtool prints them
@@ -64,9 +65,17 @@ class ActivityLog
     // What it is and how full; false if there's nothing more to say
     bool CheckSummary(const FatxCheckResult &result);
 
+    // On the UI thread, with the lock held
+    void Click(size_t line);
+    void CopyCommands();
+    // One line each, as the clipboard takes it
+    std::string Text(bool selected_only) const;
+
     mutable std::mutex m_mutex;
     std::vector<LogLine> m_lines;
     bool m_scroll = false;
+    std::vector<bool> m_selected; // Alongside m_lines; the UI thread only
+    size_t m_anchor = 0;          // Where a Shift+click range starts
 };
 
 // copy_tree's note for each item it skips

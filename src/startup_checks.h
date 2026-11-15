@@ -52,6 +52,8 @@ class StartupChecks
     bool OfferShrinkForBackup();
     // Whether the 4 KB shrink is harmless to the file system
     bool ShrinkKeepsData(int partition);
+    // After the 4 KB shrink; warns if the kernel keeps the old size mounted
+    void UnmountShrunk(int partition);
     bool CheckStellar();
 
     PartitionTableStore &m_tables;

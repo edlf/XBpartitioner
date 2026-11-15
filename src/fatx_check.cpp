@@ -162,7 +162,8 @@ class Checker
             }
             repair->files_trimmed++;
         }
-        if (!FlushFat())
+        // On the disk before anything is freed: a power cut then only loses space
+        if (!FlushFat() || !SyncWrites())
         {
             return false;
         }
@@ -200,7 +201,7 @@ class Checker
             repair->media_fixed = true;
         }
 
-        if (!FlushFat())
+        if (!FlushFat() || !SyncWrites())
         {
             return false;
         }
@@ -250,6 +251,21 @@ class Checker
             return false;
         }
         m_wrote = true;
+        return true;
+    }
+
+    // Past the disk's cache; nothing to do in a dry run
+    bool SyncWrites()
+    {
+        if (m_writer == NULL)
+        {
+            return true;
+        }
+        if (!m_writer->Sync())
+        {
+            m_write_failed = true;
+            return false;
+        }
         return true;
     }
 
@@ -381,14 +397,14 @@ class Checker
         }
 
         // A power of two up to 1 MB
-        if (sectors_per_cluster == 0 || (sectors_per_cluster & (sectors_per_cluster - 1)) != 0 || sectors_per_cluster > 2048)
+        m_result->cluster_bytes = FatxClusterBytes(sectors_per_cluster, m_reader.Medium());
+        if (m_result->cluster_bytes == 0)
         {
             Report(true, "The cluster size in the header is invalid (%u sectors).", sectors_per_cluster);
             m_result->status = FATX_CHECK_BAD_HEADER;
             return false;
         }
 
-        m_result->cluster_bytes = sectors_per_cluster * HDD_SECTOR_SIZE;
         m_result->root_cluster = root_cluster;
         m_result->layout = FatxLayoutFor(m_partition_bytes / HDD_SECTOR_SIZE, m_result->cluster_bytes);
 
@@ -483,6 +499,7 @@ class Checker
         }
 
         uint32_t bad_pointers = 0;
+        uint32_t highest_pointer = 0;
         for (uint32_t cluster = 1; cluster < limit; cluster++)
         {
             uint32_t value;
@@ -500,6 +517,7 @@ class Checker
                 if (value < FATX_FAT_RESERVED && value >= limit)
                 {
                     bad_pointers++;
+                    highest_pointer = (value > highest_pointer) ? value : highest_pointer;
                 }
             }
 
@@ -509,9 +527,17 @@ class Checker
             }
         }
 
+        // How far outside tells a wrong partition size (a little) from a
+        // FAT read with the wrong layout (anywhere)
         if (bad_pointers > 0)
         {
-            Report(true, "%u FAT entries point outside the partition.", bad_pointers);
+            Report(true,
+                   "%u FAT entries point outside the partition: up to cluster %u, it has %u (%u bit FAT, %u KB clusters).",
+                   bad_pointers,
+                   highest_pointer,
+                   limit - 1,
+                   m_result->layout.bytes_per_entry * 8,
+                   m_result->cluster_bytes / 1024);
         }
         return true;
     }
@@ -980,12 +1006,8 @@ bool read_cluster_bytes(FatxReader &reader, FatxResizeResult *resize)
         resize->status = FATX_RESIZE_NO_FILE_SYSTEM;
         return false;
     }
-    if (sectors_per_cluster == 0 || (sectors_per_cluster & (sectors_per_cluster - 1)) != 0 || sectors_per_cluster > 2048)
-    {
-        return false;
-    }
-    resize->cluster_bytes = sectors_per_cluster * HDD_SECTOR_SIZE;
-    return true;
+    resize->cluster_bytes = FatxClusterBytes(sectors_per_cluster, reader.Medium());
+    return resize->cluster_bytes != 0;
 }
 
 // A partition's FAT before and after a resize that keeps the FAT's size

@@ -63,7 +63,7 @@ struct Gui::Parts
 {
     explicit Parts(const GuiWindow &window)
         : scale(scale_for(window)), look(window.hwnd, window.device, window.context), jobs(window.hwnd),
-          commands(CommandParts{log, jobs, dialogs, workspace}), panels(PanelParts{commands, workspace, look, window.hwnd, scale})
+          commands(CommandParts{log, jobs, dialogs, workspace}), browser(commands), panels(PanelParts{commands, workspace, look, browser, window.hwnd, scale})
     {
     }
 
@@ -74,6 +74,7 @@ struct Gui::Parts
     Dialogs dialogs;
     Workspace workspace;
     Commands commands;
+    FileBrowser browser;
     Panels panels;
 };
 
@@ -138,10 +139,15 @@ void Gui::Frame()
     parts.log.Draw(parts.look.CurrentTheme());
     ImGui::EndChild();
 
+    // Not a modal: it stays open beside the others
+    parts.browser.Draw(parts.workspace, parts.look.CurrentTheme());
+
     // One modal at a time: ImGui would swap them every frame
     if (!parts.jobs.Busy())
     {
         parts.panels.DriveWindow();
+        parts.panels.FormatDriveWindow();
+        parts.panels.XboxHddWindow();
         parts.panels.NewImageWindow();
         parts.panels.ResizeWindow();
         parts.dialogs.Draw(parts.scale);

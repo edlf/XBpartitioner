@@ -36,6 +36,19 @@ struct TableSectorWrite
     const XboxPartitionTable *main; // Sector 0
 };
 
+// Which of the requested sectors were written
+struct TableSectorsWritten
+{
+    bool backup;
+    bool main;
+};
+
+// A synchronous read or write that succeeded and moved every byte asked for
+inline bool TransferredAll(NTSTATUS status, const IO_STATUS_BLOCK &status_block, ULONG length)
+{
+    return NT_SUCCESS(status) && status_block.Information == length;
+}
+
 // The hard drive through the kernel: what it is, the LBA48 patch, and
 // reading and writing sectors. Holds no state; every call opens the disk again.
 class HddAccess
@@ -55,9 +68,8 @@ class HddAccess
     // From the FATX header in a partition's first sectors. 0 if not
     // formatted, unreadable or an odd size.
     unsigned int ReadClusterSizeKb(const ANSI_STRING &partition_path);
-    // The backup first: if it fails nothing has been touched yet. False if
-    // any write failed.
-    bool WriteTableSectors(const TableSectorWrite &write);
+    // The backup first: if it fails, sector 0 isn't written
+    TableSectorsWritten WriteTableSectors(const TableSectorWrite &write);
 
   private:
     // The whole disk (Partition0), shared, synchronous

@@ -32,10 +32,12 @@ struct BusyWork
     volatile LONG *percent; // Progress the routine updates, or NULL
 };
 
+const size_t INFO_ROW_VALUE_COUNT = 80;
+
 struct InfoRow
 {
     LPCWSTR label;
-    wchar_t value[80];
+    wchar_t value[INFO_ROW_VALUE_COUNT];
     Color color;
 };
 

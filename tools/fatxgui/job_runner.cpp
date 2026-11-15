@@ -2,6 +2,7 @@
 #include "job_runner.hpp"
 
 #include <atomic>
+#include <mutex>
 #include <thread>
 
 #include "activity_log.hpp"
@@ -9,7 +10,7 @@
 namespace fatxgui
 {
 
-struct Job : public FatxProgress
+struct Job : public JobProgress
 {
     std::string title;
     std::atomic<int> percent{-1}; // -1 until the work reports any
@@ -17,10 +18,22 @@ struct Job : public FatxProgress
     bool writes = false;          // Closing the window waits for it
     std::unique_ptr<JobWork> work;
     std::thread thread;
+    std::mutex stage_mutex;
+    std::string stage; // What it's doing, from the worker thread
 
     void Update(int value) override
     {
         percent = value;
+    }
+    void Stage(const std::string &text) override
+    {
+        std::lock_guard<std::mutex> lock(stage_mutex);
+        stage = text;
+    }
+    std::string CurrentStage()
+    {
+        std::lock_guard<std::mutex> lock(stage_mutex);
+        return stage;
     }
 };
 
@@ -36,6 +49,15 @@ void run_job(Job *job, HWND wake)
 }
 
 } // namespace
+
+void show_stage(FatxProgress &progress, const std::string &stage)
+{
+    JobProgress *job = dynamic_cast<JobProgress *>(&progress);
+    if (job != nullptr)
+    {
+        job->Stage(stage);
+    }
+}
 
 JobRunner::JobRunner(HWND wake) : m_wake(wake), m_close_refused(false)
 {
@@ -103,6 +125,11 @@ void JobRunner::Draw(float scale, const Theme &theme)
     else
     {
         ImGui::ProgressBar(percent / 100.0f, ImVec2(-1, 0));
+    }
+    const std::string stage = m_job->CurrentStage();
+    if (!stage.empty())
+    {
+        ImGui::TextWrapped("%s", stage.c_str());
     }
     if (m_job->writes)
     {

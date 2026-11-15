@@ -41,7 +41,7 @@
       <WarningLevel>Level3</WarningLevel>
       <SDLCheck>true</SDLCheck>
       <LanguageStandard>stdcpp17</LanguageStandard>
-      <AdditionalIncludeDirectories>$(MSBuildThisFileDirectory)..\src;$(MSBuildThisFileDirectory)..\tools\fatxtool;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(MSBuildThisFileDirectory)..\src;$(MSBuildThisFileDirectory)..\tools\fatxtool;$(MSBuildThisFileDirectory)..\tools\fatxgui;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
     <Link>
@@ -70,6 +70,7 @@
   <ItemGroup>
     <ClCompile Include="partition_tests.cpp" />
     <ClCompile Include="fatx_tests.cpp" />
+    <ClCompile Include="fatx_large_volume_tests.cpp" />
     <ClCompile Include="fatx_resize_tests.cpp" />
     <ClCompile Include="fatx_recluster_tests.cpp" />
     <ClCompile Include="fatx_trim_tests.cpp" />
@@ -84,6 +85,12 @@
     <ClCompile Include="partition_status_tests.cpp" />
     <ClCompile Include="typed_number_tests.cpp" />
     <ClCompile Include="fatx_check_report_tests.cpp" />
+    <ClCompile Include="fatx_folder_tests.cpp" />
+    <ClCompile Include="fatx_import_tests.cpp" />
+    <ClCompile Include="fatx_edit_tests.cpp" />
+    <ClCompile Include="local_folder_tests.cpp" />
+    <ClCompile Include="drive_survey_tests.cpp" />
+    <ClCompile Include="xbox_hdd_format_tests.cpp" />
     <ClCompile Include="..\src\partition.cpp" />
     <ClCompile Include="..\src\partition_format.cpp" />
     <ClCompile Include="..\src\partition_status.cpp" />
@@ -100,6 +107,13 @@
     <ClCompile Include="..\tools\fatxtool\fatx_recluster.cpp" />
     <ClCompile Include="..\tools\fatxtool\fatx_trim.cpp" />
     <ClCompile Include="..\tools\fatxtool\pc_image.cpp" />
+    <ClCompile Include="..\tools\fatxtool\fatx_folder.cpp" />
+    <ClCompile Include="..\tools\fatxtool\fatx_import.cpp" />
+    <ClCompile Include="..\tools\fatxtool\fatx_edit.cpp" />
+    <ClCompile Include="..\tools\fatxgui\local_folder.cpp" />
+    <ClCompile Include="..\tools\fatxgui\drive_survey.cpp" />
+    <ClCompile Include="..\tools\fatxtool\xbox_hdd_format.cpp" />
+    <ClCompile Include="..\tools\fatxgui\text.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\src\partition.hpp" />
@@ -117,6 +131,9 @@
     <ClInclude Include="..\src\fatx_check.hpp" />
     <ClInclude Include="..\src\fatx_resize.hpp" />
     <ClInclude Include="..\tools\fatxtool\fatx_writer.hpp" />
+    <ClInclude Include="..\tools\fatxtool\fatx_folder.hpp" />
+    <ClInclude Include="..\tools\fatxtool\fatx_import.hpp" />
+    <ClInclude Include="..\tools\fatxtool\fatx_edit.hpp" />
     <ClInclude Include="..\tools\fatxtool\fatx_recluster.hpp" />
   </ItemGroup>
   <ItemGroup>

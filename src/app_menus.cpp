@@ -3,6 +3,8 @@
 #include "stdafx.h"
 #include "xbpartitioner.h"
 #include "app_internal.h"
+#include "array_length.h"
+#include "partition_format.h"
 
 // Shows each theme while it is selected in the Theme menu
 class ThemePreview : public MenuPreview
@@ -56,9 +58,9 @@ class StartMenuItems
   private:
     void FillLabels(int partition, const PartitionTableSession &session, const Settings &settings)
     {
-        swprintf(m_edit_label, L"Edit partition %d (%c)", partition + 1, PartitionLetter(partition));
-        swprintf(m_format_label, L"Format partition %d (%d KB clusters)", partition + 1, session.Edited().CalculateClusterSizeForPartition(partition));
-        swprintf(m_check_label, L"Check file system on partition %d", partition + 1);
+        FormatWide(m_edit_label, ArrayLength(m_edit_label), L"Edit partition %d (%c)", partition + 1, PartitionLetter(partition));
+        FormatWide(m_format_label, ArrayLength(m_format_label), L"Format partition %d (%d KB clusters)", partition + 1, session.Edited().CalculateClusterSizeForPartition(partition));
+        FormatWide(m_check_label, ArrayLength(m_check_label), L"Check file system on partition %d", partition + 1);
 
         m_labels[MENU_EDIT_PARTITION] = m_edit_label;
         m_labels[MENU_FORMAT_SELECTED] = m_format_label;

@@ -22,6 +22,9 @@ struct MainScreenSources
 
 // The partition table, disk map and free space, with the selected partition.
 // Also drawn behind every other screen, every frame. In layout space (see ui.h).
+// One line of the partition list
+const size_t TABLE_ROW_TEXT_COUNT = 80;
+
 class MainScreen
 {
   public:

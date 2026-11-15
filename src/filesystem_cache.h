@@ -39,6 +39,9 @@ class FilesystemCache
     bool EnsureUsage(int partition);
 
   private:
+    // Out of range indexes read as unformatted and are never read from disk
+    static bool IsIndex(int partition);
+
     FilesystemReader &m_reader;
     unsigned int m_cluster_sizes_kb[XboxPartitionTableEntryCount];
     PartitionUsage m_usage[XboxPartitionTableEntryCount];

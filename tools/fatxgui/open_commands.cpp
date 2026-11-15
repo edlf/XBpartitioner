@@ -12,6 +12,24 @@ namespace fatxgui
 namespace
 {
 
+// One answer to "memory unit or hard drive partition?"
+class OpenAsAction : public DialogAction
+{
+  public:
+    OpenAsAction(Commands &commands, const Source &unread, FatxMedium medium) : m_commands(commands), m_unread(unread), m_medium(medium)
+    {
+    }
+    void Run() override
+    {
+        m_commands.OpenImageAs(m_unread, m_medium);
+    }
+
+  private:
+    Commands &m_commands;
+    const Source m_unread;
+    const FatxMedium m_medium;
+};
+
 // Reads an image's or drive's partitions; once read, it replaces what's open
 class OpenSourceWork : public JobWork
 {
@@ -23,6 +41,7 @@ class OpenSourceWork : public JobWork
 
     void Run(FatxProgress &progress) override
     {
+        show_stage(progress, "Reading the partition table and how full each partition is.");
         m_ok = scan_source(&m_loaded, progress, &m_error);
     }
 
@@ -34,8 +53,31 @@ class OpenSourceWork : public JobWork
             m_commands.Tell("Can't open it", {m_error});
             return;
         }
+        if (m_loaded.medium_needed)
+        {
+            AskMedium();
+            return;
+        }
         m_commands.Opened(m_loaded, m_keep_selected);
     }
+
+  private:
+    // The header counts clusters in 512 byte sectors on a hard drive and in
+    // 4 KB ones on a memory unit, and an image doesn't say which it was
+    void AskMedium()
+    {
+        const DialogText text = {"What is " + m_loaded.name + "?",
+                                 {"It's a FATX volume without a partition table: a memory unit (or a USB",
+                                  "stick used as one), or one partition copied from an Xbox hard drive.",
+                                  "They count clusters differently, so it's read the way you say."},
+                                 "Memory unit",
+                                 "Hard drive partition"};
+        m_commands.Choose(text,
+                          std::make_unique<OpenAsAction>(m_commands, m_loaded, FATX_MEDIUM_MEMORY_UNIT),
+                          std::make_unique<OpenAsAction>(m_commands, m_loaded, FATX_MEDIUM_HARD_DRIVE));
+    }
+
+  public:
 
   private:
     Commands &m_commands;
@@ -45,7 +87,7 @@ class OpenSourceWork : public JobWork
     std::string m_error;
 };
 
-// Every PhysicalDrive with an Xbox partition table (so never the Windows one)
+// Every PhysicalDrive that can be read, and what's on it
 class ScanDrivesWork : public JobWork
 {
   public:
@@ -58,7 +100,11 @@ class ScanDrivesWork : public JobWork
         for (int n = 0; n < 32; n++)
         {
             progress.Update(n * 100 / 32);
-            AddIfXbox(n);
+            DriveInfo drive;
+            if (survey_drive(n, &drive))
+            {
+                m_found.push_back(drive);
+            }
         }
     }
 
@@ -68,23 +114,6 @@ class ScanDrivesWork : public JobWork
     }
 
   private:
-    void AddIfXbox(int number)
-    {
-        WindowsDisk disk;
-        unsigned long error = 0;
-        if (!disk.Open(format("\\\\.\\PhysicalDrive%d", number).c_str(), false, &error))
-        {
-            return;
-        }
-        XboxPartitionTable table;
-        if (!disk.Read(0, &table, sizeof(table)) || !PartitionTableEditor::HasMagic(table))
-        {
-            return;
-        }
-        const PartitionTableEditor editor(table, disk.Size() / HDD_SECTOR_SIZE, table.Version != XBOX_TABLE_VERSION_LBA48_V3, false);
-        m_found.push_back(DriveInfo{number, disk.Size(), editor.GetActivePartitionCount()});
-    }
-
     Commands &m_commands;
     std::vector<DriveInfo> m_found;
 };
@@ -96,13 +125,14 @@ void Commands::OpenSource(const Source &unread, int keep_selected)
     m_jobs.Start("Reading " + unread.name, false, std::make_unique<OpenSourceWork>(*this, unread, keep_selected));
 }
 
-void Commands::OpenImage(const fs::path &path)
+void Commands::OpenImage(const fs::path &path, FatxMedium medium)
 {
     m_log.Add(TONE_TITLE, "Opened " + utf8(path.wstring()));
     Source unread;
     unread.type = Source::IMAGE;
     unread.path = path;
     unread.name = utf8(path.filename().wstring());
+    unread.medium = medium;
     OpenSource(unread, 0);
 }
 
@@ -118,6 +148,59 @@ void Commands::OpenDrive(int number)
     OpenSource(unread, 0);
 }
 
+namespace
+{
+
+std::string clean_fat_key(const Source &src, const Part &part)
+{
+    return utf8(src.path.wstring()) + format(":%llu:%llu", (unsigned long long)part.start, (unsigned long long)part.sectors);
+}
+
+} // namespace
+
+uint64_t Commands::CleanFat(const Source &src, const Part &part) const
+{
+    const auto found = m_workspace.clean_fats.find(clean_fat_key(src, part));
+    return found == m_workspace.clean_fats.end() ? 0 : found->second;
+}
+
+void Commands::RememberCleanFat(const Source &src, const Part &part, uint64_t fingerprint)
+{
+    if (fingerprint == 0)
+    {
+        m_workspace.clean_fats.erase(clean_fat_key(src, part));
+        return;
+    }
+    m_workspace.clean_fats[clean_fat_key(src, part)] = fingerprint;
+}
+
+void Commands::UpdateUsage(const Source &src, const Part &part, const FatxUsage &usage)
+{
+    if (m_workspace.src.path != src.path)
+    {
+        return;
+    }
+    for (Part &open : m_workspace.src.parts)
+    {
+        if (open.start == part.start && open.sectors == part.sectors)
+        {
+            open.usage = usage;
+            open.usage_ok = true;
+        }
+    }
+}
+
+void Commands::OpenImageAs(const Source &unread, FatxMedium medium)
+{
+    Source again;
+    again.type = unread.type;
+    again.path = unread.path;
+    again.name = unread.name;
+    again.medium = medium;
+    m_log.Add(TONE_DIM, medium == FATX_MEDIUM_MEMORY_UNIT ? "  Read as a memory unit." : "  Read as a hard drive partition.");
+    OpenSource(again, 0);
+}
+
 // Again, keeping the selected partition
 void Commands::Reload()
 {
@@ -130,12 +213,14 @@ void Commands::Reload()
     unread.type = src.type;
     unread.path = src.path;
     unread.name = src.name;
+    // What the user said an image is still holds (drives are worked out again)
+    unread.medium = src.type == Source::IMAGE && !src.has_table ? src.medium : FATX_MEDIUM_UNKNOWN;
     OpenSource(unread, m_workspace.selected);
 }
 
 void Commands::ScanDrives()
 {
-    m_jobs.Start("Looking for Xbox drives", false, std::make_unique<ScanDrivesWork>(*this));
+    m_jobs.Start("Looking at the drives", false, std::make_unique<ScanDrivesWork>(*this));
 }
 
 } // namespace fatxgui

@@ -14,15 +14,10 @@ struct FormatJob
     FatxDevice &device;
     FatxLayout layout;
     uint32_t cluster_bytes;
+    uint32_t sectors_per_cluster; // As the header gives it, see FatxClusterBytes()
     unsigned char *buffer;
     FatxProgress *progress; // Or NULL
 };
-
-// Down to a sector, so tests can make 32 bit FATs in small images
-static bool is_formattable_cluster_size(uint32_t cluster_bytes)
-{
-    return cluster_bytes >= HDD_SECTOR_SIZE && cluster_bytes <= 1024 * 1024 && (cluster_bytes & (cluster_bytes - 1)) == 0;
-}
 
 // 1. The old file system is gone from here on
 static bool wipe_header(const FormatJob &job)
@@ -80,7 +75,7 @@ static bool write_header(const FormatJob &job, uint32_t serial)
 {
     memset(job.buffer, 0xFF, FATX_HEADER_BYTES);
     const uint32_t signature = FATX_signature;
-    const uint32_t sectors_per_cluster = job.cluster_bytes / HDD_SECTOR_SIZE;
+    const uint32_t sectors_per_cluster = job.sectors_per_cluster;
     const uint32_t root = FORMAT_ROOT_CLUSTER;
     const uint16_t zero = 0;
     memcpy(job.buffer + FATX_SIGNATURE_OFFSET, &signature, 4);
@@ -91,9 +86,10 @@ static bool write_header(const FormatJob &job, uint32_t serial)
     return job.device.Sync() && job.device.Write(0, job.buffer, FATX_HEADER_BYTES) && job.device.Sync();
 }
 
-bool FatxFormat(FatxDevice &device, uint64_t lba_size, uint32_t cluster_bytes, uint32_t serial, FatxProgress *progress)
+static bool format_volume(FatxDevice &device, uint64_t lba_size, uint32_t cluster_bytes, uint32_t serial, bool memory_unit, FatxProgress *progress)
 {
-    if (!is_formattable_cluster_size(cluster_bytes))
+    const uint32_t sectors_per_cluster = FatxSectorsPerCluster(cluster_bytes, memory_unit);
+    if (sectors_per_cluster == 0)
     {
         return false;
     }
@@ -109,7 +105,7 @@ bool FatxFormat(FatxDevice &device, uint64_t lba_size, uint32_t cluster_bytes, u
     {
         return false;
     }
-    const FormatJob job = {device, layout, cluster_bytes, buffer, progress};
+    const FormatJob job = {device, layout, cluster_bytes, sectors_per_cluster, buffer, progress};
     // Each step only once the one before it worked
     const bool ok = wipe_header(job) && write_fat(job) && write_empty_root(job) && write_header(job, serial);
     free(buffer);
@@ -119,4 +115,14 @@ bool FatxFormat(FatxDevice &device, uint64_t lba_size, uint32_t cluster_bytes, u
         progress->Update(100);
     }
     return ok;
+}
+
+bool FatxFormat(FatxDevice &device, uint64_t lba_size, uint32_t cluster_bytes, uint32_t serial, FatxProgress *progress)
+{
+    return format_volume(device, lba_size, cluster_bytes, serial, false, progress);
+}
+
+bool FatxFormatMemoryUnit(FatxDevice &device, uint64_t lba_size, uint32_t cluster_bytes, uint32_t serial, FatxProgress *progress)
+{
+    return format_volume(device, lba_size, cluster_bytes, serial, true, progress);
 }

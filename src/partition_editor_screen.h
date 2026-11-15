@@ -39,6 +39,9 @@ enum EditField
 
 // Edits one partition of the edited table (nothing is written): enabled,
 // start, size and end, with what the change does to its data
+// A field's value in the editor
+const size_t FIELD_VALUE_TEXT_COUNT = 120;
+
 class PartitionEditorScreen
 {
   public:

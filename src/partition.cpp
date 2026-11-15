@@ -277,6 +277,45 @@ FatxLayout FatxLayoutFor(const uint64_t lba_size, const uint32_t cluster_bytes)
     return layout;
 }
 
+static bool is_power_of_two(const uint32_t value)
+{
+    return value != 0 && (value & (value - 1)) == 0;
+}
+
+bool FatxIsMemoryUnit(const uint32_t sectors_per_cluster, const FatxMedium medium)
+{
+    if (medium != FATX_MEDIUM_UNKNOWN)
+    {
+        return medium == FATX_MEDIUM_MEMORY_UNIT;
+    }
+    return sectors_per_cluster < FATX_HDD_MIN_SECTORS_PER_CLUSTER;
+}
+
+uint32_t FatxClusterBytes(const uint32_t sectors_per_cluster, const FatxMedium medium)
+{
+    // Hard drives: 16 KB to 1 MB; memory units: 4 KB to 64 KB
+    const bool memory_unit = FatxIsMemoryUnit(sectors_per_cluster, medium);
+    const uint32_t least = memory_unit ? 1 : FATX_HDD_MIN_SECTORS_PER_CLUSTER;
+    const uint32_t most = memory_unit ? FATX_HDD_MIN_SECTORS_PER_CLUSTER - 1 : 2048;
+    if (!is_power_of_two(sectors_per_cluster) || sectors_per_cluster < least || sectors_per_cluster > most)
+    {
+        return 0;
+    }
+    return sectors_per_cluster * (memory_unit ? FATX_MEMORY_UNIT_SECTOR_SIZE : HDD_SECTOR_SIZE);
+}
+
+uint32_t FatxSectorsPerCluster(const uint32_t cluster_bytes, const bool memory_unit)
+{
+    const uint32_t sector = memory_unit ? FATX_MEMORY_UNIT_SECTOR_SIZE : HDD_SECTOR_SIZE;
+    if (!is_power_of_two(cluster_bytes) || cluster_bytes % sector != 0)
+    {
+        return 0;
+    }
+    const uint32_t sectors = cluster_bytes / sector;
+    const bool fits = memory_unit ? (sectors < FATX_HDD_MIN_SECTORS_PER_CLUSTER) : (sectors >= FATX_HDD_MIN_SECTORS_PER_CLUSTER && sectors <= 2048);
+    return fits ? sectors : 0;
+}
+
 uint64_t FatxClusterAt(const FatxLayout &layout, const uint32_t cluster_bytes, const uint64_t byte_offset)
 {
     if (cluster_bytes == 0 || byte_offset < layout.data_offset)
@@ -288,9 +327,14 @@ uint64_t FatxClusterAt(const FatxLayout &layout, const uint32_t cluster_bytes, c
     return (cluster < layout.cluster_limit) ? cluster : 0;
 }
 
+bool PartitionTableEditor::IsIndex(const int partition_number)
+{
+    return partition_number >= 0 && partition_number < (int)XboxPartitionTableEntryCount;
+}
+
 void PartitionTableEditor::SetPartitionName(const uint16_t partition_number, const char *name)
 {
-    if (partition_number >= XboxPartitionTableEntryCount)
+    if (!IsIndex(partition_number))
     {
         return;
     }
@@ -305,7 +349,7 @@ void PartitionTableEditor::SetPartitionName(const uint16_t partition_number, con
 
 void PartitionTableEditor::SetPartitionSize(const int partition_number, const uint64_t value)
 {
-    if (partition_number >= XboxPartitionTableEntryCount)
+    if (!IsIndex(partition_number))
     {
         return;
     }
@@ -317,7 +361,7 @@ void PartitionTableEditor::SetPartitionSize(const int partition_number, const ui
 
 void PartitionTableEditor::SetPartitionStart(const int partition_number, const uint64_t value)
 {
-    if (partition_number >= XboxPartitionTableEntryCount)
+    if (!IsIndex(partition_number))
     {
         return;
     }
@@ -329,7 +373,7 @@ void PartitionTableEditor::SetPartitionStart(const int partition_number, const u
 
 uint64_t PartitionTableEditor::GetPartitionSize(const int partition_number) const
 {
-    if (partition_number >= XboxPartitionTableEntryCount)
+    if (!IsIndex(partition_number))
     {
         return 0;
     }
@@ -339,7 +383,7 @@ uint64_t PartitionTableEditor::GetPartitionSize(const int partition_number) cons
 
 uint64_t PartitionTableEditor::GetPartitionStart(const int partition_number) const
 {
-    if (partition_number >= XboxPartitionTableEntryCount)
+    if (!IsIndex(partition_number))
     {
         return 0;
     }
@@ -349,7 +393,7 @@ uint64_t PartitionTableEditor::GetPartitionStart(const int partition_number) con
 
 unsigned int PartitionTableEditor::CalculateClusterSizeForPartition(const int partition_number) const
 {
-    if (partition_number >= XboxPartitionTableEntryCount)
+    if (!IsIndex(partition_number))
     {
         return 0;
     }
@@ -539,7 +583,10 @@ uint64_t PartitionTableEditor::GetFirstFreeStart() const
 
     SortPartitions(starts, ends);
 
-    // First gap with room for a 4 KB block once the start is aligned
+    // First gap with room for a 4 KB block once the start is aligned. A gap
+    // starts after the furthest end so far, so a partition inside an
+    // overlapping one never seems to leave room.
+    uint64_t covered_end = 0;
     for (int i = 0; i < (XboxPartitionTableEntryCount - 1); i++)
     {
         if (!starts[i])
@@ -547,14 +594,16 @@ uint64_t PartitionTableEditor::GetFirstFreeStart() const
             continue;
         }
 
-        const uint64_t candidate = AlignStartTo4k(ends[i]);
+        covered_end = (ends[i] > covered_end) ? ends[i] : covered_end;
+        const uint64_t candidate = AlignStartTo4k(covered_end);
         if (candidate + LBA_ALIGNMENT <= starts[i + 1])
         {
             return candidate;
         }
     }
 
-    const uint64_t candidate = AlignStartTo4k(ends[(XboxPartitionTableEntryCount - 1)]);
+    const uint64_t last_end = ends[XboxPartitionTableEntryCount - 1];
+    const uint64_t candidate = AlignStartTo4k((last_end > covered_end) ? last_end : covered_end);
     if (candidate + LBA_ALIGNMENT <= m_last_usable_lba)
     {
         return candidate;
@@ -565,7 +614,7 @@ uint64_t PartitionTableEditor::GetFirstFreeStart() const
 
 uint64_t PartitionTableEditor::GetAvailableFreeSpaceForPartition(const int partition_number) const
 {
-    if (partition_number >= XboxPartitionTableEntryCount)
+    if (!IsIndex(partition_number))
     {
         return 0;
     }
@@ -640,7 +689,7 @@ uint64_t PartitionTableEditor::GetGrowthLimitBefore(const int partition_number) 
 
 void PartitionTableEditor::PartitionIncreaseSizeBy(const int partition_number, uint64_t delta)
 {
-    if (partition_number >= XboxPartitionTableEntryCount)
+    if (!IsIndex(partition_number))
     {
         return;
     }
@@ -658,7 +707,7 @@ void PartitionTableEditor::PartitionIncreaseSizeBy(const int partition_number, u
 
 void PartitionTableEditor::PartitionDecreaseSizeBy(const int partition_number, uint64_t delta)
 {
-    if (partition_number >= XboxPartitionTableEntryCount)
+    if (!IsIndex(partition_number))
     {
         return;
     }
@@ -676,7 +725,7 @@ void PartitionTableEditor::PartitionDecreaseSizeBy(const int partition_number, u
 
 void PartitionTableEditor::EnablePartition(const int partition_number)
 {
-    if (partition_number >= XboxPartitionTableEntryCount)
+    if (!IsIndex(partition_number))
     {
         return;
     }
@@ -761,7 +810,7 @@ bool PartitionTableEditor::IsNameBlank(const int partition_number) const
 
 void PartitionTableEditor::DisablePartition(const int partition_number)
 {
-    if (partition_number >= XboxPartitionTableEntryCount)
+    if (!IsIndex(partition_number))
     {
         return;
     }
@@ -771,7 +820,7 @@ void PartitionTableEditor::DisablePartition(const int partition_number)
 
 bool PartitionTableEditor::IsPartitionEnabled(const int partition_number) const
 {
-    if (partition_number >= XboxPartitionTableEntryCount)
+    if (!IsIndex(partition_number))
     {
         return false;
     }
@@ -781,7 +830,7 @@ bool PartitionTableEditor::IsPartitionEnabled(const int partition_number) const
 
 void PartitionTableEditor::ErasePartition(const int partition_number)
 {
-    if (partition_number >= XboxPartitionTableEntryCount)
+    if (!IsIndex(partition_number))
     {
         return;
     }
@@ -794,9 +843,7 @@ void PartitionTableEditor::ErasePartition(const int partition_number)
 
 int PartitionTableEditor::GetFirstAvailablePartitionSlot() const
 {
-    int n = XboxPartitionTableEntryCount - 1;
-
-    for (int i = 0; i <= n; i++)
+    for (int i = 0; i < (int)XboxPartitionTableEntryCount; i++)
     {
         if (!IsPartitionEnabled(i))
         {
@@ -804,12 +851,12 @@ int PartitionTableEditor::GetFirstAvailablePartitionSlot() const
         }
     }
 
-    return n;
+    return -1;
 }
 
 uint64_t PartitionTableEditor::GetAvailableFreeSpaceForPartitionBefore(const int partition_number) const
 {
-    if (partition_number >= XboxPartitionTableEntryCount)
+    if (!IsIndex(partition_number))
     {
         return 0;
     }
@@ -858,7 +905,7 @@ uint64_t PartitionTableEditor::GetAvailableFreeSpaceForPartitionBefore(const int
 
 void PartitionTableEditor::PartitionMoveBack(const int partition_number, uint64_t delta)
 {
-    if (partition_number >= XboxPartitionTableEntryCount)
+    if (!IsIndex(partition_number))
     {
         return;
     }
@@ -881,7 +928,7 @@ void PartitionTableEditor::PartitionMoveBack(const int partition_number, uint64_
 
 void PartitionTableEditor::PartitionMoveForward(const int partition_number, uint64_t delta)
 {
-    if (partition_number >= XboxPartitionTableEntryCount)
+    if (!IsIndex(partition_number))
     {
         return;
     }
@@ -909,7 +956,7 @@ void PartitionTableEditor::PartitionMoveForward(const int partition_number, uint
 
 void PartitionTableEditor::PartitionStartForward(const int partition_number, const uint64_t delta)
 {
-    if (partition_number >= XboxPartitionTableEntryCount)
+    if (!IsIndex(partition_number))
     {
         return;
     }
@@ -953,7 +1000,7 @@ void PartitionTableEditor::PartitionStartForward(const int partition_number, con
 
 void PartitionTableEditor::PartitionStartBack(const int partition_number, uint64_t delta)
 {
-    if (partition_number >= XboxPartitionTableEntryCount)
+    if (!IsIndex(partition_number))
     {
         return;
     }
@@ -1171,7 +1218,7 @@ void PartitionTableEditor::WriteMagic()
 
 XboxPartitionTableEntry PartitionTableEditor::GetPartitionEntry(const int partition_number) const
 {
-    if (partition_number >= XboxPartitionTableEntryCount)
+    if (!IsIndex(partition_number))
     {
         XboxPartitionTableEntry dummy = {0};
         return dummy;
@@ -1201,7 +1248,7 @@ bool PartitionTableEditor::HasSameLayout(const PartitionTableEditor &other) cons
 
 bool PartitionTableEditor::RestorePartitionEntry(const int partition_number, const XboxPartitionTableEntry &entry)
 {
-    if (partition_number >= XboxPartitionTableEntryCount)
+    if (!IsIndex(partition_number))
     {
         return false;
     }

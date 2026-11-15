@@ -76,7 +76,9 @@ App::App()
 
     m_filesystems.RefreshAll();
 
-    m_main_screen.Select(m_session.Edited().GetFirstAvailablePartitionSlot());
+    // A full table: the last slot, as before
+    const int free_slot = m_session.Edited().GetFirstAvailablePartitionSlot();
+    m_main_screen.Select(free_slot >= 0 ? free_slot : XboxPartitionTableEntryCount - 1);
 
     FadeIn();
 }

@@ -792,3 +792,49 @@ TEST(Fatx, ShrinkingBy4kMayMoveTheData)
     EXPECT_EQ(before2.bytes_per_fat, after2.bytes_per_fat);
     EXPECT_EQ(before2.bytes_per_entry, after2.bytes_per_entry);
 }
+
+TEST(Slots, FirstAvailableIsTheFirstDisabledOne)
+{
+    PartitionTableEditor t(DISK_1TB, true, false);
+    t.SetupPartitionsStock();
+    EXPECT_EQ(t.GetFirstAvailablePartitionSlot(), XBOX_STANDARD_PARTITION_COUNT);
+}
+
+TEST(Slots, NoneAvailableInAFullTable)
+{
+    PartitionTableEditor t(DISK_1TB, true, false);
+    for (int i = XBOX_STANDARD_PARTITION_COUNT; i < (int)XboxPartitionTableEntryCount; i++)
+    {
+        t.EnablePartition(i);
+    }
+    EXPECT_EQ(t.GetFirstAvailablePartitionSlot(), -1);
+}
+
+TEST(Slots, NegativeIndexIsRefused)
+{
+    PartitionTableEditor t(DISK_1TB, true, false);
+    EXPECT_FALSE(t.IsPartitionEnabled(-1));
+    EXPECT_EQ(t.GetPartitionSize(-1), 0u);
+}
+
+TEST(FreeSpace, FirstFreeStartSkipsPartitionsInsideAnother)
+{
+    // Partition 6 lies inside X: the space after it is still X's
+    PartitionTableEditor t(DISK_1TB, true, false);
+    t.SetupPartitionsStock();
+    t.EnablePartition(5);
+    t.SetPartitionStart(5, XBOX_SWAPPART1_LBA_START + 0x400);
+    t.SetPartitionSize(5, 0x100);
+    EXPECT_EQ(t.GetFirstFreeStart(), (uint64_t)XBOX_PART6_LBA_START);
+}
+
+TEST(FreeSpace, FirstFreeStartAfterTheFurthestEndWhenTheLastOneIsInside)
+{
+    // The partition starting last ends before E does
+    PartitionTableEditor t(DISK_1TB, true, false);
+    t.SetupPartitionsStock();
+    t.EnablePartition(5);
+    t.SetPartitionStart(5, XBOX_DATAPART_LBA_START + 0x400);
+    t.SetPartitionSize(5, 0x100);
+    EXPECT_EQ(t.GetFirstFreeStart(), (uint64_t)XBOX_PART6_LBA_START);
+}

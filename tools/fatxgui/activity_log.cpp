@@ -1,6 +1,8 @@
 #define NOMINMAX
 #include "activity_log.hpp"
 
+#include <algorithm>
+
 #include "look.hpp"
 #include "text.hpp"
 
@@ -76,17 +78,99 @@ std::vector<LogLine> ActivityLog::Lines() const
 void ActivityLog::Draw(const Theme &theme)
 {
     std::lock_guard<std::mutex> lock(m_mutex);
-    for (const LogLine &line : m_lines)
+    m_selected.resize(m_lines.size(), false);
+    const ImU32 highlight = ImGui::GetColorU32(ImGuiCol_Header);
+    for (size_t i = 0; i < m_lines.size(); i++)
     {
-        ImGui::PushStyleColor(ImGuiCol_Text, tone_color(theme, line.tone));
-        ImGui::TextWrapped("%s", line.text.c_str());
+        ImGui::PushStyleColor(ImGuiCol_Text, tone_color(theme, m_lines[i].tone));
+        ImGui::TextWrapped("%s", m_lines[i].text.c_str());
         ImGui::PopStyleColor();
+        if (m_selected[i])
+        {
+            ImGui::GetWindowDrawList()->AddRectFilled(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), highlight);
+        }
+        if (ImGui::IsItemClicked(ImGuiMouseButton_Left))
+        {
+            Click(i);
+        }
     }
+    CopyCommands();
     if (m_scroll)
     {
         ImGui::SetScrollHereY(1.0f);
         m_scroll = false;
     }
+}
+
+// Click picks a line, Ctrl+click adds or removes one, Shift+click a range
+void ActivityLog::Click(size_t line)
+{
+    const ImGuiIO &io = ImGui::GetIO();
+    if (io.KeyShift && m_anchor < m_lines.size())
+    {
+        const size_t from = (m_anchor < line) ? m_anchor : line;
+        const size_t to = (m_anchor < line) ? line : m_anchor;
+        m_selected.assign(m_lines.size(), false);
+        for (size_t i = from; i <= to; i++)
+        {
+            m_selected[i] = true;
+        }
+        return;
+    }
+    if (io.KeyCtrl)
+    {
+        m_selected[line] = !m_selected[line];
+    }
+    else
+    {
+        m_selected.assign(m_lines.size(), false);
+        m_selected[line] = true;
+    }
+    m_anchor = line;
+}
+
+// Ctrl+C and Ctrl+A while the log has focus, and its right-click menu
+void ActivityLog::CopyCommands()
+{
+    const bool focused = ImGui::IsWindowFocused();
+    if (focused && ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_A))
+    {
+        m_selected.assign(m_lines.size(), true);
+    }
+    if (focused && ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_C))
+    {
+        ImGui::SetClipboardText(Text(true).c_str());
+    }
+    if (ImGui::BeginPopupContextWindow("log_menu"))
+    {
+        const bool any = std::find(m_selected.begin(), m_selected.end(), true) != m_selected.end();
+        if (ImGui::MenuItem("Copy", "Ctrl+C", false, any))
+        {
+            ImGui::SetClipboardText(Text(true).c_str());
+        }
+        if (ImGui::MenuItem("Copy the whole log"))
+        {
+            ImGui::SetClipboardText(Text(false).c_str());
+        }
+        if (ImGui::MenuItem("Select all", "Ctrl+A"))
+        {
+            m_selected.assign(m_lines.size(), true);
+        }
+        ImGui::EndPopup();
+    }
+}
+
+std::string ActivityLog::Text(bool selected_only) const
+{
+    std::string text;
+    for (size_t i = 0; i < m_lines.size(); i++)
+    {
+        if (!selected_only || m_selected[i])
+        {
+            text += m_lines[i].text + "\r\n";
+        }
+    }
+    return text;
 }
 
 void ActivityLog::Fragmentation(const FatxCheckResult &result)

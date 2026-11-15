@@ -23,16 +23,22 @@ class SourceWork : public JobWork
     {
     }
 
-    // False, with the reason logged, if it can't be opened
+    // False, with the reason logged, if it can't be opened. Before writing
+    // it must still be what was scanned, so nothing lands on another disk.
     bool OpenIo(SourceIo &io, IoAccess access)
     {
         std::string error;
-        if (io.Open(m_src, access == IO_WRITE, access == IO_ATA, &error))
+        if (!io.Open(m_src, access == IO_WRITE, access == IO_ATA, &error))
         {
-            return true;
+            m_log.Add(TONE_ERROR, "  " + error);
+            return false;
         }
-        m_log.Add(TONE_ERROR, "  " + error);
-        return false;
+        if (access != IO_READ && !layout_matches_scan(io, m_src))
+        {
+            m_log.Add(TONE_ERROR, "  " + m_src.name + " changed since it was read: nothing was written. Reload it first.");
+            return false;
+        }
+        return true;
     }
 
     Commands &m_commands;

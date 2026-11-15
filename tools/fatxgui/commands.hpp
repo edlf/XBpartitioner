@@ -9,6 +9,10 @@
 #include <vector>
 
 #include "activity_log.hpp"
+#include "fatx_folder.hpp"
+#include "fatx_edit.hpp"
+#include "fatx_import.hpp"
+#include "xbox_hdd_format.hpp"
 #include "dialogs.hpp"
 #include "job_runner.hpp"
 #include "workspace.hpp"
@@ -16,14 +20,67 @@
 namespace fatxgui
 {
 
-// The new image window's choices
+// The Create image window's choices
+enum NewImageKind
+{
+    NEW_IMAGE_XBOX_HDD = 0,  // A whole Xbox hard drive: table and partitions
+    NEW_IMAGE_MEMORY_UNIT    // One FATX volume counted in 4 KB sectors
+};
+
 struct NewImage
 {
     bool open = false;
+    int kind = NEW_IMAGE_MEMORY_UNIT; // NewImageKind
     std::wstring path;
-    double size_mb = 1024.0;
-    int cluster = 0; // Index into new_image_clusters
-    std::wstring from;
+    double hdd_gb = 8.0;
+    int layout = XBOX_HDD_F; // XboxHddLayout
+    bool lba48_v4 = true;
+    double mu_mb = 8.0;   // A memory unit's size
+    std::wstring from;    // Memory units: a folder to fill it from
+};
+
+// Files and folders to copy out of a partition, into a folder on the PC
+struct ExtractRequest
+{
+    Source src;
+    Part part;
+    std::vector<FatxFolderEntry> items;
+    fs::path destination;
+};
+
+// PC files and folders to copy into a partition's folder
+struct ImportRequest
+{
+    Source src;
+    Part part;
+    FatxImportTarget target;
+    std::vector<fs::path> sources;
+};
+
+// A new folder in a partition's folder
+struct NewFolderRequest
+{
+    Source src;
+    Part part;
+    FatxImportTarget where;
+    std::string name;
+};
+
+// Entries of one of a partition's folders, folders with all that's in them
+struct DeleteRequest
+{
+    Source src;
+    Part part;
+    std::vector<FatxFolderEntry> entries;
+    uint32_t cluster_bytes; // For the freed space in the log
+};
+
+// "" clears it
+struct LabelRequest
+{
+    Source src;
+    Part part;
+    std::string label;
 };
 
 struct CommandParts
@@ -43,10 +100,18 @@ class Commands
     {
     }
 
-    void OpenImage(const fs::path &path);
+    // medium: what it is, when that's known (an image without a partition
+    // table is asked about otherwise)
+    void OpenImage(const fs::path &path, FatxMedium medium = FATX_MEDIUM_UNKNOWN);
+    // Again, now that the user said what the image is
+    void OpenImageAs(const Source &unread, FatxMedium medium);
     void OpenDrive(int number);
     void Reload();
     void ScanDrives();
+    // Asks first; never a drive holding a Windows volume
+    void AskFormatDrive(const DriveInfo &drive);
+    // Asks twice; never a drive holding a Windows volume
+    void AskFormatXboxHdd(const DriveInfo &drive, const XboxHddSpec &spec);
     void Check(const Part &part);
     void Repair(const Part &part);
     void Resize(const Part &part, uint64_t new_lba);
@@ -56,6 +121,13 @@ class Commands
     void FindTrim();
     void Trim();
     void Make(const NewImage &spec);
+    void Extract(const ExtractRequest &request);
+    // Checks and plans it first, then asks
+    void Import(const ImportRequest &request);
+    void NewFolder(const NewFolderRequest &request);
+    // Asks first
+    void AskDelete(const DeleteRequest &request);
+    void SetLabel(const LabelRequest &request);
     // The confirmations the panels ask for
     void AskResize(const Part &part, uint64_t new_lba, FatxResizeKind kind);
     void AskTrim();
@@ -73,6 +145,10 @@ class Commands
     {
         m_dialogs.Ask(std::move(text), std::move(action));
     }
+    void Choose(DialogText text, std::unique_ptr<DialogAction> first, std::unique_ptr<DialogAction> second)
+    {
+        m_dialogs.Choose(std::move(text), std::move(first), std::move(second));
+    }
     void Tell(const std::string &title, std::vector<std::string> lines)
     {
         m_dialogs.Tell(title, std::move(lines));
@@ -83,6 +159,20 @@ class Commands
         m_workspace.src = src;
         m_workspace.selected = keep_selected < (int)src.parts.size() ? keep_selected : 0;
     }
+    void CopiedToPc()
+    {
+        m_workspace.copies_to_pc++;
+    }
+    void CopiedToFatx()
+    {
+        m_workspace.copies_to_fatx++;
+    }
+    // The partition's FAT fingerprint when it was last known clean; 0 if none
+    uint64_t CleanFat(const Source &src, const Part &part) const;
+    // 0 forgets it
+    void RememberCleanFat(const Source &src, const Part &part, uint64_t fingerprint);
+    // After a change, from the FAT the job holds: no need to read the drive again
+    void UpdateUsage(const Source &src, const Part &part, const FatxUsage &usage);
     void FoundTrim(const TrimPlan &plan)
     {
         m_workspace.trim = plan;
@@ -91,6 +181,12 @@ class Commands
     {
         m_workspace.drives = drives;
         m_workspace.drives_scanned = true;
+    }
+    // They changed: looked at again when the drive window next opens
+    void ForgetDrives()
+    {
+        m_workspace.drives.clear();
+        m_workspace.drives_scanned = false;
     }
 
   private:

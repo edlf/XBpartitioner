@@ -25,6 +25,10 @@ class FatxOffsetReader : public FatxReader
     {
         return m_inner.Read(m_base + offset, buffer, length);
     }
+    FatxMedium Medium() const override
+    {
+        return m_inner.Medium();
+    }
 
   private:
     FatxReader &m_inner;

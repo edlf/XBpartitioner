@@ -7,6 +7,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+static const LPCWSTR TABLE_NOT_WRITTEN = L"The partition table could not be written.";
+
 // Writes a resized partition's new size to the table. Runs on the resize's
 // worker thread, so no dialogs: write_main is decided beforehand.
 class XboxResizeTable : public FatxResizeTable
@@ -59,11 +61,11 @@ bool TableWriter::ConfirmFormatWarning(const PartitionSet &marked, const Resizes
     wchar_t message[120];
     if (list[0] == L'\0')
     {
-        swprintf(message, L"No partitions changed, nothing will be formatted.");
+        FormatWide(message, ArrayLength(message), L"No partitions changed, nothing will be formatted.");
     }
     else
     {
-        swprintf(message, L"Format: %s", list);
+        FormatWide(message, ArrayLength(message), L"Format: %s", list);
     }
 
     LPCWSTR lines[7];
@@ -90,7 +92,7 @@ bool TableWriter::ConfirmFormatWarning(const PartitionSet &marked, const Resizes
     wchar_t program_line[100];
     if (marked.Contains(m_launch_partition) || LosesLaunchPartition(resizes.Keeping()))
     {
-        FormatLaunchPartitionLine(program_line, marked.Contains(m_launch_partition) ? L"it will be deleted." : L"it will be unreadable.");
+        FormatLaunchPartitionLine(program_line, ArrayLength(program_line), marked.Contains(m_launch_partition) ? L"it will be deleted." : L"it will be unreadable.");
         lines[line_count++] = program_line;
     }
     return m_dialogs.ConfirmWarning(lines, line_count, L"Format");
@@ -119,7 +121,7 @@ bool TableWriter::LosesLaunchPartition(const PartitionSet &keeps) const
 void TableWriter::ShowReservedAreaWarning(int partition, LPCWSTR what)
 {
     wchar_t line1[100];
-    swprintf(line1, L"Partition %d (%c) starts before sector 0x%X,", partition + 1, PartitionLetter(partition), XBOX_SWAPPART1_LBA_START);
+    FormatWide(line1, ArrayLength(line1), L"Partition %d (%c) starts before sector 0x%X,", partition + 1, PartitionLetter(partition), XBOX_SWAPPART1_LBA_START);
     const LPCWSTR lines[] = {
         line1,
         L"in the area the Xbox reserves at the start of the drive.",
@@ -148,7 +150,7 @@ bool TableWriter::RefuseUnwritableTable(const XboxPartitionTable &table)
     }
 
     wchar_t line[100];
-    swprintf(line,
+    FormatWide(line, ArrayLength(line),
              L"Partitions %d (%c) and %d (%c) %s.",
              first + 1,
              PartitionLetter(first),
@@ -183,10 +185,7 @@ void TableWriter::WriteAndFormatChanged()
     const TableWriteOutcome outcome = WriteTableWithResizes(resizes);
     if (!outcome.written)
     {
-        if (!outcome.error_shown)
-        {
-            m_dialogs.ShowMessage(L"Error", COLOR_RED, L"The partition table could not be written.");
-        }
+        ShowWriteFailure(outcome, TABLE_NOT_WRITTEN);
         return;
     }
 
@@ -216,7 +215,7 @@ void TableWriter::FormatAfterWrite(const PartitionSet &to_format, const TableWri
     }
 
     wchar_t done[60];
-    swprintf(done, L"Table written, %d of %d partitions formatted.", formatted, attempted);
+    FormatWide(done, ArrayLength(done), L"Table written, %d of %d partitions formatted.", formatted, attempted);
     const LPCWSTR lines[] = {
         done,
         L"No backup: the last partition covers its sector.",
@@ -258,7 +257,7 @@ bool TableWriter::ConfirmUnreadable(const ResizesKeepingData &resizes, const Par
     wchar_t list[100];
     FormatPartitionList(resized, list, ArrayLength(list));
     wchar_t resized_line[120];
-    swprintf(resized_line, L"Moved or resized: %s", list);
+    FormatWide(resized_line, ArrayLength(resized_line), L"Moved or resized: %s", list);
 
     LPCWSTR lines[7];
     int line_count = 0;
@@ -278,7 +277,7 @@ bool TableWriter::ConfirmUnreadable(const ResizesKeepingData &resizes, const Par
     wchar_t program_line[100];
     if (LosesLaunchPartition(resizes.Keeping()))
     {
-        FormatLaunchPartitionLine(program_line, L"it will be unreadable.");
+        FormatLaunchPartitionLine(program_line, ArrayLength(program_line), L"it will be unreadable.");
         lines[line_count++] = program_line;
     }
     return m_dialogs.ConfirmWarning(lines, line_count, L"Write anyway");
@@ -294,14 +293,25 @@ bool TableWriter::ConfirmPlainWrite(const ResizesKeepingData &resizes)
     return m_dialogs.RunDialog(DialogText{L"Write table", COLOR_WHITE, lines, line_count}, DialogButtons{L"Write", L"Cancel"});
 }
 
+void TableWriter::ShowWriteFailure(const TableWriteOutcome &outcome, LPCWSTR nothing_written)
+{
+    if (outcome.error_shown)
+    {
+        return;
+    }
+    if (outcome.backup_written)
+    {
+        m_dialogs.ShowMessage(L"Error", COLOR_RED, L"Only the backup table was written, sector 0 failed.");
+        return;
+    }
+    m_dialogs.ShowMessage(L"Error", COLOR_RED, nothing_written);
+}
+
 void TableWriter::ReportWrite(const TableWriteOutcome &outcome)
 {
     if (!outcome.written)
     {
-        if (!outcome.error_shown)
-        {
-            m_dialogs.ShowMessage(L"Error", COLOR_RED, L"The partition table could not be written.");
-        }
+        ShowWriteFailure(outcome, TABLE_NOT_WRITTEN);
         return;
     }
 
@@ -345,14 +355,14 @@ void TableWriter::FormatOne(int part)
     if (FormatPartition(part))
     {
         wchar_t done[40];
-        swprintf(done, L"Partition %d was formatted.", part + 1);
+        FormatWide(done, ArrayLength(done), L"Partition %d was formatted.", part + 1);
         m_dialogs.ShowMessage(L"Done", COLOR_GREEN, done);
     }
 }
 
-void TableWriter::FormatLaunchPartitionLine(wchar_t *out, LPCWSTR what)
+void TableWriter::FormatLaunchPartitionLine(wchar_t *out, size_t out_count, LPCWSTR what)
 {
-    swprintf(out, L"Partition %d (%c) holds this program: %s", m_launch_partition + 1, PartitionLetter(m_launch_partition), what);
+    FormatWide(out, out_count, L"Partition %d (%c) holds this program: %s", m_launch_partition + 1, PartitionLetter(m_launch_partition), what);
 }
 
 bool TableWriter::MovesLaunchPartition(const XboxPartitionTable &table) const
@@ -401,7 +411,7 @@ bool TableWriter::FormatPartition(const int i)
     if (max_cluster != 0 && (unsigned int)cluster_size > max_cluster)
     {
         wchar_t error[80];
-        swprintf(error, L"Partition %d needs %d KB clusters, LBA48 v3 allows %u.", i + 1, cluster_size, max_cluster);
+        FormatWide(error, ArrayLength(error), L"Partition %d needs %d KB clusters, LBA48 v3 allows %u.", i + 1, cluster_size, max_cluster);
         const LPCWSTR lines[] = {
             error,
             L"Not formatted: shrink it to 1 TB or less first.",
@@ -421,7 +431,7 @@ bool TableWriter::FormatPartition(const int i)
     if (!NT_SUCCESS(dismounted))
     {
         wchar_t error[80];
-        swprintf(error, L"Partition %d: unmounting failed (0x%08X), not formatted.", i + 1, dismounted);
+        FormatWide(error, ArrayLength(error), L"Partition %d: unmounting failed (0x%08X), not formatted.", i + 1, dismounted);
         m_dialogs.ShowMessage(L"Error", COLOR_RED, error);
         return false;
     }
@@ -434,7 +444,7 @@ bool TableWriter::FormatPartition(const int i)
     if (!formatted)
     {
         wchar_t error[80];
-        swprintf(error, L"Partition %d could not be formatted (write error).", i + 1);
+        FormatWide(error, ArrayLength(error), L"Partition %d could not be formatted (write error).", i + 1);
         m_dialogs.ShowMessage(L"Error", COLOR_RED, error);
         return false;
     }
@@ -538,11 +548,16 @@ TableWriteOutcome TableWriter::WriteTables(const XboxPartitionTable &table_in)
     {
         return TableWriteOutcome::NotWritten();
     }
+    return WritePlanned(plan.table, plan.write_main);
+}
 
-    const TableWriteOutcome outcome = WriteTablesRaw(plan.table, plan.write_main);
-    if (outcome.written)
+TableWriteOutcome TableWriter::WritePlanned(const XboxPartitionTable &table, bool write_main)
+{
+    const TableWriteOutcome outcome = WriteTablesRaw(table, write_main);
+    // Also after a partial write: the tables on disk have changed
+    if (outcome.written || outcome.main_written || outcome.backup_written)
     {
-        ReloadAfterWrite(plan.table);
+        ReloadAfterWrite(table);
     }
     return outcome;
 }
@@ -560,8 +575,10 @@ bool TableWriter::ErasePartitionTables()
 ResizesKeepingData TableWriter::FindResizesKeepingData()
 {
     ResizesKeepingData resizes;
-    // Off: every resized partition is formatted, nothing is read or checked
-    if (!m_settings.ResizeKeepsData())
+    // Off: every resized partition is formatted, nothing is read or checked.
+    // Without the LBA48 patch the kernel ignores the table and mounts the stock
+    // sizes, so a resized file system would no longer match its partition.
+    if (!m_settings.ResizeKeepsData() || !m_tables.HasLba48Patch())
     {
         return resizes;
     }
@@ -666,12 +683,15 @@ bool TableWriter::RunMoveResize(int partition, ULONGLONG new_size, bool write_ma
     if (!m_tables.Prepare(check.TableWith(new_size)).writable)
     {
         wchar_t line[80];
-        swprintf(line, L"Partition %d (%c) wasn't resized: it doesn't fit.", partition + 1, PartitionLetter(partition));
+        FormatWide(line, ArrayLength(line), L"Partition %d (%c) wasn't resized: it doesn't fit.", partition + 1, PartitionLetter(partition));
         m_dialogs.ShowMessage(L"Not resized", COLOR_RED, line);
         return false;
     }
 
-    DismountPartition(partition);
+    if (!DismountForResize(partition))
+    {
+        return false;
+    }
     FatxMoveResult *move = new FatxMoveResult;
     if (move == NULL)
     {
@@ -693,6 +713,36 @@ bool TableWriter::RunMoveResize(int partition, ULONGLONG new_size, bool write_ma
     return done;
 }
 
+// The shrinks already happened, so the generic error would mislead
+void TableWriter::ExplainRestNotWritten(const PartitionSet &shrunk)
+{
+    wchar_t list[100];
+    FormatPartitionList(shrunk, list, ArrayLength(list));
+    wchar_t line1[120];
+    _snwprintf(line1, ArrayLength(line1), L"Resized, data kept: %s", list);
+    line1[ArrayLength(line1) - 1] = L'\0';
+    const LPCWSTR lines[] = {
+        line1,
+        L"The rest of the partition table could not be written.",
+        L"Check the table and write it again.",
+    };
+    m_dialogs.RunDialog(DialogText{L"Partly written", COLOR_YELLOW, lines, ArrayLength(lines)}, DIALOG_OK_ONLY);
+}
+
+// The kernel's cached FAT must not write over moved clusters
+bool TableWriter::DismountForResize(int partition)
+{
+    const NTSTATUS dismounted = DismountPartition(partition);
+    if (NT_SUCCESS(dismounted))
+    {
+        return true;
+    }
+    wchar_t error[80];
+    FormatWide(error, ArrayLength(error), L"Partition %d: unmounting failed (0x%08X), not resized.", partition + 1, dismounted);
+    m_dialogs.ShowMessage(L"Not resized", COLOR_RED, error);
+    return false;
+}
+
 void TableWriter::ExplainStoppedResize(int partition, const FatxMoveResult &move)
 {
     const int number = partition + 1;
@@ -703,29 +753,29 @@ void TableWriter::ExplainStoppedResize(int partition, const FatxMoveResult &move
     int line_count = 0;
     if (move.status == FATX_MOVE_STOPPED_SAFE)
     {
-        swprintf(line1, L"Resizing partition %d (%c) stopped while moving", number, letter);
+        FormatWide(line1, ArrayLength(line1), L"Resizing partition %d (%c) stopped while moving", number, letter);
         lines[line_count++] = line1;
         lines[line_count++] = L"clusters: it keeps its old size and its data.";
         lines[line_count++] = L"A check may show lost space, which Repair frees.";
     }
     else if (move.status == FATX_MOVE_INTERRUPTED && move.table_failed)
     {
-        swprintf(line1, L"Partition %d (%c) was resized, but the partition", number, letter);
+        FormatWide(line1, ArrayLength(line1), L"Partition %d (%c) was resized, but the partition", number, letter);
         lines[line_count++] = line1;
         lines[line_count++] = L"table couldn't be written. Finish it: it's offered";
         lines[line_count++] = L"at the next start. Until then it can't be used.";
     }
     else if (move.status == FATX_MOVE_INTERRUPTED)
     {
-        swprintf(line1, L"Resizing partition %d (%c) stopped partway (%I64u", number, letter, move.clusters_moved);
-        swprintf(line2, L"clusters moved). Finish it: it's offered at the next start.");
+        FormatWide(line1, ArrayLength(line1), L"Resizing partition %d (%c) stopped partway (%I64u", number, letter, move.clusters_moved);
+        FormatWide(line2, ArrayLength(line2), L"clusters moved). Finish it: it's offered at the next start.");
         lines[line_count++] = line1;
         lines[line_count++] = line2;
         lines[line_count++] = L"Until then it can't be used.";
     }
     else
     {
-        swprintf(line1, L"Partition %d (%c) couldn't be resized: nothing", number, letter);
+        FormatWide(line1, ArrayLength(line1), L"Partition %d (%c) couldn't be resized: nothing", number, letter);
         lines[line_count++] = line1;
         lines[line_count++] = L"was changed on it (check it for errors).";
     }
@@ -746,16 +796,15 @@ TableWriteOutcome TableWriter::WriteTableWithResizes(const ResizesKeepingData &r
         new_sizes[i] = m_session.Edited().GetPartitionSize(i);
     }
 
-    // Ask the Titan BIOS question once, up front
-    bool write_main = true;
+    // Ask the Titan BIOS question once, up front: every write below uses the answer
+    const TableWritePlan plan = PlanTableWrite(edited);
+    if (!plan.writable)
+    {
+        return TableWriteOutcome::NotWritten();
+    }
+    const bool write_main = plan.write_main;
     if (any_moved)
     {
-        const TableWritePlan plan = PlanTableWrite(edited);
-        if (!plan.writable)
-        {
-            return TableWriteOutcome::NotWritten();
-        }
-        write_main = plan.write_main;
         const LPCWSTR lines[] = {
             L"Partition will be resized now.",
             L"DON'T switch the Xbox off until it's done.",
@@ -780,7 +829,12 @@ TableWriteOutcome TableWriter::WriteTableWithResizes(const ResizesKeepingData &r
             rest.SetPartitionSize(i, m_session.InUse().GetPartitionSize(i));
         }
     }
-    const TableWriteOutcome outcome = WriteTables(rest.GetPartitionTable());
+    const TableWriteOutcome outcome = WritePlanned(rest.GetPartitionTable(), write_main);
+    if (!outcome.written && !shrinking.IsEmpty())
+    {
+        ExplainRestNotWritten(shrinking);
+        return TableWriteOutcome::ErrorShown();
+    }
     if (!outcome.written)
     {
         return outcome;
@@ -835,7 +889,7 @@ void TableWriter::OfferFinishResize(int partition)
     wchar_t line1[80];
     if (found.reclustering)
     {
-        swprintf(line1, L"Changing partition %d (%c)'s cluster size was", partition + 1, PartitionLetter(partition));
+        FormatWide(line1, ArrayLength(line1), L"Changing partition %d (%c)'s cluster size was", partition + 1, PartitionLetter(partition));
         const LPCWSTR lines[] = {
             line1,
             L"interrupted on a PC. Finish it there:",
@@ -851,7 +905,7 @@ void TableWriter::OfferFinishResize(int partition)
 
     wchar_t new_size_text[HUMAN_SIZE_TEXT_COUNT];
     FormatHumanSize(found.new_size, new_size_text);
-    swprintf(line1, L"Resizing partition %d (%c) to %s was interrupted.", partition + 1, PartitionLetter(partition), new_size_text);
+    FormatWide(line1, ArrayLength(line1), L"Resizing partition %d (%c) to %s was interrupted.", partition + 1, PartitionLetter(partition), new_size_text);
     const LPCWSTR lines[] = {
         line1,
         L"It can't be used until that's finished.",
@@ -871,7 +925,10 @@ void TableWriter::FinishResize(int partition)
     {
         return;
     }
-    DismountPartition(partition);
+    if (!DismountForResize(partition))
+    {
+        return;
+    }
     FatxMoveResult *move = new FatxMoveResult;
     if (move == NULL)
     {

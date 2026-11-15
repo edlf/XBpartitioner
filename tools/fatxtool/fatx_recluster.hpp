@@ -35,6 +35,10 @@ class FatxRangeRecorder : public FatxDevice
     {
         return m_inner.Sync();
     }
+    FatxMedium Medium() const override
+    {
+        return m_inner.Medium();
+    }
     std::vector<FatxRange> Ranges() const;
 
   private:

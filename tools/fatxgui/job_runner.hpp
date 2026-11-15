@@ -14,6 +14,16 @@
 namespace fatxgui
 {
 
+// Progress that can also say what's being done, shown under the bar
+class JobProgress : public FatxProgress
+{
+  public:
+    virtual void Stage(const std::string &stage) = 0;
+};
+
+// Says what's being done, if progress is a job's (or part of one)
+void show_stage(FatxProgress &progress, const std::string &stage);
+
 // A job's work: Run on the worker thread, reporting its progress, then
 // OnFinished on the UI thread (which may start the next job)
 class JobWork
@@ -61,7 +71,7 @@ class JobRunner
 };
 
 // Maps 0-100 onto part of an outer progress
-class SubProgress : public FatxProgress
+class SubProgress : public JobProgress
 {
   public:
     SubProgress(FatxProgress &outer, int from, int to) : m_outer(outer), m_from(from), m_to(to)
@@ -70,6 +80,10 @@ class SubProgress : public FatxProgress
     void Update(int value) override
     {
         m_outer.Update(m_from + (m_to - m_from) * value / 100);
+    }
+    void Stage(const std::string &stage) override
+    {
+        show_stage(m_outer, stage);
     }
 
   private:

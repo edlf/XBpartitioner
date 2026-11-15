@@ -791,6 +791,17 @@ NtWriteFile(
 	IN PLARGE_INTEGER ByteOffset
 	);
 
+// NtFlushBuffersFile:
+// Writes everything cached for a file (or a disk) to the device.
+NTSYSAPI
+EXPORTNUM(198)
+NTSTATUS
+NTAPI
+NtFlushBuffersFile(
+	IN HANDLE FileHandle,
+	OUT PIO_STATUS_BLOCK IoStatusBlock
+	);
+
 typedef enum _FILE_INFORMATION_CLASS {
 
     FileDirectoryInformation         = 1,

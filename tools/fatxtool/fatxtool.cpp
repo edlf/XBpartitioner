@@ -1342,7 +1342,7 @@ int recluster(const ReclusterJob &job)
     {
         uint32_t sectors_per_cluster = 0;
         device.Read(FATX_SECTORS_PER_CLUSTER_OFFSET, &sectors_per_cluster, sizeof(sectors_per_cluster));
-        new_cluster_bytes = sectors_per_cluster * HDD_SECTOR_SIZE;
+        new_cluster_bytes = FatxClusterBytes(sectors_per_cluster, device.Medium());
     }
 
     print_megabytes("", job.lba_size);

@@ -164,7 +164,7 @@ struct ReclusterInput
 class ReclusterBuilder
 {
   public:
-    ReclusterBuilder(const ReclusterInput &input, FatxReclusterResult *result) : m_input(input), m_result(result), m_bytes_to_copy(0)
+    ReclusterBuilder(const ReclusterInput &input, FatxReclusterResult *result) : m_input(input), m_result(result), m_bytes_to_copy(0), m_memory_unit(false)
     {
         memset(m_header, 0, sizeof(m_header));
     }
@@ -228,10 +228,13 @@ class ReclusterBuilder
         {
             return Fail(FATX_RECLUSTER_NOT_FATX);
         }
-        m_result->old_cluster_bytes = sectors_per_cluster * HDD_SECTOR_SIZE;
+        const FatxMedium medium = m_input.original.Medium();
+        m_result->old_cluster_bytes = FatxClusterBytes(sectors_per_cluster, medium);
 
+        // A memory unit stays one, so its clusters stay within what it can count
+        m_memory_unit = FatxIsMemoryUnit(sectors_per_cluster, medium);
         const uint32_t new_bytes = m_input.new_cluster_bytes;
-        if (new_bytes < 16 * 1024 || new_bytes > 1024 * 1024 || (new_bytes & (new_bytes - 1)) != 0)
+        if (m_result->old_cluster_bytes == 0 || FatxSectorsPerCluster(new_bytes, m_memory_unit) == 0)
         {
             return Fail(FATX_RECLUSTER_BAD_SIZE);
         }
@@ -378,7 +381,7 @@ class ReclusterBuilder
     // cluster size and root
     bool WriteHeader(FatxRangeRecorder &build, uint32_t root)
     {
-        const uint32_t new_sectors = m_input.new_cluster_bytes / HDD_SECTOR_SIZE;
+        const uint32_t new_sectors = FatxSectorsPerCluster(m_input.new_cluster_bytes, m_memory_unit);
         memcpy(m_header + FATX_SECTORS_PER_CLUSTER_OFFSET, &new_sectors, 4);
         memcpy(m_header + FATX_ROOT_CLUSTER_OFFSET, &root, 4);
         if (!build.Write(0, m_header, sizeof(m_header)) || !build.Sync())
@@ -409,6 +412,7 @@ class ReclusterBuilder
     unsigned char m_header[FATX_HEADER_BYTES];
     std::vector<Folder> m_folders;
     uint64_t m_bytes_to_copy;
+    bool m_memory_unit; // Its header counts clusters in 4 KB sectors
 };
 
 } // namespace

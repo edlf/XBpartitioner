@@ -284,7 +284,7 @@ void FsckWorkflow::RunResume(int partition, FatxResizeTable &table, FatxMoveResu
 void FsckWorkflow::RunJob(int partition, LPCWSTR verb, FsckJob &job)
 {
     wchar_t busy[60];
-    swprintf(busy, L"%s partition %d (%c)...", verb, partition + 1, PartitionLetter(partition));
+    FormatWide(busy, ArrayLength(busy), L"%s partition %d (%c)...", verb, partition + 1, PartitionLetter(partition));
 
     job.Place(m_session.InUse().GetPartitionStart(partition), m_session.InUse().GetPartitionSize(partition));
     const BusyWork work = {fsck_thread, &job, job.Percent()};
@@ -370,7 +370,7 @@ void FsckWorkflow::RepairFileSystem(int partition, const FatxRepairResult &plan)
     if (!NT_SUCCESS(dismounted))
     {
         wchar_t error[80];
-        swprintf(error, L"Unmounting failed (0x%08X): nothing was changed.", dismounted);
+        FormatWide(error, ArrayLength(error), L"Unmounting failed (0x%08X): nothing was changed.", dismounted);
         m_dialogs.ShowMessage(L"Not repaired", COLOR_RED, error);
         return;
     }
@@ -400,17 +400,17 @@ bool FsckWorkflow::ConfirmRepair(const FatxRepairResult &plan)
     {
         wchar_t size[32];
         format_clusters_size(plan.clusters_freed, plan.check.cluster_bytes, size);
-        swprintf(line_freed, L"Free %I64u unused clusters (%s).", plan.clusters_freed, size);
+        FormatWide(line_freed, ArrayLength(line_freed), L"Free %I64u unused clusters (%s).", plan.clusters_freed, size);
         lines[line_count++] = line_freed;
     }
     if (plan.files_trimmed > 0)
     {
-        swprintf(line_trimmed, L"End the chains of %u files at their size.", plan.files_trimmed);
+        FormatWide(line_trimmed, ArrayLength(line_trimmed), L"End the chains of %u files at their size.", plan.files_trimmed);
         lines[line_count++] = line_trimmed;
     }
     if (plan.empty_files_cleared > 0)
     {
-        swprintf(line_cleared, L"Free the clusters of %u empty files.", plan.empty_files_cleared);
+        FormatWide(line_cleared, ArrayLength(line_cleared), L"Free the clusters of %u empty files.", plan.empty_files_cleared);
         lines[line_count++] = line_cleared;
     }
     if (plan.media_fixed)

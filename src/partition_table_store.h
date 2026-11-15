@@ -27,9 +27,9 @@ struct TableWritePlan
 // What writing the partition tables did
 struct TableWriteOutcome
 {
-    bool written;
-    bool main_written; // False while written: the backup only (Titan BIOS)
-    bool backup_written;
+    bool written;        // Every requested sector was written
+    bool main_written;   // False while written: the backup only (Titan BIOS)
+    bool backup_written; // Also true when written is false: only the backup made it
     bool error_shown; // The failure was already explained to the user
 
     static TableWriteOutcome NotWritten()
@@ -117,8 +117,8 @@ class PartitionTableStore
     // The stock layout on this disk
     PartitionTableEditor StockLayout() const;
 
-    // Not writable if it must not be written; callers explain why beforehand.
-    // Sector 0 is always a target here.
+    // Not writable if it must not be written (also without the magic); callers
+    // explain why beforehand. Sector 0 is always a target here.
     TableWritePlan Prepare(const XboxPartitionTable &table) const;
     // To the disk and to the kernel. Re-read the tables afterwards.
     TableWriteOutcome Write(const XboxPartitionTable &table, bool write_main);

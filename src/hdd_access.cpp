@@ -135,7 +135,7 @@ NTSTATUS HddAccess::OpenDisk(HANDLE *handle, ACCESS_MASK access)
 ULONGLONG HddAccess::ReadSizeInSectors()
 {
     HANDLE handle;
-    if (OpenDisk(&handle, SYNCHRONIZE | GENERIC_READ) != STATUS_SUCCESS)
+    if (!NT_SUCCESS(OpenDisk(&handle, SYNCHRONIZE | GENERIC_READ)))
     {
         // Unknown size (not the NTSTATUS, which would read as a sector count)
         return 0;
@@ -151,7 +151,7 @@ ULONGLONG HddAccess::ReadSizeInSectors()
         handle, 0, 0, 0, &status_block, IOCTL_DISK_GET_DRIVE_GEOMETRY, command, sizeof(command), &geometry, sizeof(geometry));
     NtClose(handle);
 
-    return (status == STATUS_SUCCESS) ? geometry.Cylinders.QuadPart : 0;
+    return NT_SUCCESS(status) ? geometry.Cylinders.QuadPart : 0;
 }
 
 DriveInfo HddAccess::ReadIdentify()
@@ -189,7 +189,7 @@ Lba48Patch HddAccess::ReadLba48Patch()
     Lba48Patch patch = {false, 0, NULL};
 
     HANDLE handle;
-    if (OpenDisk(&handle, SYNCHRONIZE | GENERIC_READ) != STATUS_SUCCESS)
+    if (!NT_SUCCESS(OpenDisk(&handle, SYNCHRONIZE | GENERIC_READ)))
     {
         return patch;
     }
@@ -205,7 +205,7 @@ Lba48Patch HddAccess::ReadLba48Patch()
         NtDeviceIoControlFile(handle, 0, 0, 0, &status_block, IOCTL_CMD_LBA48_ACCESS, command, sizeof(command), answer, sizeof(answer));
     NtClose(handle);
 
-    if (status != STATUS_SUCCESS || answer[LBA48_GET_INFO_MAGIC1_IDX] != LBA48_GET_INFO_MAGIC1_VAL ||
+    if (!NT_SUCCESS(status) || answer[LBA48_GET_INFO_MAGIC1_IDX] != LBA48_GET_INFO_MAGIC1_VAL ||
         answer[LBA48_GET_INFO_MAGIC2_IDX] != LBA48_GET_INFO_MAGIC2_VAL)
     {
         return patch;
@@ -227,20 +227,18 @@ bool HddAccess::ReadSector(ULONGLONG lba, BYTE *sector)
 {
     memset(sector, 0, HDD_SECTOR_SIZE);
 
-    HANDLE handle = NULL;
-    NTSTATUS status = OpenDisk(&handle, SYNCHRONIZE | GENERIC_READ);
-    if (status == 0)
+    HANDLE handle;
+    if (!NT_SUCCESS(OpenDisk(&handle, SYNCHRONIZE | GENERIC_READ)))
     {
-        LARGE_INTEGER offset;
-        offset.QuadPart = lba * HDD_SECTOR_SIZE;
-        IO_STATUS_BLOCK status_block;
-        status = NtReadFile(handle, NULL, NULL, NULL, &status_block, (PVOID)sector, HDD_SECTOR_SIZE, &offset);
+        return false;
     }
-    if (handle != NULL)
-    {
-        NtClose(handle);
-    }
-    return status == 0;
+
+    LARGE_INTEGER offset;
+    offset.QuadPart = lba * HDD_SECTOR_SIZE;
+    IO_STATUS_BLOCK status_block;
+    const NTSTATUS status = NtReadFile(handle, NULL, NULL, NULL, &status_block, (PVOID)sector, HDD_SECTOR_SIZE, &offset);
+    NtClose(handle);
+    return TransferredAll(status, status_block, HDD_SECTOR_SIZE);
 }
 
 XboxPartitionTable HddAccess::ReadTableAt(ULONGLONG lba)
@@ -256,35 +254,37 @@ XboxPartitionTable HddAccess::ReadTableAt(ULONGLONG lba)
     return table;
 }
 
-static NTSTATUS write_table_sector(HANDLE disk, const XboxPartitionTable &table, ULONGLONG lba)
+static bool write_table_sector(HANDLE disk, const XboxPartitionTable &table, ULONGLONG lba)
 {
     BYTE sector[HDD_SECTOR_SIZE]; // One sector, see partition.hpp
     memcpy(sector, &table, HDD_SECTOR_SIZE);
     LARGE_INTEGER offset;
     offset.QuadPart = lba * HDD_SECTOR_SIZE;
     IO_STATUS_BLOCK status_block;
-    return NtWriteFile(disk, NULL, NULL, NULL, &status_block, (PVOID)sector, HDD_SECTOR_SIZE, &offset);
+    const NTSTATUS status = NtWriteFile(disk, NULL, NULL, NULL, &status_block, (PVOID)sector, HDD_SECTOR_SIZE, &offset);
+    return TransferredAll(status, status_block, HDD_SECTOR_SIZE);
 }
 
-bool HddAccess::WriteTableSectors(const TableSectorWrite &write)
+TableSectorsWritten HddAccess::WriteTableSectors(const TableSectorWrite &write)
 {
+    TableSectorsWritten written = {false, false};
+
     // Read and write only: a resize writes the table while its own handle on
     // the disk is open, and more access (GENERIC_ALL) may not be shared
-    HANDLE handle = NULL;
-    NTSTATUS status = OpenDisk(&handle, SYNCHRONIZE | GENERIC_READ | GENERIC_WRITE);
-    if (status == 0 && write.backup != NULL)
+    HANDLE handle;
+    if (!NT_SUCCESS(OpenDisk(&handle, SYNCHRONIZE | GENERIC_READ | GENERIC_WRITE)))
     {
-        status = write_table_sector(handle, *write.backup, write.backup_lba);
+        return written;
     }
-    if (status == 0 && write.main != NULL)
+
+    // The backup first: if it fails, sector 0 is left alone
+    written.backup = write.backup != NULL && write_table_sector(handle, *write.backup, write.backup_lba);
+    if (written.backup || write.backup == NULL)
     {
-        status = write_table_sector(handle, *write.main, 0);
+        written.main = write.main != NULL && write_table_sector(handle, *write.main, 0);
     }
-    if (handle != NULL)
-    {
-        NtClose(handle);
-    }
-    return status == 0;
+    NtClose(handle);
+    return written;
 }
 
 unsigned int HddAccess::ReadClusterSizeKb(const ANSI_STRING &partition_path)
@@ -321,11 +321,6 @@ unsigned int HddAccess::ReadClusterSizeKb(const ANSI_STRING &partition_path)
         return 0;
     }
 
-    // In sectors, always a power of two
-    const uint32_t sectors_per_cluster = header.SectorsPerCluster;
-    if (sectors_per_cluster == 0 || (sectors_per_cluster & (sectors_per_cluster - 1)) != 0)
-    {
-        return 0;
-    }
-    return sectors_per_cluster / 2;
+    // 0 for an odd value
+    return FatxClusterBytes(header.SectorsPerCluster, FATX_MEDIUM_HARD_DRIVE) / 1024;
 }

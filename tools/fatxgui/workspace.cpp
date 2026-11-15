@@ -22,7 +22,80 @@ uint32_t read_signature(FatxReader &reader)
     return signature;
 }
 
+// The enabled partitions in the table at sector 0; false if there is none
+bool read_table_parts(FatxDevice &disk, uint64_t bytes, std::vector<Part> *parts)
+{
+    parts->clear();
+    XboxPartitionTable table;
+    memset(&table, 0, sizeof(table));
+    if (!disk.Read(0, &table, sizeof(table)) || !PartitionTableEditor::HasMagic(table))
+    {
+        return false;
+    }
+
+    // The high bits only count from v4 on. 4K: keeps clear of the last 4K
+    // block, where XBpartitioner puts the backup on 512e drives (and the
+    // last sector, where it goes otherwise, is inside or past it).
+    const PartitionTableEditor editor(table, bytes / HDD_SECTOR_SIZE, table.Version != XBOX_TABLE_VERSION_LBA48_V3, true);
+    for (int i = 0; i < XboxPartitionTableEntryCount; i++)
+    {
+        if (editor.IsPartitionEnabled(i))
+        {
+            Part part;
+            part.index = i;
+            part.start = editor.GetPartitionStart(i);
+            part.sectors = editor.GetPartitionSize(i);
+            // Growing stops where XBpartitioner stops it: at the next
+            // partition, or before the backup table at the end of the disk
+            part.max_sectors = part.sectors + editor.GetGrowthLimit(i);
+            parts->push_back(part);
+        }
+    }
+    return true;
+}
+
+bool same_place(const Part &a, const Part &b)
+{
+    return a.index == b.index && a.start == b.start && a.sectors == b.sectors;
+}
+
+// A FATX volume (or one mid-resize) from sector 0, with no table
+bool has_fatx_at_start(FatxReader &disk)
+{
+    const uint32_t signature = read_signature(disk);
+    return signature == FATX_signature || signature == FATX_RESIZING_SIGNATURE;
+}
+
 } // namespace
+
+bool layout_matches_scan(SourceIo &io, const Source &src)
+{
+    if (io.Size() != src.bytes)
+    {
+        return false;
+    }
+    std::vector<Part> parts;
+    if (read_table_parts(io.Disk(), io.Size(), &parts) != src.has_table)
+    {
+        return false;
+    }
+    if (!src.has_table)
+    {
+        return true; // A partition image: its size is its layout
+    }
+    if (parts.size() != src.parts.size())
+    {
+        return false;
+    }
+    for (size_t i = 0; i < parts.size(); i++)
+    {
+        if (!same_place(parts[i], src.parts[i]))
+        {
+            return false;
+        }
+    }
+    return true;
+}
 
 bool scan_source(Source *src, FatxProgress &whole, std::string *error)
 {
@@ -32,35 +105,12 @@ bool scan_source(Source *src, FatxProgress &whole, std::string *error)
         return false;
     }
     src->bytes = io.Size();
-    src->parts.clear();
 
-    XboxPartitionTable table;
-    memset(&table, 0, sizeof(table));
-    io.Disk().Read(0, &table, sizeof(table));
-    src->has_table = PartitionTableEditor::HasMagic(table);
+    src->has_table = read_table_parts(io.Disk(), src->bytes, &src->parts);
+    src->medium_needed = false;
     if (src->has_table)
     {
-        // The high bits only count from v4 on. 4K: keeps clear of the last 4K
-        // block, where XBpartitioner puts the backup on 512e drives (and the
-        // last sector, where it goes otherwise, is inside or past it).
-        const PartitionTableEditor editor(table, src->bytes / HDD_SECTOR_SIZE, table.Version != XBOX_TABLE_VERSION_LBA48_V3, true);
-        for (int i = 0; i < XboxPartitionTableEntryCount; i++)
-        {
-            if (editor.IsPartitionEnabled(i))
-            {
-                Part part;
-                part.index = i;
-                part.start = editor.GetPartitionStart(i);
-                part.sectors = editor.GetPartitionSize(i);
-                src->parts.push_back(part);
-            }
-        }
-        // Growing stops where XBpartitioner stops it: at the next partition,
-        // or before the backup table at the end of the disk
-        for (Part &part : src->parts)
-        {
-            part.max_sectors = part.sectors + editor.GetGrowthLimit(part.index);
-        }
+        src->medium = FATX_MEDIUM_HARD_DRIVE;
     }
     else if (src->type == Source::IMAGE)
     {
@@ -69,12 +119,29 @@ bool scan_source(Source *src, FatxProgress &whole, std::string *error)
         part.sectors = src->bytes / HDD_SECTOR_SIZE;
         part.max_sectors = (16ULL << 40) / HDD_SECTOR_SIZE; // The file just grows
         src->parts.push_back(part);
+        // A memory unit or a hard drive partition: only the user knows
+        if (src->medium == FATX_MEDIUM_UNKNOWN && has_fatx_at_start(io.Disk()))
+        {
+            src->medium_needed = true;
+            return true;
+        }
+    }
+    else if (has_fatx_at_start(io.Disk()))
+    {
+        // A memory unit, or a USB stick used as one: one volume, the whole drive
+        src->medium = FATX_MEDIUM_MEMORY_UNIT;
+        Part part;
+        part.start = 0;
+        part.sectors = src->bytes / HDD_SECTOR_SIZE;
+        part.max_sectors = part.sectors;
+        src->parts.push_back(part);
     }
     else
     {
-        *error = "No Xbox partition table on this drive.";
+        *error = "Neither an Xbox partition table nor FATX on this drive.";
         return false;
     }
+    io.UseMedium(src->medium);
 
     const int count = (int)src->parts.size();
     for (int i = 0; i < count; i++)

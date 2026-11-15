@@ -6,12 +6,12 @@
 #include <stdio.h>
 #include <string.h>
 
-// "931.51 GB (1953525168 sectors)"
+// "931.51 GB (1953525168 sectors)", into an info row's value
 static void format_disk_size(ULONGLONG sectors, wchar_t *out)
 {
     wchar_t size[32];
     FormatHumanSize(sectors, size);
-    swprintf(out, L"%s (%I64u sectors)", size, sectors);
+    FormatWide(out, INFO_ROW_VALUE_COUNT, L"%s (%I64u sectors)", size, sectors);
 }
 
 wchar_t *InfoScreens::InfoRowList::Add(LPCWSTR label, Color color)
@@ -60,7 +60,7 @@ void InfoScreens::ShowSystemInfo()
     format_disk_size(m_session.Edited().GetUsableLBAs(), rows.Add(L"Usable", COLOR_WHITE));
     AddMainTableRow(rows);
     AddBackupTableRow(rows);
-    swprintf(rows.Add(L"Video mode", COLOR_WHITE), L"%s", m_ui.GetVideoModeName());
+    FormatWide(rows.Add(L"Video mode", COLOR_WHITE), INFO_ROW_VALUE_COUNT, L"%s", m_ui.GetVideoModeName());
 
     m_dialogs.ShowInfoPanel(L"System information", rows.Rows(), rows.Count());
 }
@@ -69,22 +69,22 @@ void InfoScreens::AddDriveRows(InfoRowList &rows) const
 {
     if (!m_drive.identify_ok)
     {
-        swprintf(rows.Add(L"HDD", COLOR_YELLOW), L"no drive info (ATA IDENTIFY failed)");
+        FormatWide(rows.Add(L"HDD", COLOR_YELLOW), INFO_ROW_VALUE_COUNT, L"no drive info (ATA IDENTIFY failed)");
         return;
     }
 
-    swprintf(rows.Add(L"HDD model", COLOR_WHITE), L"%s", m_drive.model[0] ? m_drive.model : L"(empty)");
-    swprintf(rows.Add(L"Firmware", COLOR_WHITE), L"%s", m_drive.firmware[0] ? m_drive.firmware : L"(empty)");
+    FormatWide(rows.Add(L"HDD model", COLOR_WHITE), INFO_ROW_VALUE_COUNT, L"%s", m_drive.model[0] ? m_drive.model : L"(empty)");
+    FormatWide(rows.Add(L"Firmware", COLOR_WHITE), INFO_ROW_VALUE_COUNT, L"%s", m_drive.firmware[0] ? m_drive.firmware : L"(empty)");
     format_disk_size(m_drive.native_sectors, rows.Add(L"Drive size", COLOR_WHITE));
 
     wchar_t *sector_size = rows.Add(L"Sector size", COLOR_WHITE);
     if (m_drive.physical_sector_size > HDD_SECTOR_SIZE)
     {
-        swprintf(sector_size, L"%u logical, %u physical (512e)", HDD_SECTOR_SIZE, m_drive.physical_sector_size);
+        FormatWide(sector_size, INFO_ROW_VALUE_COUNT, L"%u logical, %u physical (512e)", HDD_SECTOR_SIZE, m_drive.physical_sector_size);
     }
     else
     {
-        swprintf(sector_size, L"%u bytes", HDD_SECTOR_SIZE);
+        FormatWide(sector_size, INFO_ROW_VALUE_COUNT, L"%u bytes", HDD_SECTOR_SIZE);
     }
     AddDriveTypeRow(rows);
 }
@@ -94,22 +94,22 @@ void InfoScreens::AddDriveTypeRow(InfoRowList &rows) const
 {
     if (m_drive.trim)
     {
-        swprintf(rows.Add(L"Drive type", COLOR_GREEN), L"%s, TRIM: fatxtool trim on a PC", m_drive.rotation_rate == 1 ? L"SSD" : L"supports TRIM");
+        FormatWide(rows.Add(L"Drive type", COLOR_GREEN), INFO_ROW_VALUE_COUNT, L"%s, TRIM: fatxtool trim on a PC", m_drive.rotation_rate == 1 ? L"SSD" : L"supports TRIM");
         return;
     }
 
     wchar_t *type = rows.Add(L"Drive type", COLOR_WHITE);
     if (m_drive.rotation_rate == 1)
     {
-        swprintf(type, L"SSD, no TRIM");
+        FormatWide(type, INFO_ROW_VALUE_COUNT, L"SSD, no TRIM");
     }
     else if (m_drive.rotation_rate >= 0x0401 && m_drive.rotation_rate < 0xFFFF)
     {
-        swprintf(type, L"hard drive (%u rpm)", m_drive.rotation_rate);
+        FormatWide(type, INFO_ROW_VALUE_COUNT, L"hard drive (%u rpm)", m_drive.rotation_rate);
     }
     else
     {
-        swprintf(type, L"not reported");
+        FormatWide(type, INFO_ROW_VALUE_COUNT, L"not reported");
     }
 }
 
@@ -119,7 +119,7 @@ void InfoScreens::AddBiosSizeRows(InfoRowList &rows) const
     format_disk_size(m_tables.TotalSectors(), rows.Add(L"BIOS size", size_capped ? COLOR_YELLOW : COLOR_WHITE));
     if (size_capped)
     {
-        swprintf(rows.Add(L"", COLOR_YELLOW), L"(less than the drive: BIOS limit)");
+        FormatWide(rows.Add(L"", COLOR_YELLOW), INFO_ROW_VALUE_COUNT, L"(less than the drive: BIOS limit)");
     }
 }
 
@@ -128,20 +128,20 @@ void InfoScreens::AddLba48Rows(InfoRowList &rows) const
     const unsigned int version = m_tables.Lba48Version();
     if (!m_tables.HasLba48Patch())
     {
-        swprintf(rows.Add(L"LBA48 patch", COLOR_RED), L"none (stock kernel, max 128GB)");
+        FormatWide(rows.Add(L"LBA48 patch", COLOR_RED), INFO_ROW_VALUE_COUNT, L"none (stock kernel, max 128GB)");
     }
     else if (m_tables.FullLba48())
     {
-        swprintf(rows.Add(L"LBA48 patch", COLOR_GREEN), L"v%u (48 bit LBAs)", version);
+        FormatWide(rows.Add(L"LBA48 patch", COLOR_GREEN), INFO_ROW_VALUE_COUNT, L"v%u (48 bit LBAs)", version);
     }
     else if (m_settings.ForceLba48V3() && version > 3)
     {
-        swprintf(rows.Add(L"LBA48 patch", COLOR_YELLOW), L"v%u, used as v3 (force_lba48_v3)", version);
-        swprintf(rows.Add(L"", COLOR_YELLOW), L"(32 bit LBAs, partitions max 1TB)");
+        FormatWide(rows.Add(L"LBA48 patch", COLOR_YELLOW), INFO_ROW_VALUE_COUNT, L"v%u, used as v3 (force_lba48_v3)", version);
+        FormatWide(rows.Add(L"", COLOR_YELLOW), INFO_ROW_VALUE_COUNT, L"(32 bit LBAs, partitions max 1TB)");
     }
     else
     {
-        swprintf(rows.Add(L"LBA48 patch", COLOR_YELLOW), L"v%u (32 bit LBAs, partitions max 1TB)", version);
+        FormatWide(rows.Add(L"LBA48 patch", COLOR_YELLOW), INFO_ROW_VALUE_COUNT, L"v%u (32 bit LBAs, partitions max 1TB)", version);
     }
 }
 
@@ -150,20 +150,20 @@ void InfoScreens::AddMainTableRow(InfoRowList &rows) const
     const XboxPartitionTable &main = m_tables.MainTable();
     if (m_tables.IsMainTableUsable() && PartitionTableEditor::HasUnknownVersion(main))
     {
-        swprintf(rows.Add(L"Partition table", COLOR_YELLOW), L"valid, unknown version 0x%02X (sector 0)", main.Version);
+        FormatWide(rows.Add(L"Partition table", COLOR_YELLOW), INFO_ROW_VALUE_COUNT, L"valid, unknown version 0x%02X (sector 0)", main.Version);
     }
     else if (m_tables.IsMainTableUsable())
     {
         const LPCWSTR version = (main.Version == XBOX_TABLE_VERSION_TITAN) ? L"Titan" : (main.Version == XBOX_TABLE_VERSION_LBA48_V4) ? L"v4" : L"v3";
-        swprintf(rows.Add(L"Partition table", COLOR_GREEN), L"valid, %s (sector 0)", version);
+        FormatWide(rows.Add(L"Partition table", COLOR_GREEN), INFO_ROW_VALUE_COUNT, L"valid, %s (sector 0)", version);
     }
     else if (m_tables.TitanBios() && !PartitionTableEditor::HasMagic(main))
     {
-        swprintf(rows.Add(L"Partition table", COLOR_GREY), L"none, Titan BIOS uses the backup");
+        FormatWide(rows.Add(L"Partition table", COLOR_GREY), INFO_ROW_VALUE_COUNT, L"none, Titan BIOS uses the backup");
     }
     else
     {
-        swprintf(rows.Add(L"Partition table", COLOR_RED), L"%s", PartitionTableEditor::HasMagic(main) ? L"damaged (sector 0)" : L"missing");
+        FormatWide(rows.Add(L"Partition table", COLOR_RED), INFO_ROW_VALUE_COUNT, L"%s", PartitionTableEditor::HasMagic(main) ? L"damaged (sector 0)" : L"missing");
     }
 }
 
@@ -181,45 +181,45 @@ void InfoScreens::AddBackupTableRow(InfoRowList &rows) const
     case BACKUP_FOUND:
         if (!m_tables.IsBackupTableUsable())
         {
-            swprintf(value, L"damaged (sector %I64u)", backup_lba);
+            FormatWide(value, ArrayLength(value), L"damaged (sector %I64u)", backup_lba);
             color = COLOR_RED;
         }
         else if (!main_valid || SameTableButVersion(m_tables.MainTable(), m_tables.BackupTable()))
         {
-            swprintf(value, L"valid (sector %I64u)", backup_lba);
+            FormatWide(value, ArrayLength(value), L"valid (sector %I64u)", backup_lba);
             color = (main_valid || m_tables.TitanBios()) ? COLOR_GREEN : COLOR_YELLOW;
         }
         else
         {
-            swprintf(value, L"differs from main! (sector %I64u)", backup_lba);
+            FormatWide(value, ArrayLength(value), L"differs from main! (sector %I64u)", backup_lba);
         }
         break;
     case BACKUP_FOUND_LEGACY:
         if (m_tables.IsBackupTableUsable())
         {
-            swprintf(value, L"valid, old location (sector %I64u)", last_sector_lba);
+            FormatWide(value, ArrayLength(value), L"valid, old location (sector %I64u)", last_sector_lba);
         }
         else
         {
-            swprintf(value, L"damaged, old location (sector %I64u)", last_sector_lba);
+            FormatWide(value, ArrayLength(value), L"damaged, old location (sector %I64u)", last_sector_lba);
             color = COLOR_RED;
         }
         break;
     case BACKUP_MISSING:
-        swprintf(value, L"missing (sector %I64u)", backup_lba);
+        FormatWide(value, ArrayLength(value), L"missing (sector %I64u)", backup_lba);
         break;
     case BACKUP_OVERLAPPED:
-        swprintf(value, L"none, last partition covers it");
+        FormatWide(value, ArrayLength(value), L"none, last partition covers it");
         break;
     case BACKUP_OVERLAPPED_MATCH:
-        swprintf(value, L"matches, but last partition covers it");
+        FormatWide(value, ArrayLength(value), L"matches, but last partition covers it");
         break;
     default:
-        swprintf(value, m_tables.HasLba48Patch() ? L"none (no room after stock partitions)" : L"not used (no LBA48 patch)");
+        FormatWide(value, ArrayLength(value), m_tables.HasLba48Patch() ? L"none (no room after stock partitions)" : L"not used (no LBA48 patch)");
         color = COLOR_GREY;
         break;
     }
-    swprintf(rows.Add(L"Backup table", color), L"%s", value);
+    FormatWide(rows.Add(L"Backup table", color), INFO_ROW_VALUE_COUNT, L"%s", value);
 }
 
 // Labels are grey, values all white
@@ -238,7 +238,7 @@ void InfoScreens::ShowAbout()
     InfoRowList rows;
     for (size_t i = 0; i < ArrayLength(about); i++)
     {
-        swprintf(rows.Add(about[i][0], COLOR_WHITE), L"%s", about[i][1]);
+        FormatWide(rows.Add(about[i][0], COLOR_WHITE), INFO_ROW_VALUE_COUNT, L"%s", about[i][1]);
     }
     m_dialogs.ShowInfoPanel(L"About", rows.Rows(), rows.Count());
 }

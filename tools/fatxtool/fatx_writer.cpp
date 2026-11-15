@@ -55,7 +55,7 @@ const uint16_t ENTRY_TIME = (12 & 0xF) << 11;
 } // namespace
 
 FatxWriter::FatxWriter(FatxDevice &device, uint64_t partition_bytes, uint32_t cluster_bytes)
-    : m_device(device), m_partition_bytes(partition_bytes), m_cluster_bytes(cluster_bytes), m_root(1), m_next_free(1)
+    : m_device(device), m_partition_bytes(partition_bytes), m_cluster_bytes(cluster_bytes), m_root(1), m_next_free(1), m_write_through(false)
 {
     if (m_cluster_bytes == 0)
     {
@@ -92,11 +92,11 @@ bool FatxWriter::Load()
     memcpy(&signature, header + FATX_SIGNATURE_OFFSET, 4);
     memcpy(&sectors_per_cluster, header + FATX_SECTORS_PER_CLUSTER_OFFSET, 4);
     memcpy(&m_root, header + FATX_ROOT_CLUSTER_OFFSET, 4);
-    if (signature != FATX_signature || sectors_per_cluster == 0)
+    m_cluster_bytes = FatxClusterBytes(sectors_per_cluster, m_device.Medium());
+    if (signature != FATX_signature || m_cluster_bytes == 0)
     {
         return false;
     }
-    m_cluster_bytes = sectors_per_cluster * HDD_SECTOR_SIZE;
     m_layout = FatxLayoutFor(m_partition_bytes / HDD_SECTOR_SIZE, m_cluster_bytes);
 
     std::vector<unsigned char> raw((size_t)m_layout.bytes_per_fat);
@@ -119,11 +119,121 @@ bool FatxWriter::Load()
         }
     }
     m_next_free = 1;
+    m_changed_fat_sectors.clear();
     return true;
+}
+
+void FatxWriter::WriteThrough()
+{
+    m_write_through = true;
+}
+
+uint64_t FatxWriter::FreeClusters() const
+{
+    uint64_t free_clusters = 0;
+    for (size_t i = 1; i < m_fat.size(); i++)
+    {
+        free_clusters += (m_fat[i] == FATX_FAT_FREE) ? 1 : 0;
+    }
+    return free_clusters;
+}
+
+FatxUsage FatxWriter::Usage() const
+{
+    FatxUsage usage;
+    memset(&usage, 0, sizeof(usage));
+    usage.cluster_bytes = m_cluster_bytes;
+    for (size_t i = 1; i < m_fat.size(); i++)
+    {
+        if (m_fat[i] == FATX_FAT_BAD)
+        {
+            usage.bad_clusters++;
+        }
+        else if (m_fat[i] != FATX_FAT_FREE)
+        {
+            usage.used_clusters++;
+            usage.highest_used = i;
+        }
+    }
+    return usage;
+}
+
+uint64_t FatxWriter::FatFingerprint() const
+{
+    // FNV-1a over the entries; never 0, which means "none"
+    uint64_t hash = 14695981039346656037ULL;
+    for (const uint32_t value : m_fat)
+    {
+        hash = (hash ^ value) * 1099511628211ULL;
+    }
+    return hash != 0 ? hash : 1;
+}
+
+void FatxWriter::Put(uint32_t cluster, uint32_t value)
+{
+    m_fat[cluster] = value;
+    m_changed_fat_sectors.insert((uint64_t)cluster * m_layout.bytes_per_entry / HDD_SECTOR_SIZE);
+}
+
+bool FatxWriter::WriteChangedFat()
+{
+    const uint32_t width = m_layout.bytes_per_entry;
+    const uint32_t per_sector = HDD_SECTOR_SIZE / width;
+    unsigned char sector[HDD_SECTOR_SIZE];
+    for (const uint64_t index : m_changed_fat_sectors)
+    {
+        // Read first: entries past the last cluster keep what they hold
+        const uint64_t offset = FATX_HEADER_BYTES + index * HDD_SECTOR_SIZE;
+        if (!m_device.Read(offset, sector, sizeof(sector)))
+        {
+            return false;
+        }
+        for (uint32_t i = 0; i < per_sector; i++)
+        {
+            const uint64_t cluster = index * per_sector + i;
+            if (cluster >= m_fat.size())
+            {
+                break;
+            }
+            const uint32_t value = m_fat[(size_t)cluster];
+            if (width == 2)
+            {
+                const uint16_t value16 = (uint16_t)value;
+                memcpy(sector + i * 2, &value16, 2);
+            }
+            else
+            {
+                memcpy(sector + i * 4, &value, 4);
+            }
+        }
+        if (!m_device.Write(offset, sector, sizeof(sector)))
+        {
+            return false;
+        }
+    }
+    m_changed_fat_sectors.clear();
+    return true;
+}
+
+bool FatxWriter::Settle()
+{
+    return !m_write_through || (WriteChangedFat() && m_device.Sync());
+}
+
+bool FatxWriter::SyncIfWriteThrough()
+{
+    return !m_write_through || m_device.Sync();
 }
 
 bool FatxWriter::Flush()
 {
+    // Only what changed: rewriting a big FAT whole would be slow, and a
+    // sector cut short by a power cut would damage entries nobody touched
+    if (m_write_through)
+    {
+        return WriteChangedFat() && m_device.Sync();
+    }
+
     std::vector<unsigned char> raw((size_t)m_layout.bytes_per_fat, 0);
     for (size_t i = 0; i < m_fat.size(); i++)
     {
@@ -149,7 +259,7 @@ void FatxWriter::SetFat(uint32_t cluster, uint32_t value)
 {
     if (cluster < m_fat.size())
     {
-        m_fat[cluster] = value;
+        Put(cluster, value);
     }
 }
 
@@ -176,10 +286,10 @@ bool FatxWriter::AllocateChain(uint32_t count, uint32_t *first)
                 return false; // Full
             }
         }
-        m_fat[cluster] = FATX_FAT_END;
+        Put(cluster, FATX_FAT_END);
         if (previous != 0)
         {
-            m_fat[previous] = cluster;
+            Put(previous, cluster);
         }
         else
         {
@@ -189,6 +299,17 @@ bool FatxWriter::AllocateChain(uint32_t count, uint32_t *first)
         m_next_free = (cluster + 1 < limit) ? cluster + 1 : 1;
     }
     return true;
+}
+
+void FatxWriter::FreeChain(uint32_t first)
+{
+    uint32_t cluster = first;
+    while (cluster >= 1 && cluster < m_fat.size())
+    {
+        const uint32_t next = m_fat[cluster];
+        Put(cluster, FATX_FAT_FREE);
+        cluster = next;
+    }
 }
 
 bool FatxWriter::MakeEntry(const char *name, unsigned char attributes, uint32_t first, uint32_t size, FatxDirent *entry)
@@ -223,9 +344,10 @@ bool FatxWriter::AddEntry(uint32_t parent, const FatxDirent &entry)
         for (uint32_t i = 0; i < per_cluster; i++)
         {
             const unsigned char length = data[i * sizeof(FatxDirent)];
-            if (length == FATX_DIRENT_END || length == FATX_DIRENT_END2 || length == FATX_DIRENT_DELETED)
+            const bool end = length == FATX_DIRENT_END || length == FATX_DIRENT_END2;
+            if (end || length == FATX_DIRENT_DELETED)
             {
-                return m_device.Write(ClusterOffset(cluster) + i * sizeof(FatxDirent), &entry, sizeof(entry));
+                return WriteEntryAt(ClusterOffset(cluster), i, entry, end);
             }
         }
         const uint32_t next = m_fat[cluster];
@@ -236,21 +358,37 @@ bool FatxWriter::AddEntry(uint32_t parent, const FatxDirent &entry)
         cluster = next;
     }
 
-    // The folder is full; add a cluster
+    // The folder is full; add a cluster, linked before anything is in it
     uint32_t added;
-    if (!AllocateChain(1, &added) || !FillCluster(added, FATX_DIRENT_END))
+    if (!AllocateChain(1, &added) || !FillCluster(added, FATX_DIRENT_END) || !SyncIfWriteThrough())
     {
         return false;
     }
-    m_fat[cluster] = added;
-    return m_device.Write(ClusterOffset(added), &entry, sizeof(entry));
+    Put(cluster, added);
+    return Settle() && WriteEntryAt(ClusterOffset(added), 0, entry, true);
+}
+
+bool FatxWriter::WriteEntryAt(uint64_t cluster_offset, uint32_t slot, const FatxDirent &entry, bool was_end)
+{
+    const uint32_t per_cluster = m_cluster_bytes / sizeof(FatxDirent);
+    if (was_end && slot + 1 < per_cluster)
+    {
+        unsigned char marker[sizeof(FatxDirent)];
+        memset(marker, FATX_DIRENT_END, sizeof(marker));
+        if (!m_device.Write(cluster_offset + (slot + 1) * sizeof(FatxDirent), marker, sizeof(marker)) || !SyncIfWriteThrough())
+        {
+            return false;
+        }
+    }
+    return m_device.Write(cluster_offset + slot * sizeof(FatxDirent), &entry, sizeof(entry)) && SyncIfWriteThrough();
 }
 
 bool FatxWriter::MakeDirectory(uint32_t parent, const char *name, uint32_t *cluster)
 {
     FatxDirent entry;
     uint32_t first;
-    if (!MakeEntry(name, 0, 0, 0, &entry) || !AllocateChain(1, &first) || !FillCluster(first, FATX_DIRENT_END))
+    if (!MakeEntry(name, 0, 0, 0, &entry) || !AllocateChain(1, &first) || !FillCluster(first, FATX_DIRENT_END) || !SyncIfWriteThrough() ||
+        !Settle())
     {
         return false;
     }
@@ -280,11 +418,14 @@ bool FatxWriter::WriteChain(uint32_t size, FatxSource &source, uint32_t *first)
         memset(data.data(), 0, m_cluster_bytes);
         if (!source.Read(data.data(), length) || !m_device.Write(ClusterOffset(cluster), data.data(), m_cluster_bytes))
         {
+            FreeChain(*first);
+            *first = 0;
             return false;
         }
         left -= length;
     }
-    return true;
+    // The data is on the disk before the FAT says the clusters are used
+    return SyncIfWriteThrough() && Settle();
 }
 
 bool FatxWriter::AddFile(uint32_t parent, const char *name, uint32_t size, FatxSource &source, uint32_t *first_cluster)
@@ -323,7 +464,8 @@ bool FatxWriter::AddFile(uint32_t parent, const FatxDirent &like, FatxSource &so
 bool FatxWriter::MakeDirectory(uint32_t parent, const FatxDirent &like, uint32_t *cluster)
 {
     uint32_t first;
-    if (like.name_length == 0 || like.name_length > FATX_MAX_NAME_LENGTH || !AllocateChain(1, &first) || !FillCluster(first, FATX_DIRENT_END))
+    if (like.name_length == 0 || like.name_length > FATX_MAX_NAME_LENGTH || !AllocateChain(1, &first) || !FillCluster(first, FATX_DIRENT_END) ||
+        !SyncIfWriteThrough() || !Settle())
     {
         return false;
     }

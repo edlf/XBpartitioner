@@ -60,7 +60,11 @@ bool Panels::InterruptedResize(const Part &part)
         ImGui::TextColored(tone_color(Colors(), TONE_ERROR), "A resize or cluster size change was interrupted.");
     }
     ImGui::TextUnformatted("It can't be used until it's finished.");
-    if (ImGui::Button("Finish resize"))
+    if (!Src().CanResize())
+    {
+        ImGui::TextDisabled("Finish it with the tool that started it: this drive has no partition table.");
+    }
+    else if (ImGui::Button("Finish resize"))
     {
         m_commands.ResumeResize(part);
     }
@@ -75,6 +79,11 @@ void Panels::Actions(const Part &part)
     if (ImGui::Button("Check"))
     {
         m_commands.Check(part);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Browse files"))
+    {
+        m_browser.Open(Src(), part);
     }
     if (Src().Writable())
     {
@@ -97,7 +106,14 @@ void Panels::Actions(const Part &part)
     }
     ImGui::Spacing();
     ImGui::SeparatorText("Resize, keeping the data");
-    ResizeControls(part);
+    if (Src().CanResize())
+    {
+        ResizeControls(part);
+    }
+    else
+    {
+        ImGui::TextDisabled("The FATX volume fills the drive, and there's no partition table to hold a new size.");
+    }
     ImGui::Spacing();
     ImGui::SeparatorText("Cluster size and defragmenting, keeping the data");
     if (Src().CanRecluster())

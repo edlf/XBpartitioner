@@ -3,6 +3,7 @@
 #include "array_length.h"
 #include "partition_format.h"
 #include "disk_partition_device.h"
+#include "fatx_resize.hpp"
 #include <stdio.h>
 #include <string.h>
 
@@ -111,8 +112,8 @@ void StartupChecks::CheckTableVersions()
 
     wchar_t line1[80];
     wchar_t line2[80];
-    swprintf(line1, L"Unknown partition table version 0x%02X.", version);
-    swprintf(line2, L"Found in: %s.", found_in);
+    FormatWide(line1, ArrayLength(line1), L"Unknown partition table version 0x%02X.", version);
+    FormatWide(line2, ArrayLength(line2), L"Found in: %s.", found_in);
     const LPCWSTR lines[] = {
         line1,
         line2,
@@ -149,7 +150,7 @@ void StartupChecks::OfferTitanOrRestore()
     }
     else
     {
-        m_dialogs.ShowMessage(L"Error", COLOR_RED, L"The backup partition table could not be written.");
+        m_writer.ShowWriteFailure(outcome, L"The backup partition table could not be written.");
     }
 }
 
@@ -170,13 +171,14 @@ void StartupChecks::OfferBackupRestore()
     }
 
     // Also gives it to the kernel, so the partitions work right away
-    if (m_writer.WriteTables(m_tables.BackupTable()).written)
+    const TableWriteOutcome outcome = m_writer.WriteTables(m_tables.BackupTable());
+    if (outcome.written)
     {
         m_dialogs.ShowMessage(L"Done", COLOR_GREEN, L"The backup partition table was restored.");
     }
     else
     {
-        m_dialogs.ShowMessage(L"Error", COLOR_RED, L"The backup partition table could not be restored.");
+        m_writer.ShowWriteFailure(outcome, L"The backup partition table could not be restored.");
     }
 }
 
@@ -201,7 +203,7 @@ void StartupChecks::WarnUnalignedPartitions()
     wchar_t list[100];
     FormatPartitionList(unaligned, list, ArrayLength(list));
     wchar_t line1[120];
-    swprintf(line1, L"Not aligned to 4 KB: %s.", list);
+    FormatWide(line1, ArrayLength(line1), L"Not aligned to 4 KB: %s.", list);
 
     const LPCWSTR lines[] = {
         line1,
@@ -267,13 +269,13 @@ void StartupChecks::CheckForV4TableOnOldBios()
     wchar_t line3[80];
     if (forced)
     {
-        swprintf(line1, L"LBA48 v3 is forced in the settings, but a partition table");
+        FormatWide(line1, ArrayLength(line1), L"LBA48 v3 is forced in the settings, but a partition table");
     }
     else
     {
-        swprintf(line1, L"This BIOS has LBA48 patch v%d, but a partition table", m_tables.Lba48Version());
+        FormatWide(line1, ArrayLength(line1), L"This BIOS has LBA48 patch v%d, but a partition table", m_tables.Lba48Version());
     }
-    swprintf(line3, L"Found in: %s.", found_in);
+    FormatWide(line3, ArrayLength(line3), L"Found in: %s.", found_in);
 
     const LPCWSTR lines[] = {
         line1,
@@ -340,7 +342,7 @@ bool StartupChecks::OfferShrinkForBackup()
     }
 
     wchar_t line1[80];
-    swprintf(line1, L"Partition %d (%c) covers the backup table sector, but", part + 1, PartitionLetter(part));
+    FormatWide(line1, ArrayLength(line1), L"Partition %d (%c) covers the backup table sector, but", part + 1, PartitionLetter(part));
     const LPCWSTR lines[] = {
         line1,
         L"the backup there matches the main partition table,",
@@ -356,29 +358,46 @@ bool StartupChecks::OfferShrinkForBackup()
     shrunk.PartitionDecreaseSizeBy(part, LBA_ALIGNMENT);
 
     const TableWriteOutcome outcome = m_writer.WriteTables(shrunk.GetPartitionTable());
-    if (outcome.written)
+    if (!outcome.written)
     {
-        wchar_t done[80];
-        swprintf(done, outcome.backup_written ? L"Partition %d shrunk by 4 KB, backup table written." : L"Partition %d shrunk by 4 KB.", part + 1);
-        m_dialogs.ShowMessage(L"Done", COLOR_GREEN, done);
-
-        // Unmount so the kernel picks up the new size; until then it could
-        // write into the freed block, where the backup now lives. Our own
-        // partition can't be unmounted, but settings stop being saved once
-        // it has changed size, so nothing writes there.
-        if (part != m_launch_partition)
-        {
-            DismountPartition(part);
-        }
-
-        // Show that the file system still reads fine
-        m_fsck.CheckFileSystem(part);
+        m_writer.ShowWriteFailure(outcome, L"The partition table could not be written.");
+        return true;
     }
-    else
-    {
-        m_dialogs.ShowMessage(L"Error", COLOR_RED, L"The partition table could not be written.");
-    }
+
+    wchar_t done[80];
+    FormatWide(done, ArrayLength(done), outcome.backup_written ? L"Partition %d shrunk by 4 KB, backup table written." : L"Partition %d shrunk by 4 KB.", part + 1);
+    m_dialogs.ShowMessage(L"Done", COLOR_GREEN, done);
+    UnmountShrunk(part);
+
+    // Show that the file system still reads fine
+    m_fsck.CheckFileSystem(part);
     return true;
+}
+
+// Unmount so the kernel picks up the new size; until then it could write into
+// the freed block, where the backup now lives. Our own partition can't be
+// unmounted, but settings stop being saved once it has changed size, so
+// nothing writes there.
+void StartupChecks::UnmountShrunk(int partition)
+{
+    if (partition == m_launch_partition)
+    {
+        return;
+    }
+    const NTSTATUS dismounted = DismountPartition(partition);
+    if (NT_SUCCESS(dismounted))
+    {
+        return;
+    }
+
+    wchar_t line1[80];
+    FormatWide(line1, ArrayLength(line1), L"Partition %d (%c) couldn't be unmounted (0x%08X).", partition + 1, PartitionLetter(partition), dismounted);
+    const LPCWSTR lines[] = {
+        line1,
+        L"Restart the Xbox before using it, or writing to it",
+        L"could overwrite the backup partition table.",
+    };
+    m_dialogs.ShowWarning(lines, ArrayLength(lines));
 }
 
 // Checks the 4 KB shrink is harmless: the FAT size (derived from the
@@ -397,19 +416,22 @@ bool StartupChecks::ShrinkKeepsData(int partition)
 
     FAT_VOLUME_METADATA header;
     memcpy(&header, sector, HDD_SECTOR_SIZE); // The fields needed are in the first sector
+    // Mid-resize: its journal holds the sizes, which a shrink would invalidate
+    if (header.Signature == FATX_RESIZING_SIGNATURE)
+    {
+        return false;
+    }
     if (header.Signature != FATX_signature)
     {
         return true; // No file system to keep
     }
 
-    // Can't check an unknown (0) or odd cluster size. Clusters under 4 KB
-    // don't occur on an Xbox.
-    const uint32_t sectors_per_cluster = header.SectorsPerCluster;
-    if (sectors_per_cluster < LBA_ALIGNMENT || (sectors_per_cluster & (sectors_per_cluster - 1)) != 0)
+    // Can't check an unknown (0) or odd cluster size
+    const uint32_t cluster_bytes = FatxClusterBytes(header.SectorsPerCluster, FATX_MEDIUM_HARD_DRIVE);
+    if (cluster_bytes == 0)
     {
         return false;
     }
-    const uint32_t cluster_bytes = sectors_per_cluster * HDD_SECTOR_SIZE;
 
     const FatxLayout before = FatxLayoutFor(size, cluster_bytes);
     const FatxLayout after = FatxLayoutFor(size - LBA_ALIGNMENT, cluster_bytes);

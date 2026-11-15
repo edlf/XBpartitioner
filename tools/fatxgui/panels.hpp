@@ -6,6 +6,7 @@
 #include <windows.h>
 
 #include "commands.hpp"
+#include "file_browser.hpp"
 #include "look.hpp"
 
 namespace fatxgui
@@ -24,6 +25,7 @@ struct PanelParts
     Commands &commands;
     Workspace &workspace;
     Look &look;
+    FileBrowser &browser;
     HWND window;
     float scale;
 };
@@ -33,7 +35,8 @@ class Panels
 {
   public:
     explicit Panels(const PanelParts &parts)
-        : m_commands(parts.commands), m_workspace(parts.workspace), m_look(parts.look), m_window(parts.window), m_scale(parts.scale)
+        : m_commands(parts.commands), m_workspace(parts.workspace), m_look(parts.look), m_browser(parts.browser), m_window(parts.window),
+          m_scale(parts.scale)
     {
     }
 
@@ -48,6 +51,8 @@ class Panels
     void Selected();
     // The modal windows, one at a time
     void DriveWindow();
+    void FormatDriveWindow();
+    void XboxHddWindow();
     void NewImageWindow();
     void ResizeWindow();
 
@@ -74,12 +79,24 @@ class Panels
     bool ResizeControls(const Part &part);
     void KeepingSizes(const Part &part, uint64_t new_lba);
     void ReclusterControls(const Part &part);
+    // False, with a way to restart as administrator, when not running as one
+    bool HasAdminRights();
+    void ShowDriveWindow(bool *window);
+    void LookAgainButton();
     void DriveList();
+    void FormatDriveList();
+    void FormatDriveRow(const DriveInfo &drive);
+    static std::string drive_text(const DriveInfo &drive);
+    void XboxHddOptions();
+    void XboxHddRow(const DriveInfo &drive);
     void NewImageForm();
+    void XboxHddImageForm();
+    void MemoryUnitImageForm();
 
     Commands &m_commands;
     Workspace &m_workspace;
     Look &m_look;
+    FileBrowser &m_browser;
     const HWND m_window;
     const float m_scale;
     ResizeEdit m_resize;
@@ -87,6 +104,10 @@ class Panels
     int m_resize_window = -1; // The partition whose resize window is open (right-click menu)
     NewImage m_new;
     bool m_drive_window = false;
+    bool m_format_window = false;
+    bool m_xbox_window = false;
+    int m_xbox_layout = XBOX_HDD_F; // XboxHddLayout
+    bool m_xbox_v4 = true;
 };
 
 } // namespace fatxgui

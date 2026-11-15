@@ -191,6 +191,7 @@ class PartitionTableEditor
     bool FindPartitionBeforeUsableStart(int *partition) const;
     void WriteMagic();
 
+    // -1 when every slot is in use
     int GetFirstAvailablePartitionSlot() const;
     int GetActivePartitionCount() const;
     uint64_t GetUsableLBAs() const;
@@ -231,6 +232,8 @@ class PartitionTableEditor
     bool IsAlignedTo4k(const uint64_t value) const;
 
   private:
+    // 0 to XboxPartitionTableEntryCount - 1; negative numbers are refused too
+    static bool IsIndex(const int partition_number);
     void SortPartitions(uint64_t *starts, uint64_t *ends) const;
     // The presets' size cap: 16TB, or GetMaxPartitionSize() if smaller
     uint64_t PresetMaxPartitionSize() const;
@@ -298,6 +301,28 @@ typedef struct
 } FatxLayout;
 
 FatxLayout FatxLayoutFor(const uint64_t lba_size, const uint32_t cluster_bytes);
+
+// The header gives the cluster size in sectors: 512 bytes on hard drives,
+// 4 KB on memory units (and USB sticks the Xbox formatted as one).
+const uint32_t FATX_MEMORY_UNIT_SECTOR_SIZE = 4096;
+const uint32_t FATX_HDD_MIN_SECTORS_PER_CLUSTER = 32;
+
+// What a volume is on, which decides the sector size above
+enum FatxMedium
+{
+    // Hard drive volumes always have clusters of 16 KB or more, 32 sectors
+    // or more, so a smaller count is taken as a memory unit's
+    FATX_MEDIUM_UNKNOWN = 0,
+    FATX_MEDIUM_HARD_DRIVE,
+    FATX_MEDIUM_MEMORY_UNIT
+};
+
+bool FatxIsMemoryUnit(const uint32_t sectors_per_cluster, const FatxMedium medium);
+// In bytes; 0 if the header's value isn't a cluster size on that medium
+uint32_t FatxClusterBytes(const uint32_t sectors_per_cluster, const FatxMedium medium);
+// The header's value; 0 if that kind of volume can't have the size (hard
+// drives: 16 KB to 1 MB, memory units: 4 KB to 64 KB)
+uint32_t FatxSectorsPerCluster(const uint32_t cluster_bytes, const bool memory_unit);
 // The cluster containing a byte offset, or 0 if it's in the header, the FAT
 // or the unused tail
 uint64_t FatxClusterAt(const FatxLayout &layout, const uint32_t cluster_bytes, const uint64_t byte_offset);

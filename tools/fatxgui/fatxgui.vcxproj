@@ -90,6 +90,18 @@
     <ClCompile Include="panels.cpp" />
     <ClCompile Include="selected_panel.cpp" />
     <ClCompile Include="modal_windows.cpp" />
+    <ClCompile Include="file_browser.cpp" />
+    <ClCompile Include="local_folder.cpp" />
+    <ClCompile Include="drive_survey.cpp" />
+    <ClCompile Include="format_drive_command.cpp" />
+    <ClCompile Include="format_xbox_command.cpp" />
+    <ClCompile Include="..\fatxtool\xbox_hdd_format.cpp" />
+    <ClCompile Include="local_pane.cpp" />
+    <ClCompile Include="fatx_pane.cpp" />
+    <ClCompile Include="pane_table.cpp" />
+    <ClCompile Include="extract_command.cpp" />
+    <ClCompile Include="import_command.cpp" />
+    <ClCompile Include="edit_commands.cpp" />
     <ClCompile Include="look.cpp" />
     <ClCompile Include="imgui\imgui.cpp" />
     <ClCompile Include="imgui\imgui_draw.cpp" />
@@ -101,6 +113,9 @@
     <ClCompile Include="..\fatxtool\fatx_writer.cpp" />
     <ClCompile Include="..\fatxtool\fatx_recluster.cpp" />
     <ClCompile Include="..\fatxtool\fatx_trim.cpp" />
+    <ClCompile Include="..\fatxtool\fatx_folder.cpp" />
+    <ClCompile Include="..\fatxtool\fatx_import.cpp" />
+    <ClCompile Include="..\fatxtool\fatx_edit.cpp" />
     <ClCompile Include="..\..\src\fatx_check.cpp" />
     <ClCompile Include="..\..\src\fatx_format.cpp" />
     <ClCompile Include="..\..\src\fatx_resize.cpp" />
@@ -119,6 +134,13 @@
     <ClInclude Include="commands.hpp" />
     <ClInclude Include="partition_work.hpp" />
     <ClInclude Include="panels.hpp" />
+    <ClInclude Include="file_browser.hpp" />
+    <ClInclude Include="local_folder.hpp" />
+    <ClInclude Include="drive_survey.hpp" />
+    <ClInclude Include="..\fatxtool\xbox_hdd_format.hpp" />
+    <ClInclude Include="local_pane.hpp" />
+    <ClInclude Include="fatx_pane.hpp" />
+    <ClInclude Include="pane_table.hpp" />
     <ClInclude Include="look.hpp" />
     <ClInclude Include="imgui\imconfig.h" />
     <ClInclude Include="imgui\imgui.h" />
@@ -126,6 +148,9 @@
     <ClInclude Include="imgui\imgui_impl_win32.h" />
     <ClInclude Include="imgui\imgui_internal.h" />
     <ClInclude Include="..\fatxtool\pc_image.hpp" />
+    <ClInclude Include="..\fatxtool\fatx_folder.hpp" />
+    <ClInclude Include="..\fatxtool\fatx_import.hpp" />
+    <ClInclude Include="..\fatxtool\fatx_edit.hpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>

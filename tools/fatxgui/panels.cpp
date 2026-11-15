@@ -59,7 +59,7 @@ bool Panels::CanCheck(const Part &part)
 
 bool Panels::CanResize(const Part &part) const
 {
-    return Src().Writable() && CanCheck(part) && part.usage_ok;
+    return Src().Writable() && Src().CanResize() && CanCheck(part) && part.usage_ok;
 }
 
 void Panels::Toolbar()
@@ -75,14 +75,20 @@ void Panels::Toolbar()
     ImGui::SameLine();
     if (ImGui::Button("Open drive..."))
     {
-        m_drive_window = true;
-        if (is_elevated() && !m_workspace.drives_scanned)
-        {
-            m_commands.ScanDrives();
-        }
+        ShowDriveWindow(&m_drive_window);
     }
     ImGui::SameLine();
-    if (ImGui::Button("New image..."))
+    if (ImGui::Button("Format drive..."))
+    {
+        ShowDriveWindow(&m_format_window);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Format Xbox HDD..."))
+    {
+        ShowDriveWindow(&m_xbox_window);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Create image..."))
     {
         m_new = NewImage();
         m_new.open = true;
@@ -95,7 +101,7 @@ void Panels::Toolbar()
             m_commands.Reload();
         }
         ImGui::SameLine();
-        ImGui::TextDisabled("%s", Src().type == Source::DRIVE ? "Xbox drive" : (Src().has_table ? "Disk image" : "Partition image"));
+        ImGui::TextDisabled("%s", Src().Kind().c_str());
         ImGui::SameLine();
         ImGui::TextUnformatted(Src().name.c_str());
     }
@@ -189,6 +195,9 @@ void Panels::Table()
     ImGui::TableSetupColumn("File system", ImGuiTableColumnFlags_WidthStretch, 1.6f);
     ImGui::TableSetupColumn("Used", ImGuiTableColumnFlags_WidthStretch, 1.0f);
     ImGui::TableHeadersRow();
+    // The headers push their column numbers: rows numbered the same would
+    // clash with them (header "Partition" and a partition image's row)
+    ImGui::PushID("rows");
     for (int i = 0; i < (int)Src().parts.size(); i++)
     {
         const Part &part = Src().parts[i];
@@ -227,6 +236,7 @@ void Panels::Table()
             ImGui::TextUnformatted(size_text(part.usage.used_clusters * part.usage.cluster_bytes).c_str());
         }
     }
+    ImGui::PopID();
     ImGui::EndTable();
 }
 
@@ -243,6 +253,10 @@ void Panels::PartMenuItems(int i)
     {
         m_commands.Check(part);
     }
+    if (ImGui::MenuItem("Browse files", nullptr, false, CanCheck(part)))
+    {
+        m_browser.Open(Src(), part);
+    }
     if (Src().Writable() && ImGui::MenuItem("Repair...", nullptr, false, CanCheck(part)))
     {
         m_commands.Repair(part);
@@ -255,7 +269,7 @@ void Panels::PartMenuItems(int i)
     {
         m_commands.Recluster(part, part.usage.cluster_bytes);
     }
-    if (part.resizing && Src().Writable() && ImGui::MenuItem("Finish resize"))
+    if (part.resizing && Src().Writable() && Src().CanResize() && ImGui::MenuItem("Finish resize"))
     {
         m_commands.ResumeResize(part);
     }

@@ -72,6 +72,8 @@
     <ClCompile Include="fatx_recluster.cpp" />
     <ClCompile Include="fatx_trim.cpp" />
     <ClCompile Include="pc_image.cpp" />
+    <ClCompile Include="fatx_edit.cpp" />
+    <ClCompile Include="fatx_folder.cpp" />
     <ClCompile Include="..\..\src\fatx_check.cpp" />
     <ClCompile Include="..\..\src\fatx_format.cpp" />
     <ClCompile Include="..\..\src\fatx_resize.cpp" />

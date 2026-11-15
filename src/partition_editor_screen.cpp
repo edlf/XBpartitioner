@@ -372,7 +372,7 @@ void PartitionEditorScreen::DrawPanel(const EditState &state)
     const PanelRect box = {geometry.left, geometry.top, geometry.right, geometry.bottom};
 
     wchar_t title[40];
-    swprintf(title, L"Edit partition %d (%c)", state.part + 1, PartitionLetter(state.part));
+    FormatWide(title, ArrayLength(title), L"Edit partition %d (%c)", state.part + 1, PartitionLetter(state.part));
     m_dialogs.DrawPanel(box, title, geometry.first_item_y);
 
     // Before the text, so it never covers it
@@ -398,7 +398,7 @@ void PartitionEditorScreen::DrawFields(const EditState &state, const PanelGeomet
 {
     for (int i = 0; i < EDIT_FIELD_COUNT; i++)
     {
-        wchar_t text[120];
+        wchar_t text[FIELD_VALUE_TEXT_COUNT];
         FormatFieldValue(state, i, text);
 
         Color color = state.field_available[i] ? COLOR_WHITE : COLOR_GREY;
@@ -426,27 +426,27 @@ void PartitionEditorScreen::FormatFieldValue(const EditState &state, int field, 
     switch (field)
     {
     case EDIT_ENABLED:
-        swprintf(text, m_session.Edited().IsPartitionEnabled(state.part) ? L"yes" : L"no");
+        FormatWide(text, FIELD_VALUE_TEXT_COUNT, m_session.Edited().IsPartitionEnabled(state.part) ? L"yes" : L"no");
         break;
     case EDIT_START:
     case EDIT_END: {
         const ULONGLONG sector = (field == EDIT_START) ? start : start + size;
         FormatHumanSize(sector, human);
         FormatTableLba(sector, lba);
-        swprintf(text, L"%s (at %s)", lba, human);
+        FormatWide(text, FIELD_VALUE_TEXT_COUNT, L"%s (at %s)", lba, human);
         break;
     }
     case EDIT_SIZE:
         FormatHumanSize(size, human);
-        swprintf(text, L"%s (%I64u sectors)", human, size);
+        FormatWide(text, FIELD_VALUE_TEXT_COUNT, L"%s (%I64u sectors)", human, size);
         break;
     case EDIT_STEP:
-        swprintf(text, L"< %s >", g_EditStepNames[state.step]);
+        FormatWide(text, FIELD_VALUE_TEXT_COUNT, L"< %s >", g_EditStepNames[state.step]);
         break;
     case EDIT_FILL:
         // What filling adds: the free space, up to the maximum size
         FormatHumanSize(m_session.Edited().GetGrowthLimit(state.part), human);
-        swprintf(text, L"+%s", human);
+        FormatWide(text, FIELD_VALUE_TEXT_COUNT, L"+%s", human);
         break;
     }
 }
@@ -489,7 +489,7 @@ PartitionEditorScreen::DetailRow PartitionEditorScreen::NameDetail(int part) con
 PartitionEditorScreen::DetailRow PartitionEditorScreen::ClusterDetail(int part) const
 {
     DetailRow row = {L"Format uses", L"", FONT_TEXT, COLOR_WHITE};
-    swprintf(row.value, L"%u KB clusters", m_session.Edited().CalculateClusterSizeForPartition(part));
+    FormatWide(row.value, ArrayLength(row.value), L"%u KB clusters", m_session.Edited().CalculateClusterSizeForPartition(part));
     return row;
 }
 
@@ -499,18 +499,18 @@ PartitionEditorScreen::DetailRow PartitionEditorScreen::OnDiskDetail(int part) c
     const unsigned int cluster_kb = m_filesystems.ClusterSizeKb(part);
     if (cluster_kb == 0)
     {
-        swprintf(row.value, L"not formatted (no FATX)");
+        FormatWide(row.value, ArrayLength(row.value), L"not formatted (no FATX)");
     }
     else if (m_filesystems.Usage(part).IsKnown())
     {
         wchar_t used[HUMAN_SIZE_TEXT_COUNT];
         const FatxUsage &usage = m_filesystems.Usage(part).Get();
         FormatHumanSize(usage.used_clusters * usage.cluster_bytes / HDD_SECTOR_SIZE, used);
-        swprintf(row.value, L"FATX, %u KB clusters, %s used", cluster_kb, used);
+        FormatWide(row.value, ArrayLength(row.value), L"FATX, %u KB clusters, %s used", cluster_kb, used);
     }
     else
     {
-        swprintf(row.value, L"FATX, %u KB clusters", cluster_kb);
+        FormatWide(row.value, ArrayLength(row.value), L"FATX, %u KB clusters", cluster_kb);
     }
     return row;
 }
@@ -523,7 +523,7 @@ PartitionEditorScreen::DetailRow PartitionEditorScreen::FreeSpaceDetail(int part
     wchar_t after[HUMAN_SIZE_TEXT_COUNT];
     FormatHumanSize(enabled ? m_session.Edited().GetAvailableFreeSpaceForPartitionBefore(part) : 0, before);
     FormatHumanSize(enabled ? m_session.Edited().GetAvailableFreeSpaceForPartition(part) : 0, after);
-    swprintf(row.value, L"%s before, %s after", before, after);
+    FormatWide(row.value, ArrayLength(row.value), L"%s before, %s after", before, after);
     return row;
 }
 

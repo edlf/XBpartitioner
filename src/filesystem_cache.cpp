@@ -18,22 +18,31 @@ void FilesystemCache::RefreshAll()
 
 void FilesystemCache::Refresh(int partition)
 {
+    if (!IsIndex(partition))
+    {
+        return;
+    }
     m_cluster_sizes_kb[partition] = m_reader.ReadClusterSizeKb(partition);
     m_usage[partition].Forget();
 }
 
 unsigned int FilesystemCache::ClusterSizeKb(int partition) const
 {
-    return m_cluster_sizes_kb[partition];
+    return IsIndex(partition) ? m_cluster_sizes_kb[partition] : 0;
 }
 
 const PartitionUsage &FilesystemCache::Usage(int partition) const
 {
-    return m_usage[partition];
+    static const PartitionUsage unknown;
+    return IsIndex(partition) ? m_usage[partition] : unknown;
 }
 
 bool FilesystemCache::EnsureUsage(int partition)
 {
+    if (!IsIndex(partition))
+    {
+        return false;
+    }
     if (m_usage[partition].IsKnown())
     {
         return true;
@@ -50,4 +59,9 @@ bool FilesystemCache::EnsureUsage(int partition)
     }
     m_usage[partition].Remember(usage);
     return true;
+}
+
+bool FilesystemCache::IsIndex(int partition)
+{
+    return partition >= 0 && partition < (int)XboxPartitionTableEntryCount;
 }

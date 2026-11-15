@@ -262,12 +262,12 @@ class Resizer
         {
             return Fail(FATX_MOVE_NOT_FATX);
         }
-        if (sectors_per_cluster == 0 || (sectors_per_cluster & (sectors_per_cluster - 1)) != 0 || sectors_per_cluster > 2048)
+        m_cluster_bytes = FatxClusterBytes(sectors_per_cluster, m_device.Medium());
+        if (m_cluster_bytes == 0)
         {
             return Fail(FATX_MOVE_NOT_CHECKED);
         }
 
-        m_cluster_bytes = sectors_per_cluster * HDD_SECTOR_SIZE;
         m_result->cluster_bytes = m_cluster_bytes;
         m_result->old_lba_size = old_lba;
         const uint64_t new_lba = FatxMoveResizeTarget(old_lba, m_cluster_bytes, requested_lba);
@@ -1129,11 +1129,11 @@ bool FatxReadUsage(FatxReader &reader, uint64_t lba_size, FatxUsage *usage, Fatx
     uint32_t signature, sectors_per_cluster;
     memcpy(&signature, header + FATX_SIGNATURE_OFFSET, 4);
     memcpy(&sectors_per_cluster, header + FATX_SECTORS_PER_CLUSTER_OFFSET, 4);
-    if (signature != FATX_signature || sectors_per_cluster == 0 || (sectors_per_cluster & (sectors_per_cluster - 1)) != 0 || sectors_per_cluster > 2048)
+    usage->cluster_bytes = FatxClusterBytes(sectors_per_cluster, reader.Medium());
+    if (signature != FATX_signature || usage->cluster_bytes == 0)
     {
         return false;
     }
-    usage->cluster_bytes = sectors_per_cluster * HDD_SECTOR_SIZE;
 
     const FatxLayout layout = FatxLayoutFor(lba_size, usage->cluster_bytes);
     unsigned char *chunk = (unsigned char *)malloc(FAT_CHUNK_BYTES);

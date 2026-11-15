@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "number_pad.h"
 #include "array_length.h"
+#include "partition_format.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -30,6 +31,9 @@ static const int g_KeypadKeys[KEYPAD_ROWS][KEYPAD_COLUMNS] = {
     {KEY_CANCEL, KEY_CLEAR, KEY_OK},
 };
 
+// One hex digit and its terminator, with room to spare
+static const size_t KEY_DIGIT_TEXT_COUNT = 4;
+
 // A digit is shown as itself, in hex
 static LPCWSTR key_label(int key, wchar_t *digit)
 {
@@ -38,7 +42,7 @@ static LPCWSTR key_label(int key, wchar_t *digit)
     {
         return names[key - KEY_DELETE];
     }
-    swprintf(digit, L"%X", key);
+    FormatWide(digit, KEY_DIGIT_TEXT_COUNT, L"%X", key);
     return digit;
 }
 
@@ -232,7 +236,7 @@ void NumberPad::DrawValue(const PadState &pad, const PadGeometry &geometry)
 
     wchar_t text[INPUT_TEXT_COUNT];
     const int unit = pad.number.Unit();
-    swprintf(text, (InputBase(unit) == 16) ? L"0x%s_" : L"%s_", pad.number.Digits());
+    FormatWide(text, ArrayLength(text), (InputBase(unit) == 16) ? L"0x%s_" : L"%s_", pad.number.Digits());
     m_ui.Text(FONT_TABLE, text, left + geometry.gap, m_ui.TextYCentered(FONT_TABLE, top, bottom), COLOR_YELLOW);
     m_ui.Text(FONT_TEXT, InputUnitName(unit), right - geometry.gap, m_ui.TextYCentered(FONT_TEXT, top, bottom), COLOR_WHITE, XFONT_RIGHT);
 }
@@ -252,7 +256,7 @@ void NumberPad::DrawKeys(const PadState &pad, const PadGeometry &geometry)
             const bool usable = (key > 0xF || key < base); // A-F only in hex
             const D3DCOLOR color = selected ? Colors().selection : Colors().button;
 
-            wchar_t digit[4];
+            wchar_t digit[KEY_DIGIT_TEXT_COUNT];
             const LPCWSTR label = key_label(key, digit);
             m_ui.Rect((FLOAT)x, (FLOAT)y, (FLOAT)(x + geometry.key_width), (FLOAT)(y + geometry.key_height), color, color);
             m_ui.Text(FONT_TEXT,
