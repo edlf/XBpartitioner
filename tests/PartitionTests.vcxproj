@@ -75,7 +75,24 @@
     <ClCompile Include="fatx_trim_tests.cpp" />
     <ClCompile Include="pc_disk_tests.cpp" />
     <ClCompile Include="fatx_format_tests.cpp" />
+    <ClCompile Include="partition_format_tests.cpp" />
+    <ClCompile Include="partition_set_tests.cpp" />
+    <ClCompile Include="partition_table_changes_tests.cpp" />
+    <ClCompile Include="filesystem_cache_tests.cpp" />
+    <ClCompile Include="settings_tests.cpp" />
+    <ClCompile Include="partition_table_session_tests.cpp" />
+    <ClCompile Include="partition_status_tests.cpp" />
+    <ClCompile Include="typed_number_tests.cpp" />
+    <ClCompile Include="fatx_check_report_tests.cpp" />
     <ClCompile Include="..\src\partition.cpp" />
+    <ClCompile Include="..\src\partition_format.cpp" />
+    <ClCompile Include="..\src\partition_status.cpp" />
+    <ClCompile Include="..\src\typed_number.cpp" />
+    <ClCompile Include="..\src\fatx_check_report.cpp" />
+    <ClCompile Include="..\src\partition_table_changes.cpp" />
+    <ClCompile Include="..\src\filesystem_cache.cpp" />
+    <ClCompile Include="..\src\settings.cpp" />
+    <ClCompile Include="..\src\partition_table_session.cpp" />
     <ClCompile Include="..\src\fatx_check.cpp" />
     <ClCompile Include="..\src\fatx_format.cpp" />
     <ClCompile Include="..\src\fatx_resize.cpp" />
@@ -86,6 +103,16 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\src\partition.hpp" />
+    <ClInclude Include="..\src\partition_format.h" />
+    <ClInclude Include="..\src\partition_status.h" />
+    <ClInclude Include="..\src\typed_number.h" />
+    <ClInclude Include="..\src\fatx_check_report.h" />
+    <ClInclude Include="..\src\partition_table_changes.h" />
+    <ClInclude Include="..\src\filesystem_cache.h" />
+    <ClInclude Include="..\src\settings.h" />
+    <ClInclude Include="..\src\partition_table_session.h" />
+    <ClInclude Include="..\src\partition_set.h" />
+    <ClInclude Include="..\src\partition_usage.h" />
     <ClInclude Include="test_images.hpp" />
     <ClInclude Include="..\src\fatx_check.hpp" />
     <ClInclude Include="..\src\fatx_resize.hpp" />

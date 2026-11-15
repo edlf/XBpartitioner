@@ -75,6 +75,21 @@
   <ItemGroup>
     <ClCompile Include="main.cpp" />
     <ClCompile Include="gui.cpp" />
+    <ClCompile Include="text.cpp" />
+    <ClCompile Include="activity_log.cpp" />
+    <ClCompile Include="job_runner.cpp" />
+    <ClCompile Include="workspace.cpp" />
+    <ClCompile Include="dialogs.cpp" />
+    <ClCompile Include="windows_shell.cpp" />
+    <ClCompile Include="open_commands.cpp" />
+    <ClCompile Include="check_commands.cpp" />
+    <ClCompile Include="resize_commands.cpp" />
+    <ClCompile Include="recluster_commands.cpp" />
+    <ClCompile Include="trim_commands.cpp" />
+    <ClCompile Include="make_image_command.cpp" />
+    <ClCompile Include="panels.cpp" />
+    <ClCompile Include="selected_panel.cpp" />
+    <ClCompile Include="modal_windows.cpp" />
     <ClCompile Include="look.cpp" />
     <ClCompile Include="imgui\imgui.cpp" />
     <ClCompile Include="imgui\imgui_draw.cpp" />
@@ -95,6 +110,15 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="gui.hpp" />
+    <ClInclude Include="text.hpp" />
+    <ClInclude Include="activity_log.hpp" />
+    <ClInclude Include="job_runner.hpp" />
+    <ClInclude Include="workspace.hpp" />
+    <ClInclude Include="dialogs.hpp" />
+    <ClInclude Include="windows_shell.hpp" />
+    <ClInclude Include="commands.hpp" />
+    <ClInclude Include="partition_work.hpp" />
+    <ClInclude Include="panels.hpp" />
     <ClInclude Include="look.hpp" />
     <ClInclude Include="imgui\imconfig.h" />
     <ClInclude Include="imgui\imgui.h" />

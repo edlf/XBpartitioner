@@ -29,6 +29,20 @@ static const int FONT_FIRST_CHAR = 32;
 static const int FONT_LAST_CHAR = 126;
 static const int FONT_GLYPH_COUNT = FONT_LAST_CHAR - FONT_FIRST_CHAR + 1;
 
+// A font's characters drawn once with XFONT into a texture (white, coverage
+// in alpha), slots of advance plus pad; text is tinted quads
+struct FontAtlas
+{
+    LPDIRECT3DTEXTURE8 texture; // NULL: this font is drawn with XFONT
+    int width;                  // Texture size, powers of two
+    int height;
+    int cell;                   // Slot height: the font's character cell
+    int pad;
+    short u[FONT_GLYPH_COUNT];  // Left and top of each character's slot
+    short v[FONT_GLYPH_COUNT];
+    short advance[FONT_GLYPH_COUNT];
+};
+
 class Renderer
 {
   public:
@@ -41,7 +55,7 @@ class Renderer
 
     VideoMode GetVideoMode() const
     {
-        return m_VideoMode;
+        return m_video_mode;
     }
     LPCWSTR GetVideoModeName() const;
 
@@ -56,11 +70,11 @@ class Renderer
     void SetTheme(int index);
     int GetThemeIndex() const
     {
-        return m_ThemeIndex;
+        return m_theme_index;
     }
     const Theme &GetTheme() const
     {
-        return GetThemeAt(m_ThemeIndex);
+        return GetThemeAt(m_theme_index);
     }
 
     // In layout pixels. Drawn by the GPU from a font texture (BuildFontAtlas),
@@ -104,57 +118,54 @@ class Renderer
   private:
     bool CreateDevice(VideoMode mode);
 
-    // Each font's characters drawn once with XFONT into a texture (white,
-    // coverage in alpha), slots of advance plus pad; text is tinted quads
-    struct FontAtlas
-    {
-        LPDIRECT3DTEXTURE8 texture; // NULL: this font is drawn with XFONT
-        int width;                  // Texture size, powers of two
-        int height;
-        int pad;
-        short u[FONT_GLYPH_COUNT];  // Left and top of each character's slot
-        short v[FONT_GLYPH_COUNT];
-        short advance[FONT_GLYPH_COUNT];
-    };
     bool BuildFontAtlas(int font);
+    // The atlas's pixels into its texture; false (and no texture) if refused
+    bool UploadAtlas(FontAtlas &atlas, const DWORD *pixels);
     // XFONT on the back buffer, for a font without a texture
     void TextXFont(Font font, LPCWSTR text, long screen_x, long screen_y, Color color, int align);
+    // Quads for each character, in the batch's font, from pen (screen pixels)
+    void BatchText(LPCWSTR text, POINT pen, D3DCOLOR color);
     // Per font batches, flushed when the font changes, before other drawing,
     // and at the end of the frame
     void FlushText();
 
     FLOAT ToScreenX(FLOAT x) const
     {
-        return m_OffsetX + x;
+        return m_offset_x + x;
     }
     FLOAT ToScreenY(FLOAT y) const
     {
-        return m_OffsetY + y;
+        return m_offset_y + y;
     }
+    // DrawBackground's steps: the gradient texture for the theme, the
+    // background's clock, and how the texture is sampled (exact texels)
+    void RebuildBackgroundGradient();
+    void AdvanceBackgroundClock();
+    void SetBackgroundTextureStages();
     // Rectangle in back buffer coordinates
     void ScreenRect(FLOAT x1, FLOAT y1, FLOAT x2, FLOAT y2, D3DCOLOR top_color, D3DCOLOR bottom_color);
 
-    LPDIRECT3D8 m_pD3D;
-    LPDIRECT3DDEVICE8 m_pDevice;
-    XFONT *m_pFonts[FONT_COUNT];
-    FontAtlas m_Atlases[FONT_COUNT];
-    int m_TextBatchFont;  // Font of the text waiting in the batch (see FlushText)
-    int m_TextBatchCount;
-    int m_FontHeights[FONT_COUNT];  // Read once when the fonts are loaded
-    int m_FontDescents[FONT_COUNT]; // Below the baseline, part of the cell height
-    int m_FontCapHeights[FONT_COUNT];
+    LPDIRECT3D8 m_d3d;
+    LPDIRECT3DDEVICE8 m_device;
+    XFONT *m_fonts[FONT_COUNT];
+    FontAtlas m_atlases[FONT_COUNT];
+    int m_text_batch_font;  // Font of the text waiting in the batch (see FlushText)
+    int m_text_batch_count;
+    int m_font_heights[FONT_COUNT];  // Read once when the fonts are loaded
+    int m_font_descents[FONT_COUNT]; // Below the baseline, part of the cell height
+    int m_font_cap_heights[FONT_COUNT];
 
-    int m_ThemeIndex;
+    int m_theme_index;
     // The background's gradient (see background.h), for the theme it was made for
-    LPDIRECT3DTEXTURE8 m_pBackgroundTexture;
-    int m_BackgroundTextureTheme;
-    double m_BackgroundSeconds; // Background clock, see DrawBackground()
-    DWORD m_BackgroundTick;     // When it was last drawn, 0 before the first time
-    VideoMode m_VideoMode;
-    unsigned int m_Width;
-    unsigned int m_Height;
-    FLOAT m_OffsetX;
-    FLOAT m_OffsetY;
+    LPDIRECT3DTEXTURE8 m_background_texture;
+    int m_background_texture_theme;
+    double m_background_seconds; // Background clock, see DrawBackground()
+    DWORD m_background_tick;     // When it was last drawn, 0 before the first time
+    VideoMode m_video_mode;
+    unsigned int m_width;
+    unsigned int m_height;
+    FLOAT m_offset_x;
+    FLOAT m_offset_y;
 };
 
 #endif // UI_H_

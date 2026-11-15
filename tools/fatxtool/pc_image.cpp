@@ -67,7 +67,7 @@ void update_backup_tables(FatxDevice &disk, uint64_t disk_bytes, const XboxParti
 bool DiskTable::SetSize(uint64_t new_lba_size)
 {
     XboxPartitionTable table;
-    if (!m_disk.Read(0, &table, sizeof(table)) || !XboxPartitionTableManipulator::HasMagic(table))
+    if (!m_disk.Read(0, &table, sizeof(table)) || !PartitionTableEditor::HasMagic(table))
     {
         return false;
     }
@@ -358,7 +358,7 @@ bool DiskTarget::Open(const fs::path &path, bool write, bool ata, std::string *e
 bool DiskTarget::ReadTable(XboxPartitionTable *table)
 {
     memset(table, 0, sizeof(*table));
-    return Device().Read(0, table, sizeof(*table)) && XboxPartitionTableManipulator::HasMagic(*table);
+    return Device().Read(0, table, sizeof(*table)) && PartitionTableEditor::HasMagic(*table);
 }
 
 std::unique_ptr<FatxResizeTable> DiskTarget::Table(int index)

@@ -56,7 +56,7 @@ static D3DCOLOR background_mix(D3DCOLOR from, D3DCOLOR to, double amount, double
     return D3DCOLOR_XRGB(channels[0], channels[1], channels[2]);
 }
 
-void build_background_gradient(D3DCOLOR background, D3DCOLOR accent, DWORD *texels)
+void BuildBackgroundGradient(D3DCOLOR background, D3DCOLOR accent, DWORD *texels)
 {
     for (int r = 0; r < BACKGROUND_DITHER_ROWS; r++)
     {
@@ -127,69 +127,81 @@ static FLOAT background_shade_u(const BackgroundPoint &left, const BackgroundPoi
     return (FLOAT)((0.5 + shade * (BACKGROUND_GRADIENT_SIZE - 1)) / BACKGROUND_GRADIENT_WIDTH);
 }
 
-// Each corner keeps its own place on the gradient and the GPU blends across
-// the triangle, so the triangles don't show
-static void background_emit(const BackgroundPoint &a, const BackgroundPoint &b, const BackgroundPoint &c, FLOAT *xy, FLOAT *uv, int &v)
+// What one frame of the mesh is built from: the cells' size, how far the
+// grid has scrolled, and its tilt
+struct MeshFrame
 {
-    // Less whole repeats, the same for all three corners: stays exact in a float
-    const double dither_base = floor(background_dither_v(a.x, a.y));
+    double seconds;
+    double cell_w, cell_h;
+    double wave_length_x, wave_length_y;
+    int scrolled_x, scrolled_y; // Whole cells
+    double shift_x, shift_y;    // And the rest, in pixels
+    double middle_x, middle_y;
+    double tilt_cos, tilt_sin;
+};
 
-    const BackgroundPoint *corners[3] = {&a, &b, &c};
-    for (int k = 0; k < 3; k++)
-    {
-        xy[v * 2] = corners[k]->x;
-        xy[v * 2 + 1] = corners[k]->y;
-        uv[v * 2] = corners[k]->u;
-        uv[v * 2 + 1] = (FLOAT)(background_dither_v(corners[k]->x, corners[k]->y) - dither_base);
-        v++;
-    }
-}
-
-int build_background_mesh(FLOAT width, FLOAT height, double seconds, FLOAT *xy, FLOAT *uv)
+static MeshFrame background_frame(FLOAT width, FLOAT height, double seconds)
 {
-    const double cell_w = (double)width / BACKGROUND_COLUMNS;
-    const double cell_h = (double)height / BACKGROUND_ROWS;
-    const double wave_length_x = BACKGROUND_WAVE_LENGTH * cell_w;
-    const double wave_length_y = BACKGROUND_WAVE_LENGTH * cell_h;
+    MeshFrame frame;
+    frame.seconds = seconds;
+    frame.cell_w = (double)width / BACKGROUND_COLUMNS;
+    frame.cell_h = (double)height / BACKGROUND_ROWS;
+    frame.wave_length_x = BACKGROUND_WAVE_LENGTH * frame.cell_w;
+    frame.wave_length_y = BACKGROUND_WAVE_LENGTH * frame.cell_h;
 
     // Up as many pixels as left: 45 degrees
     const double scroll_x = seconds / BACKGROUND_SCROLL_SECONDS;
-    const double scroll_y = scroll_x * cell_w / cell_h;
-    const int scrolled_x = (int)floor(scroll_x);
-    const int scrolled_y = (int)floor(scroll_y);
-    const double shift_x = (scroll_x - scrolled_x) * cell_w;
-    const double shift_y = (scroll_y - scrolled_y) * cell_h;
+    const double scroll_y = scroll_x * frame.cell_w / frame.cell_h;
+    frame.scrolled_x = (int)floor(scroll_x);
+    frame.scrolled_y = (int)floor(scroll_y);
+    frame.shift_x = (scroll_x - frame.scrolled_x) * frame.cell_w;
+    frame.shift_y = (scroll_y - frame.scrolled_y) * frame.cell_h;
 
     const double tilt = BACKGROUND_TILT_DEGREES * BACKGROUND_TWO_PI / 360.0;
-    const double tilt_cos = cos(tilt);
-    const double tilt_sin = sin(tilt);
-    const double middle_x = width * 0.5;
-    const double middle_y = height * 0.5;
+    frame.tilt_cos = cos(tilt);
+    frame.tilt_sin = sin(tilt);
+    frame.middle_x = width * 0.5;
+    frame.middle_y = height * 0.5;
+    return frame;
+}
 
-    // In the grid's own space, centered on the screen, then turned onto it
-    static BackgroundPoint points[BACKGROUND_DRAWN_ROWS + 1][BACKGROUND_DRAWN_COLUMNS + 1];
+typedef BackgroundPoint BackgroundGrid[BACKGROUND_DRAWN_ROWS + 1][BACKGROUND_DRAWN_COLUMNS + 1];
+
+// In the grid's own space, centered on the screen, then turned onto it. Its
+// shade (u) comes later, from its neighbours.
+static BackgroundPoint background_point(const MeshFrame &frame, int r, int c)
+{
+    const double x = (c - BACKGROUND_DRAWN_COLUMNS / 2) * frame.cell_w - frame.shift_x;
+    const double y = (r - BACKGROUND_DRAWN_ROWS / 2) * frame.cell_h - frame.shift_y;
+    // The waves stay put while the grid scrolls through them
+    const double grid_x = x + BACKGROUND_WAVE_WIDTH * frame.cell_w * background_ripple_x(y, frame.seconds, frame.wave_length_y);
+    const double grid_y = y + BACKGROUND_WAVE_HEIGHT * frame.cell_h * background_ripple_y(x, frame.seconds, frame.wave_length_x);
+
+    BackgroundPoint point;
+    point.x = (FLOAT)(frame.middle_x + grid_x * frame.tilt_cos - grid_y * frame.tilt_sin);
+    point.y = (FLOAT)(frame.middle_y + grid_x * frame.tilt_sin + grid_y * frame.tilt_cos);
+    // Height: the ripple (the up and down one counts most)
+    point.ripple = 0.65 * (0.5 + 0.5 * background_ripple_y(x, frame.seconds, frame.wave_length_x)) +
+                   0.35 * (0.5 + 0.5 * background_ripple_x(y, frame.seconds, frame.wave_length_y));
+    point.z = frame.cell_w * BACKGROUND_RIPPLE_HEIGHT * point.ripple;
+    point.u = 0.0f;
+    return point;
+}
+
+static void place_background_points(const MeshFrame &frame, BackgroundGrid &points)
+{
     for (int r = 0; r <= BACKGROUND_DRAWN_ROWS; r++)
     {
-        const int row_id = scrolled_y + r;
         for (int c = 0; c <= BACKGROUND_DRAWN_COLUMNS; c++)
         {
-            const int column_id = scrolled_x + c;
-            const double x = (c - BACKGROUND_DRAWN_COLUMNS / 2) * cell_w - shift_x;
-            const double y = (r - BACKGROUND_DRAWN_ROWS / 2) * cell_h - shift_y;
-            // The waves stay put while the grid scrolls through them
-            const double grid_x = x + BACKGROUND_WAVE_WIDTH * cell_w * background_ripple_x(y, seconds, wave_length_y);
-            const double grid_y = y + BACKGROUND_WAVE_HEIGHT * cell_h * background_ripple_y(x, seconds, wave_length_x);
-            points[r][c].x = (FLOAT)(middle_x + grid_x * tilt_cos - grid_y * tilt_sin);
-            points[r][c].y = (FLOAT)(middle_y + grid_x * tilt_sin + grid_y * tilt_cos);
-            // Height: the ripple (the up and down one counts most)
-            const double ripple =
-                0.65 * (0.5 + 0.5 * background_ripple_y(x, seconds, wave_length_x)) + 0.35 * (0.5 + 0.5 * background_ripple_x(y, seconds, wave_length_y));
-            points[r][c].ripple = ripple;
-            points[r][c].z = cell_w * BACKGROUND_RIPPLE_HEIGHT * ripple;
+            points[r][c] = background_point(frame, r, c);
         }
     }
+}
 
-    // Shade from the slope (both neighbours, so it's smooth) and the ripple
+// Shade from the slope (both neighbours, so it's smooth) and the ripple
+static void shade_background_points(BackgroundGrid &points)
+{
     for (int r = 0; r <= BACKGROUND_DRAWN_ROWS; r++)
     {
         for (int c = 0; c <= BACKGROUND_DRAWN_COLUMNS; c++)
@@ -201,29 +213,79 @@ int build_background_mesh(FLOAT width, FLOAT height, double seconds, FLOAT *xy, 
             points[r][c].u = background_shade_u(left, right, above, below, points[r][c].ripple);
         }
     }
+}
 
-    int v = 0;
+// The triangles' corners, into the caller's xy and uv
+class BackgroundMeshOutput
+{
+  public:
+    BackgroundMeshOutput(FLOAT *xy, FLOAT *uv) : m_xy(xy), m_uv(uv), m_count(0)
+    {
+    }
+
+    int Count() const
+    {
+        return m_count;
+    }
+
+    // Each corner keeps its own place on the gradient and the GPU blends
+    // across the triangle, so the triangles don't show
+    void AddTriangle(const BackgroundPoint &a, const BackgroundPoint &b, const BackgroundPoint &c)
+    {
+        // Less whole repeats, the same for all three corners: stays exact in a float
+        const double dither_base = floor(background_dither_v(a.x, a.y));
+
+        const BackgroundPoint *corners[3] = {&a, &b, &c};
+        for (int k = 0; k < 3; k++)
+        {
+            m_xy[m_count * 2] = corners[k]->x;
+            m_xy[m_count * 2 + 1] = corners[k]->y;
+            m_uv[m_count * 2] = corners[k]->u;
+            m_uv[m_count * 2 + 1] = (FLOAT)(background_dither_v(corners[k]->x, corners[k]->y) - dither_base);
+            m_count++;
+        }
+    }
+
+  private:
+    FLOAT *m_xy;
+    FLOAT *m_uv;
+    int m_count;
+};
+
+// Two triangles per cell; the diagonal alternates like a checkerboard
+static void add_background_cells(const MeshFrame &frame, const BackgroundGrid &points, BackgroundMeshOutput &output)
+{
     for (int r = 0; r < BACKGROUND_DRAWN_ROWS; r++)
     {
-        const int row_id = scrolled_y + r;
+        const int row_id = frame.scrolled_y + r;
         for (int c = 0; c < BACKGROUND_DRAWN_COLUMNS; c++)
         {
-            // Two triangles per cell; the diagonal alternates like a checkerboard
             const BackgroundPoint &tl = points[r][c];
             const BackgroundPoint &tr = points[r][c + 1];
             const BackgroundPoint &bl = points[r + 1][c];
             const BackgroundPoint &br = points[r + 1][c + 1];
-            if (((row_id + scrolled_x + c) & 1) != 0)
+            if (((row_id + frame.scrolled_x + c) & 1) != 0)
             {
-                background_emit(tl, tr, br, xy, uv, v);
-                background_emit(br, bl, tl, xy, uv, v);
+                output.AddTriangle(tl, tr, br);
+                output.AddTriangle(br, bl, tl);
             }
             else
             {
-                background_emit(tl, tr, bl, xy, uv, v);
-                background_emit(br, bl, tr, xy, uv, v);
+                output.AddTriangle(tl, tr, bl);
+                output.AddTriangle(br, bl, tr);
             }
         }
     }
-    return v;
+}
+
+int BuildBackgroundMesh(FLOAT width, FLOAT height, double seconds, FLOAT *xy, FLOAT *uv)
+{
+    const MeshFrame frame = background_frame(width, height, seconds);
+    static BackgroundGrid points; // Too big for the stack
+    place_background_points(frame, points);
+    shade_background_points(points);
+
+    BackgroundMeshOutput output(xy, uv);
+    add_background_cells(frame, points, output);
+    return output.Count();
 }

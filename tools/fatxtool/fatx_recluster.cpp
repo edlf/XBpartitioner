@@ -123,11 +123,11 @@ bool read_folder(FatxWriter &original, FatxDevice &device, uint32_t first, std::
     return true;
 }
 
-typedef struct
+struct Folder
 {
     uint32_t first_cluster; // In the original's numbering
     std::vector<FatxDirent> entries;
-} Folder;
+};
 
 class PartProgress : public FatxProgress
 {
@@ -149,11 +149,267 @@ class PartProgress : public FatxProgress
     int m_to;
 };
 
-bool fail(FatxReclusterResult *result, FatxReclusterStatus status)
+// What FatxBuildReclustered was asked to do
+struct ReclusterInput
 {
-    result->status = status;
-    return false;
-}
+    FatxDevice &original;
+    uint64_t lba_size;
+    uint32_t new_cluster_bytes;
+    FatxProgress *progress; // Or NULL
+};
+
+// FatxBuildReclustered's steps: check the original, read every folder,
+// write the new file system and check it. Each step fills in the result and
+// returns false where it stops.
+class ReclusterBuilder
+{
+  public:
+    ReclusterBuilder(const ReclusterInput &input, FatxReclusterResult *result) : m_input(input), m_result(result), m_bytes_to_copy(0)
+    {
+        memset(m_header, 0, sizeof(m_header));
+    }
+
+    // build: where to write it, or NULL to only see whether it fits
+    bool Build(FatxRangeRecorder *build)
+    {
+        if (!ReadHeader() || !CheckOriginal())
+        {
+            return false;
+        }
+        FatxWriter source(m_input.original, PartitionBytes());
+        if (!source.Load())
+        {
+            return Fail(FATX_RECLUSTER_READ_ERROR);
+        }
+        if (!ReadFolders(source) || !CheckRoom())
+        {
+            return false;
+        }
+        if (build == NULL)
+        {
+            m_result->status = FATX_RECLUSTER_PLANNED;
+            return true;
+        }
+        if (!WriteBuild(source, *build) || !VerifyBuild(*build))
+        {
+            return false;
+        }
+        m_result->status = FATX_RECLUSTER_DONE;
+        return true;
+    }
+
+  private:
+    uint64_t PartitionBytes() const
+    {
+        return m_input.lba_size * HDD_SECTOR_SIZE;
+    }
+
+    bool Fail(FatxReclusterStatus status)
+    {
+        m_result->status = status;
+        return false;
+    }
+
+    // A FATX header that isn't mid-resize, and a cluster size that can be used
+    bool ReadHeader()
+    {
+        if (!m_input.original.Read(0, m_header, sizeof(m_header)))
+        {
+            return Fail(FATX_RECLUSTER_READ_ERROR);
+        }
+        uint32_t signature, sectors_per_cluster;
+        memcpy(&signature, m_header + FATX_SIGNATURE_OFFSET, 4);
+        memcpy(&sectors_per_cluster, m_header + FATX_SECTORS_PER_CLUSTER_OFFSET, 4);
+        if (signature == FATX_RESIZING_SIGNATURE)
+        {
+            return Fail(FATX_RECLUSTER_RESIZING);
+        }
+        if (signature != FATX_signature)
+        {
+            return Fail(FATX_RECLUSTER_NOT_FATX);
+        }
+        m_result->old_cluster_bytes = sectors_per_cluster * HDD_SECTOR_SIZE;
+
+        const uint32_t new_bytes = m_input.new_cluster_bytes;
+        if (new_bytes < 16 * 1024 || new_bytes > 1024 * 1024 || (new_bytes & (new_bytes - 1)) != 0)
+        {
+            return Fail(FATX_RECLUSTER_BAD_SIZE);
+        }
+        // Keeping the size (defragmenting) is fine whatever the size is
+        if (new_bytes != m_result->old_cluster_bytes && new_bytes / 1024 < ClusterSizeKbFor(m_input.lba_size))
+        {
+            return Fail(FATX_RECLUSTER_TOO_SMALL);
+        }
+        return true;
+    }
+
+    // Warnings are fine: lost and extra clusters get dropped
+    bool CheckOriginal()
+    {
+        PartProgress check_progress(m_input.progress, 0, 20);
+        FatxCheck(m_input.original, PartitionBytes(), &m_result->check, &check_progress);
+        if (m_result->check.status != FATX_CHECK_DONE)
+        {
+            return Fail(FATX_RECLUSTER_READ_ERROR);
+        }
+        if (m_result->check.errors > 0)
+        {
+            return Fail(FATX_RECLUSTER_HAS_ERRORS);
+        }
+        m_result->old_clusters_used = m_result->check.used_clusters;
+        return true;
+    }
+
+    // Every folder, root first; subfolders always come after their parent
+    bool ReadFolders(FatxWriter &source)
+    {
+        m_folders.resize(1);
+        m_folders[0].first_cluster = source.RootCluster();
+        for (size_t f = 0; f < m_folders.size(); f++)
+        {
+            std::vector<FatxDirent> entries;
+            if (!read_folder(source, m_input.original, m_folders[f].first_cluster, &entries))
+            {
+                return Fail(FATX_RECLUSTER_READ_ERROR);
+            }
+            CountFolder(entries);
+            m_folders[f].entries.swap(entries);
+        }
+        return true;
+    }
+
+    // Counts the folder's clusters and files, and queues its subfolders
+    void CountFolder(const std::vector<FatxDirent> &entries)
+    {
+        const uint32_t new_bytes = m_input.new_cluster_bytes;
+        const uint64_t per_cluster = new_bytes / sizeof(FatxDirent);
+        m_result->clusters_needed += entries.empty() ? 1 : (entries.size() + per_cluster - 1) / per_cluster;
+        for (const FatxDirent &entry : entries)
+        {
+            if (entry.attributes & FATX_ATTR_DIRECTORY)
+            {
+                m_result->folders++;
+                Folder folder;
+                folder.first_cluster = entry.first_cluster;
+                m_folders.push_back(folder);
+            }
+            else
+            {
+                m_result->files++;
+                m_result->clusters_needed += ((uint64_t)entry.file_size + new_bytes - 1) / new_bytes;
+                m_bytes_to_copy += entry.file_size;
+            }
+        }
+    }
+
+    bool CheckRoom()
+    {
+        const FatxLayout layout = FatxLayoutFor(m_input.lba_size, m_input.new_cluster_bytes);
+        m_result->clusters_available = (layout.cluster_limit > 1) ? layout.cluster_limit - 1 : 0;
+        if (m_result->clusters_needed > m_result->clusters_available)
+        {
+            return Fail(FATX_RECLUSTER_NO_ROOM);
+        }
+        return true;
+    }
+
+    // The new file system, with the folders and files in the same order
+    bool WriteBuild(FatxWriter &source, FatxRangeRecorder &build)
+    {
+        uint32_t serial;
+        memcpy(&serial, m_header + 4, 4);
+        FatxWriter target(build, PartitionBytes(), m_input.new_cluster_bytes);
+        if (!target.Format(serial))
+        {
+            return Fail(FATX_RECLUSTER_WRITE_ERROR);
+        }
+        if (!CopyFolders(source, target))
+        {
+            return false;
+        }
+        if (!target.Flush())
+        {
+            return Fail(FATX_RECLUSTER_WRITE_ERROR);
+        }
+        return WriteHeader(build, target.RootCluster());
+    }
+
+    // m_folders[f] becomes new_clusters[f]
+    bool CopyFolders(FatxWriter &source, FatxWriter &target)
+    {
+        std::vector<uint32_t> new_clusters(m_folders.size(), 0);
+        new_clusters[0] = target.RootCluster();
+        size_t next_folder = 1;
+        uint64_t copied = 0;
+        for (size_t f = 0; f < m_folders.size(); f++)
+        {
+            for (const FatxDirent &entry : m_folders[f].entries)
+            {
+                if (entry.attributes & FATX_ATTR_DIRECTORY)
+                {
+                    if (!target.MakeDirectory(new_clusters[f], entry, &new_clusters[next_folder++]))
+                    {
+                        return Fail(FATX_RECLUSTER_WRITE_ERROR);
+                    }
+                    continue;
+                }
+                ChainSource contents(source, m_input.original, entry.first_cluster);
+                if (!target.AddFile(new_clusters[f], entry, contents))
+                {
+                    return Fail(FATX_RECLUSTER_WRITE_ERROR);
+                }
+                copied += entry.file_size;
+                ShowCopyProgress(copied);
+            }
+        }
+        return true;
+    }
+
+    // Copying the files is 20% to 90% of the whole
+    void ShowCopyProgress(uint64_t copied) const
+    {
+        if (m_input.progress != NULL && m_bytes_to_copy > 0)
+        {
+            m_input.progress->Update(20 + (int)(copied * 70 / m_bytes_to_copy));
+        }
+    }
+
+    // Keeps the original header (serial number, volume name), with the new
+    // cluster size and root
+    bool WriteHeader(FatxRangeRecorder &build, uint32_t root)
+    {
+        const uint32_t new_sectors = m_input.new_cluster_bytes / HDD_SECTOR_SIZE;
+        memcpy(m_header + FATX_SECTORS_PER_CLUSTER_OFFSET, &new_sectors, 4);
+        memcpy(m_header + FATX_ROOT_CLUSTER_OFFSET, &root, 4);
+        if (!build.Write(0, m_header, sizeof(m_header)) || !build.Sync())
+        {
+            return Fail(FATX_RECLUSTER_WRITE_ERROR);
+        }
+        return true;
+    }
+
+    // Must check clean before touching the partition
+    bool VerifyBuild(FatxDevice &build)
+    {
+        FatxCheckResult *built = new FatxCheckResult;
+        PartProgress verify_progress(m_input.progress, 90, 100);
+        FatxCheck(build, PartitionBytes(), built, &verify_progress);
+        const bool clean = built->status == FATX_CHECK_DONE && built->errors == 0 && built->lost_clusters == 0 && built->files == m_result->files &&
+                           built->directories == m_result->folders;
+        delete built;
+        if (!clean)
+        {
+            return Fail(FATX_RECLUSTER_BUILD_FAILED);
+        }
+        return true;
+    }
+
+    const ReclusterInput m_input;
+    FatxReclusterResult *const m_result;
+    unsigned char m_header[FATX_HEADER_BYTES];
+    std::vector<Folder> m_folders;
+    uint64_t m_bytes_to_copy;
+};
 
 } // namespace
 
@@ -162,165 +418,9 @@ bool FatxBuildReclustered(FatxDevice &original, uint64_t lba_size, uint32_t new_
 {
     memset(result, 0, sizeof(*result));
     result->new_cluster_bytes = new_cluster_bytes;
-
-    unsigned char header[FATX_HEADER_BYTES];
-    if (!original.Read(0, header, sizeof(header)))
-    {
-        return fail(result, FATX_RECLUSTER_READ_ERROR);
-    }
-    uint32_t signature, sectors_per_cluster;
-    memcpy(&signature, header + FATX_SIGNATURE_OFFSET, 4);
-    memcpy(&sectors_per_cluster, header + FATX_SECTORS_PER_CLUSTER_OFFSET, 4);
-    if (signature == FATX_RESIZING_SIGNATURE)
-    {
-        return fail(result, FATX_RECLUSTER_RESIZING);
-    }
-    if (signature != FATX_signature)
-    {
-        return fail(result, FATX_RECLUSTER_NOT_FATX);
-    }
-    result->old_cluster_bytes = sectors_per_cluster * HDD_SECTOR_SIZE;
-
-    if (new_cluster_bytes < 16 * 1024 || new_cluster_bytes > 1024 * 1024 || (new_cluster_bytes & (new_cluster_bytes - 1)) != 0)
-    {
-        return fail(result, FATX_RECLUSTER_BAD_SIZE);
-    }
-    // Keeping the size (defragmenting) is fine whatever the size is
-    if (new_cluster_bytes != result->old_cluster_bytes && new_cluster_bytes / 1024 < ClusterSizeKbFor(lba_size))
-    {
-        return fail(result, FATX_RECLUSTER_TOO_SMALL);
-    }
-
-    // Warnings are fine: lost and extra clusters get dropped
-    PartProgress check_progress(progress, 0, 20);
-    FatxCheck(original, lba_size * HDD_SECTOR_SIZE, &result->check, &check_progress);
-    if (result->check.status != FATX_CHECK_DONE)
-    {
-        return fail(result, FATX_RECLUSTER_READ_ERROR);
-    }
-    if (result->check.errors > 0)
-    {
-        return fail(result, FATX_RECLUSTER_HAS_ERRORS);
-    }
-    result->old_clusters_used = result->check.used_clusters;
-
-    FatxWriter source(original, lba_size * HDD_SECTOR_SIZE);
-    if (!source.Load())
-    {
-        return fail(result, FATX_RECLUSTER_READ_ERROR);
-    }
-
-    // Read every folder, root first, and count the clusters needed
-    std::vector<Folder> folders(1);
-    folders[0].first_cluster = source.RootCluster();
-    const uint64_t per_cluster = new_cluster_bytes / sizeof(FatxDirent);
-    uint64_t bytes_to_copy = 0;
-    for (size_t f = 0; f < folders.size(); f++)
-    {
-        std::vector<FatxDirent> entries;
-        if (!read_folder(source, original, folders[f].first_cluster, &entries))
-        {
-            return fail(result, FATX_RECLUSTER_READ_ERROR);
-        }
-        result->clusters_needed += entries.empty() ? 1 : (entries.size() + per_cluster - 1) / per_cluster;
-        for (const FatxDirent &entry : entries)
-        {
-            if (entry.attributes & FATX_ATTR_DIRECTORY)
-            {
-                result->folders++;
-                Folder folder;
-                folder.first_cluster = entry.first_cluster;
-                folders.push_back(folder);
-            }
-            else
-            {
-                result->files++;
-                result->clusters_needed += ((uint64_t)entry.file_size + new_cluster_bytes - 1) / new_cluster_bytes;
-                bytes_to_copy += entry.file_size;
-            }
-        }
-        folders[f].entries.swap(entries);
-    }
-
-    const FatxLayout layout = FatxLayoutFor(lba_size, new_cluster_bytes);
-    result->clusters_available = (layout.cluster_limit > 1) ? layout.cluster_limit - 1 : 0;
-    if (result->clusters_needed > result->clusters_available)
-    {
-        return fail(result, FATX_RECLUSTER_NO_ROOM);
-    }
-    if (build == NULL)
-    {
-        result->status = FATX_RECLUSTER_PLANNED;
-        return true;
-    }
-
-    // Build the new file system in the same order
-    uint32_t serial;
-    memcpy(&serial, header + 4, 4);
-    FatxWriter target(*build, lba_size * HDD_SECTOR_SIZE, new_cluster_bytes);
-    if (!target.Format(serial))
-    {
-        return fail(result, FATX_RECLUSTER_WRITE_ERROR);
-    }
-
-    // folders[f] becomes new_clusters[f]; subfolders always come later in the list
-    std::vector<uint32_t> new_clusters(folders.size(), 0);
-    new_clusters[0] = target.RootCluster();
-    size_t next_folder = 1;
-    uint64_t copied = 0;
-    for (size_t f = 0; f < folders.size(); f++)
-    {
-        for (const FatxDirent &entry : folders[f].entries)
-        {
-            if (entry.attributes & FATX_ATTR_DIRECTORY)
-            {
-                if (!target.MakeDirectory(new_clusters[f], entry, &new_clusters[next_folder++]))
-                {
-                    return fail(result, FATX_RECLUSTER_WRITE_ERROR);
-                }
-                continue;
-            }
-            ChainSource contents(source, original, entry.first_cluster);
-            if (!target.AddFile(new_clusters[f], entry, contents))
-            {
-                return fail(result, FATX_RECLUSTER_WRITE_ERROR);
-            }
-            copied += entry.file_size;
-            if (progress != NULL && bytes_to_copy > 0)
-            {
-                progress->Update(20 + (int)(copied * 70 / bytes_to_copy));
-            }
-        }
-    }
-    if (!target.Flush())
-    {
-        return fail(result, FATX_RECLUSTER_WRITE_ERROR);
-    }
-
-    // Keep the original header (serial number, volume name), with the new
-    // cluster size and root
-    const uint32_t new_sectors = new_cluster_bytes / HDD_SECTOR_SIZE;
-    const uint32_t root = target.RootCluster();
-    memcpy(header + FATX_SECTORS_PER_CLUSTER_OFFSET, &new_sectors, 4);
-    memcpy(header + FATX_ROOT_CLUSTER_OFFSET, &root, 4);
-    if (!build->Write(0, header, sizeof(header)) || !build->Sync())
-    {
-        return fail(result, FATX_RECLUSTER_WRITE_ERROR);
-    }
-
-    // Must check clean before touching the partition
-    FatxCheckResult *built = new FatxCheckResult;
-    PartProgress verify_progress(progress, 90, 100);
-    FatxCheck(*build, lba_size * HDD_SECTOR_SIZE, built, &verify_progress);
-    const bool clean = built->status == FATX_CHECK_DONE && built->errors == 0 && built->lost_clusters == 0 && built->files == result->files &&
-                       built->directories == result->folders;
-    delete built;
-    if (!clean)
-    {
-        return fail(result, FATX_RECLUSTER_BUILD_FAILED);
-    }
-    result->status = FATX_RECLUSTER_DONE;
-    return true;
+    const ReclusterInput input = {original, lba_size, new_cluster_bytes, progress};
+    ReclusterBuilder builder(input, result);
+    return builder.Build(build);
 }
 
 bool FatxCopyReclustered(FatxDevice &build, FatxDevice &partition, const std::vector<FatxRange> &ranges, FatxProgress *progress)

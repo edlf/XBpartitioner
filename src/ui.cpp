@@ -100,7 +100,7 @@ void Renderer::SetTheme(int index)
 {
     if (index >= 0 && index < g_ThemeCount)
     {
-        m_ThemeIndex = index;
+        m_theme_index = index;
     }
 }
 
@@ -125,16 +125,16 @@ static const FontData g_Fonts720[FONT_COUNT] = {
 };
 
 Renderer::Renderer()
-    : m_pD3D(NULL), m_pDevice(NULL), m_TextBatchFont(-1), m_TextBatchCount(0), m_ThemeIndex(0), m_pBackgroundTexture(NULL), m_BackgroundTextureTheme(-1),
-      m_BackgroundSeconds(0.0), m_BackgroundTick(0), m_VideoMode(VIDEO_MODE_480I), m_Width(640), m_Height(480), m_OffsetX(0.0f), m_OffsetY(0.0f)
+    : m_d3d(NULL), m_device(NULL), m_text_batch_font(-1), m_text_batch_count(0), m_theme_index(0), m_background_texture(NULL), m_background_texture_theme(-1),
+      m_background_seconds(0.0), m_background_tick(0), m_video_mode(VIDEO_MODE_480I), m_width(640), m_height(480), m_offset_x(0.0f), m_offset_y(0.0f)
 {
     for (int i = 0; i < FONT_COUNT; i++)
     {
-        m_pFonts[i] = NULL;
-        m_FontHeights[i] = 0;
-        m_FontDescents[i] = 0;
-        m_FontCapHeights[i] = 0;
-        memset(&m_Atlases[i], 0, sizeof(m_Atlases[i]));
+        m_fonts[i] = NULL;
+        m_font_heights[i] = 0;
+        m_font_descents[i] = 0;
+        m_font_cap_heights[i] = 0;
+        memset(&m_atlases[i], 0, sizeof(m_atlases[i]));
     }
 }
 
@@ -171,23 +171,23 @@ bool Renderer::CreateDevice(VideoMode mode)
     switch (mode)
     {
     case VIDEO_MODE_720P:
-        m_Width = 1280;
-        m_Height = 720;
+        m_width = 1280;
+        m_height = 720;
         d3dpp.Flags = D3DPRESENTFLAG_PROGRESSIVE | D3DPRESENTFLAG_WIDESCREEN;
         break;
     case VIDEO_MODE_480P:
-        m_Width = 640;
-        m_Height = 480;
+        m_width = 640;
+        m_height = 480;
         d3dpp.Flags = D3DPRESENTFLAG_PROGRESSIVE;
         break;
     default:
-        m_Width = 640;
-        m_Height = 480;
+        m_width = 640;
+        m_height = 480;
         break;
     }
 
-    d3dpp.BackBufferWidth = m_Width;
-    d3dpp.BackBufferHeight = m_Height;
+    d3dpp.BackBufferWidth = m_width;
+    d3dpp.BackBufferHeight = m_height;
     d3dpp.BackBufferFormat = D3DFMT_X8R8G8B8;
     d3dpp.BackBufferCount = 1;
     d3dpp.SwapEffect = D3DSWAPEFFECT_DISCARD;
@@ -196,32 +196,32 @@ bool Renderer::CreateDevice(VideoMode mode)
     // (memory). LINEAR keeps pixel aligned text and boxes sharp. Off if refused.
     d3dpp.MultiSampleType = (mode == VIDEO_MODE_720P) ? D3DMULTISAMPLE_2_SAMPLES_MULTISAMPLE_LINEAR : D3DMULTISAMPLE_4_SAMPLES_MULTISAMPLE_LINEAR;
 
-    m_pDevice = NULL;
-    if (FAILED(m_pD3D->CreateDevice(0, D3DDEVTYPE_HAL, NULL, D3DCREATE_HARDWARE_VERTEXPROCESSING, &d3dpp, &m_pDevice)) || m_pDevice == NULL)
+    m_device = NULL;
+    if (FAILED(m_d3d->CreateDevice(0, D3DDEVTYPE_HAL, NULL, D3DCREATE_HARDWARE_VERTEXPROCESSING, &d3dpp, &m_device)) || m_device == NULL)
     {
-        m_pDevice = NULL;
+        m_device = NULL;
         d3dpp.MultiSampleType = D3DMULTISAMPLE_NONE;
-        if (FAILED(m_pD3D->CreateDevice(0, D3DDEVTYPE_HAL, NULL, D3DCREATE_HARDWARE_VERTEXPROCESSING, &d3dpp, &m_pDevice)) || m_pDevice == NULL)
+        if (FAILED(m_d3d->CreateDevice(0, D3DDEVTYPE_HAL, NULL, D3DCREATE_HARDWARE_VERTEXPROCESSING, &d3dpp, &m_device)) || m_device == NULL)
         {
-            m_pDevice = NULL;
+            m_device = NULL;
             return false;
         }
     }
 
-    m_VideoMode = mode;
+    m_video_mode = mode;
 
     // A 4:3 area, the screen's height, centered (720p: 160 pixel bars). Whole
     // pixels, so text lands on pixels.
-    const unsigned int layout_width = m_Height * 4 / 3;
-    m_OffsetX = (FLOAT)((m_Width - layout_width) / 2);
-    m_OffsetY = 0.0f;
+    const unsigned int layout_width = m_height * 4 / 3;
+    m_offset_x = (FLOAT)((m_width - layout_width) / 2);
+    m_offset_y = 0.0f;
 
     return true;
 }
 
 void Renderer::Init()
 {
-    m_pD3D = Direct3DCreate8(D3D_SDK_VERSION);
+    m_d3d = Direct3DCreate8(D3D_SDK_VERSION);
 
     // Refused: plain 480i, which every setup supports
     const VideoMode mode = SelectVideoMode();
@@ -231,7 +231,7 @@ void Renderer::Init()
     }
 
     // Nothing can be shown without a device
-    if (m_pDevice == NULL)
+    if (m_device == NULL)
     {
         Shutdown();
         LD_LAUNCH_DASHBOARD LaunchDashData = {XLD_LAUNCH_DASHBOARD_MAIN_MENU};
@@ -239,34 +239,34 @@ void Renderer::Init()
         return;
     }
 
-    m_pDevice->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
-    m_pDevice->SetRenderState(D3DRS_LIGHTING, FALSE);
-    m_pDevice->SetRenderState(D3DRS_ZENABLE, D3DZB_TRUE);
+    m_device->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
+    m_device->SetRenderState(D3DRS_LIGHTING, FALSE);
+    m_device->SetRenderState(D3DRS_ZENABLE, D3DZB_TRUE);
 
     // Pre-rendered for each mode, so text stays sharp at 720p
-    const FontData *fonts = (m_VideoMode == VIDEO_MODE_720P) ? g_Fonts720 : g_Fonts480;
+    const FontData *fonts = (m_video_mode == VIDEO_MODE_720P) ? g_Fonts720 : g_Fonts480;
     for (int i = 0; i < FONT_COUNT; i++)
     {
-        XFONT_OpenBitmapFontFromMemory(fonts[i].data, fonts[i].size, &m_pFonts[i]);
+        XFONT_OpenBitmapFontFromMemory(fonts[i].data, fonts[i].size, &m_fonts[i]);
 
         // To size boxes around text and center it. Falls back to the generated
         // height and DejaVu's descent (~0.24) if XFONT reports nothing sane.
-        m_FontHeights[i] = fonts[i].height;
-        m_FontDescents[i] = (fonts[i].height * 24 + 50) / 100;
+        m_font_heights[i] = fonts[i].height;
+        m_font_descents[i] = (fonts[i].height * 24 + 50) / 100;
         // XFONT has no cap height; DejaVu's capitals are 0.73 of the font size
         // (13px at 18, 20px at 27, 23px at 32). Used to center text on its capitals.
-        m_FontCapHeights[i] = (fonts[i].height * 73 + 50) / 100;
-        if (m_pFonts[i] != NULL)
+        m_font_cap_heights[i] = (fonts[i].height * 73 + 50) / 100;
+        if (m_fonts[i] != NULL)
         {
             unsigned int cell_height = 0;
             unsigned int descent = 0;
-            m_pFonts[i]->GetFontMetrics(&cell_height, &descent);
+            m_fonts[i]->GetFontMetrics(&cell_height, &descent);
             if (cell_height >= (unsigned int)fonts[i].height && cell_height <= (unsigned int)fonts[i].height * 2)
             {
-                m_FontHeights[i] = (int)cell_height;
+                m_font_heights[i] = (int)cell_height;
                 if (descent > 0 && descent < cell_height / 2)
                 {
-                    m_FontDescents[i] = (int)descent;
+                    m_font_descents[i] = (int)descent;
                 }
             }
         }
@@ -275,112 +275,150 @@ void Renderer::Init()
     }
 }
 
-bool Renderer::BuildFontAtlas(int font)
+// A malloc'd block of pixels, cleared, and freed when it goes out of scope
+class PixelBuffer
 {
-    FontAtlas &atlas = m_Atlases[font];
-    XFONT *pFont = m_pFonts[font];
-    const int cell = m_FontHeights[font];
-    if (pFont == NULL || cell <= 0)
+  public:
+    explicit PixelBuffer(int count) : m_pixels((DWORD *)malloc(count * sizeof(DWORD))), m_count(count)
     {
-        return false;
+        Clear();
+    }
+    ~PixelBuffer()
+    {
+        free(m_pixels);
+    }
+    PixelBuffer(const PixelBuffer &) = delete;
+    PixelBuffer &operator=(const PixelBuffer &) = delete;
+
+    bool IsAllocated() const
+    {
+        return m_pixels != NULL;
+    }
+    DWORD *Get() const
+    {
+        return m_pixels;
+    }
+    void Clear()
+    {
+        if (m_pixels != NULL)
+        {
+            memset(m_pixels, 0, m_count * sizeof(DWORD));
+        }
     }
 
-    // No kerning in these fonts, so the advances are all XFONT uses. Measured as
-    // extent(two) - extent(one), right even when a glyph reaches past its advance.
+  private:
+    DWORD *m_pixels;
+    int m_count;
+};
+
+// No kerning in these fonts, so the advances are all XFONT uses. Measured as
+// extent(two) - extent(one), right even when a glyph reaches past its advance.
+static bool MeasureAdvances(XFONT *font, FontAtlas &atlas)
+{
     for (int g = 0; g < FONT_GLYPH_COUNT; g++)
     {
         const wchar_t pair[2] = {(wchar_t)(FONT_FIRST_CHAR + g), (wchar_t)(FONT_FIRST_CHAR + g)};
         unsigned one = 0;
         unsigned two = 0;
-        if (FAILED(pFont->GetTextExtent(pair, 1, &one)) || FAILED(pFont->GetTextExtent(pair, 2, &two)) || two < one || two - one > 255)
+        if (FAILED(font->GetTextExtent(pair, 1, &one)) || FAILED(font->GetTextExtent(pair, 2, &two)) || two < one || two - one > 255)
         {
             return false;
         }
         atlas.advance[g] = (short)(two - one);
     }
-    atlas.pad = cell / 3 + 1;
+    return true;
+}
 
-    // Slots in rows, two pixels apart; the smallest texture they fit in
-    int width = 128;
-    int height = 0;
-    while (true)
+// Lays the slots out in rows across width, two pixels apart. The height the
+// rows take; 0 if a slot is wider than width.
+static int PlaceGlyphs(FontAtlas &atlas, int width)
+{
+    int x = 0;
+    int y = 0;
+    for (int g = 0; g < FONT_GLYPH_COUNT; g++)
     {
-        int x = 0;
-        int y = 0;
-        bool fits = true;
-        for (int g = 0; g < FONT_GLYPH_COUNT && fits; g++)
+        const int slot = atlas.advance[g] + 2 * atlas.pad;
+        if (slot > width)
         {
-            const int slot = atlas.advance[g] + 2 * atlas.pad;
-            if (slot > width)
-            {
-                fits = false;
-                break;
-            }
-            if (x + slot > width)
-            {
-                x = 0;
-                y += cell + 2;
-            }
-            atlas.u[g] = (short)x;
-            atlas.v[g] = (short)y;
-            x += slot + 2;
+            return 0;
         }
-        height = 1;
-        while (height < y + cell)
+        if (x + slot > width)
         {
-            height *= 2;
+            x = 0;
+            y += atlas.cell + 2;
         }
-        if (fits && height <= width)
+        atlas.u[g] = (short)x;
+        atlas.v[g] = (short)y;
+        x += slot + 2;
+    }
+    return y + atlas.cell;
+}
+
+static int PowerOfTwoAtLeast(int value)
+{
+    int power = 1;
+    while (power < value)
+    {
+        power *= 2;
+    }
+    return power;
+}
+
+// The smallest texture the slots fit in, up to 2048 wide
+static bool PackGlyphs(FontAtlas &atlas)
+{
+    atlas.pad = atlas.cell / 3 + 1;
+    for (int width = 128; width <= 2048; width *= 2)
+    {
+        const int rows_height = PlaceGlyphs(atlas, width);
+        const int height = PowerOfTwoAtLeast(rows_height);
+        if (rows_height > 0 && height <= width)
         {
-            break;
-        }
-        width *= 2;
-        if (width > 2048)
-        {
-            return false;
+            atlas.width = width;
+            atlas.height = height;
+            return true;
         }
     }
-    atlas.width = width;
-    atlas.height = height;
+    return false;
+}
 
-    // White on black: each pixel's brightness is the coverage
-    DWORD *pixels = (DWORD *)malloc(width * height * sizeof(DWORD));
-    if (pixels == NULL)
-    {
-        return false;
-    }
-    memset(pixels, 0, width * height * sizeof(DWORD));
-
-    // One character at a time in a scratch area, only its slot copied: one
-    // drawing past its slot can't mark another's
+// White on black: each pixel's brightness is the coverage. One character at a
+// time in a scratch area, only its slot copied: one drawing past its slot
+// can't mark another's.
+static bool DrawGlyphs(XFONT *font, const FontAtlas &atlas, DWORD *pixels)
+{
+    const int cell = atlas.cell;
     const int scratch_width = 2 * cell + atlas.pad * 2 + 256;
     const int scratch_height = 3 * cell;
-    DWORD *scratch = (DWORD *)malloc(scratch_width * scratch_height * sizeof(DWORD));
-    if (scratch == NULL)
+    PixelBuffer scratch(scratch_width * scratch_height);
+    if (!scratch.IsAllocated())
     {
-        free(pixels);
         return false;
     }
 
-    pFont->SetTextColor(D3DCOLOR_XRGB(255, 255, 255));
-    pFont->SetBkMode(XFONT_TRANSPARENT);
-    pFont->SetTextAlignment(XFONT_TOP | XFONT_LEFT);
+    font->SetTextColor(D3DCOLOR_XRGB(255, 255, 255));
+    font->SetBkMode(XFONT_TRANSPARENT);
+    font->SetTextAlignment(XFONT_TOP | XFONT_LEFT);
     for (int g = 0; g < FONT_GLYPH_COUNT; g++)
     {
         const wchar_t ch = (wchar_t)(FONT_FIRST_CHAR + g);
         const int slot = atlas.advance[g] + 2 * atlas.pad;
-        memset(scratch, 0, scratch_width * scratch_height * sizeof(DWORD));
-        pFont->TextOutToMemory(scratch, scratch_width * sizeof(DWORD), scratch_width, scratch_height, D3DFMT_LIN_X8R8G8B8, &ch, 1, cell + atlas.pad, cell);
+        scratch.Clear();
+        font->TextOutToMemory(scratch.Get(), scratch_width * sizeof(DWORD), scratch_width, scratch_height, D3DFMT_LIN_X8R8G8B8, &ch, 1, cell + atlas.pad, cell);
         for (int row = 0; row < cell; row++)
         {
-            memcpy(&pixels[(atlas.v[g] + row) * width + atlas.u[g]], &scratch[(cell + row) * scratch_width + cell], slot * sizeof(DWORD));
+            memcpy(&pixels[(atlas.v[g] + row) * atlas.width + atlas.u[g]], &scratch.Get()[(cell + row) * scratch_width + cell], slot * sizeof(DWORD));
         }
     }
-    free(scratch);
+    return true;
+}
 
-    // White, with the coverage as the alpha
+// White, with the coverage (the brightest channel) as the alpha. False if
+// nothing was drawn.
+static bool CoverageToAlpha(DWORD *pixels, int count)
+{
     bool any = false;
-    for (int i = 0; i < width * height; i++)
+    for (int i = 0; i < count; i++)
     {
         const DWORD p = pixels[i];
         DWORD a = (p >> 16) & 0xFF;
@@ -397,71 +435,92 @@ bool Renderer::BuildFontAtlas(int font)
         any = any || (a != 0);
         pixels[i] = (a << 24) | 0x00FFFFFF;
     }
+    return any;
+}
 
-    // Nothing drawn: XFONT can't draw to memory here, keep using it directly
-    if (!any || FAILED(m_pDevice->CreateTexture(width, height, 1, 0, D3DFMT_A8R8G8B8, 0, &atlas.texture)))
+bool Renderer::BuildFontAtlas(int font)
+{
+    FontAtlas &atlas = m_atlases[font];
+    XFONT *pFont = m_fonts[font];
+    atlas.cell = m_font_heights[font];
+    if (pFont == NULL || atlas.cell <= 0 || !MeasureAdvances(pFont, atlas) || !PackGlyphs(atlas))
     {
-        atlas.texture = NULL;
-        free(pixels);
         return false;
     }
 
+    PixelBuffer pixels(atlas.width * atlas.height);
+    if (!pixels.IsAllocated() || !DrawGlyphs(pFont, atlas, pixels.Get()))
+    {
+        return false;
+    }
+    // Nothing drawn: XFONT can't draw to memory here, keep using it directly
+    if (!CoverageToAlpha(pixels.Get(), atlas.width * atlas.height))
+    {
+        return false;
+    }
+    return UploadAtlas(atlas, pixels.Get());
+}
+
+bool Renderer::UploadAtlas(FontAtlas &atlas, const DWORD *pixels)
+{
+    if (FAILED(m_device->CreateTexture(atlas.width, atlas.height, 1, 0, D3DFMT_A8R8G8B8, 0, &atlas.texture)))
+    {
+        atlas.texture = NULL;
+        return false;
+    }
     D3DLOCKED_RECT locked;
     if (FAILED(atlas.texture->LockRect(0, &locked, NULL, 0)))
     {
         atlas.texture->Release();
         atlas.texture = NULL;
-        free(pixels);
         return false;
     }
     // Textures are swizzled on the Xbox
-    XGSwizzleRect(pixels, 0, NULL, locked.pBits, width, height, NULL, sizeof(DWORD));
+    XGSwizzleRect(pixels, 0, NULL, locked.pBits, atlas.width, atlas.height, NULL, sizeof(DWORD));
     atlas.texture->UnlockRect(0);
-
-    free(pixels);
     return true;
 }
 
 void Renderer::Shutdown()
 {
-    if (m_pBackgroundTexture)
+    if (m_background_texture)
     {
-        m_pBackgroundTexture->Release();
-        m_pBackgroundTexture = NULL;
+        m_background_texture->Release();
+        m_background_texture = NULL;
     }
-    m_BackgroundTextureTheme = -1;
+    m_background_texture_theme = -1;
 
     for (int i = 0; i < FONT_COUNT; i++)
     {
-        if (m_Atlases[i].texture)
+        if (m_atlases[i].texture)
         {
-            m_Atlases[i].texture->Release();
-            m_Atlases[i].texture = NULL;
+            m_atlases[i].texture->Release();
+            m_atlases[i].texture = NULL;
         }
 
-        if (m_pFonts[i])
+        if (m_fonts[i])
         {
-            m_pFonts[i]->Release();
-            m_pFonts[i] = NULL;
+            m_fonts[i]->Release();
+            m_fonts[i] = NULL;
         }
     }
 
-    if (m_pDevice)
+    if (m_device)
     {
-        m_pDevice->Release();
-        m_pDevice = NULL;
+        m_device->Release();
+        m_device = NULL;
     }
 
-    if (m_pD3D)
+    if (m_d3d)
     {
-        m_pD3D->Release();
-        m_pD3D = NULL;
+        m_d3d->Release();
+        m_d3d = NULL;
     }
 }
 
 LPCWSTR Renderer::GetVideoModeName() const
 {
-    switch (m_VideoMode)
+    switch (m_video_mode)
     {
     case VIDEO_MODE_720P:
         return L"720p";
@@ -475,23 +534,38 @@ LPCWSTR Renderer::GetVideoModeName() const
 void Renderer::BeginFrame()
 {
     FlushText();
-    m_pDevice->Clear(0, NULL, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, GetTheme().background, 1.0f, 0);
+    m_device->Clear(0, NULL, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, GetTheme().background, 1.0f, 0);
 
-    m_pDevice->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
-    m_pDevice->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
-    m_pDevice->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
+    m_device->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
+    m_device->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
+    m_device->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
 
-    m_pDevice->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_SELECTARG1);
-    m_pDevice->SetTextureStageState(0, D3DTSS_ALPHAARG1, D3DTA_TEXTURE);
-    m_pDevice->SetTextureStageState(0, D3DTSS_ALPHAARG2, D3DTA_TFACTOR);
-    m_pDevice->SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_MODULATE);
-    m_pDevice->SetRenderState(D3DRS_TEXTUREFACTOR, D3DCOLOR_ARGB(255, 255, 255, 255));
+    m_device->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_SELECTARG1);
+    m_device->SetTextureStageState(0, D3DTSS_ALPHAARG1, D3DTA_TEXTURE);
+    m_device->SetTextureStageState(0, D3DTSS_ALPHAARG2, D3DTA_TFACTOR);
+    m_device->SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_MODULATE);
+    m_device->SetRenderState(D3DRS_TEXTUREFACTOR, D3DCOLOR_ARGB(255, 255, 255, 255));
 }
 
 void Renderer::EndFrame()
 {
     FlushText();
-    m_pDevice->Present(NULL, NULL, NULL, NULL);
+    m_device->Present(NULL, NULL, NULL, NULL);
+}
+
+// How far left of x the text starts, for its XFONT_LEFT, XFONT_CENTER or
+// XFONT_RIGHT alignment
+static long AlignmentShift(int width, int align)
+{
+    if ((align & XFONT_CENTER) == XFONT_CENTER)
+    {
+        return width / 2;
+    }
+    if (align & XFONT_RIGHT)
+    {
+        return width;
+    }
+    return 0;
 }
 
 void Renderer::Text(Font font, LPCWSTR text, int x, int y, Color color, int align)
@@ -506,124 +580,134 @@ void Renderer::Text(Font font, LPCWSTR text, int x, int y, Color color, int alig
     }
 
     // Fonts are already sized for the mode: only the offset
-    long screen_x = (long)(ToScreenX((FLOAT)x) + 0.5f);
-    const long screen_y = (long)(ToScreenY((FLOAT)y) + 0.5f);
+    POINT pen;
+    pen.x = (long)(ToScreenX((FLOAT)x) + 0.5f);
+    pen.y = (long)(ToScreenY((FLOAT)y) + 0.5f);
 
-    const FontAtlas &atlas = m_Atlases[font];
+    const FontAtlas &atlas = m_atlases[font];
     if (atlas.texture == NULL)
     {
         // XFONT draws with the CPU: the GPU text before it goes first
         FlushText();
-        TextXFont(font, text, screen_x, screen_y, color, align);
+        TextXFont(font, text, pen.x, pen.y, color, align);
         return;
     }
 
     const int width = TextWidth(font, text);
-    if ((align & XFONT_CENTER) == XFONT_CENTER)
-    {
-        screen_x -= width / 2;
-    }
-    else if (align & XFONT_RIGHT)
-    {
-        screen_x -= width;
-    }
-
+    pen.x -= AlignmentShift(width, align);
     const Theme &theme = GetTheme();
-    const int cell = m_FontHeights[font];
     if (g_ColorOpaque[color])
     {
-        ScreenRect((FLOAT)screen_x, (FLOAT)screen_y, (FLOAT)(screen_x + width), (FLOAT)(screen_y + cell), theme.text_background, theme.text_background);
+        ScreenRect((FLOAT)pen.x, (FLOAT)pen.y, (FLOAT)(pen.x + width), (FLOAT)(pen.y + atlas.cell), theme.text_background, theme.text_background);
     }
 
-    if (m_TextBatchFont != font)
+    if (m_text_batch_font != font)
     {
         FlushText();
-        m_TextBatchFont = font;
+        m_text_batch_font = font;
     }
+    BatchText(text, pen, theme.text[color]);
+}
 
-    // Two triangles per character, its slot placed pad pixels left of the pen
-    const D3DCOLOR diffuse = theme.text[color];
+// Where a character goes: its slot placed pad pixels left of the pen, and
+// where that slot is in the texture
+struct GlyphQuad
+{
+    FLOAT x1, y1, x2, y2;
+    FLOAT u1, v1, u2, v2;
+};
+
+static GlyphQuad GlyphQuadAt(const FontAtlas &atlas, int glyph, POINT pen)
+{
+    const int slot = atlas.advance[glyph] + 2 * atlas.pad;
     const FLOAT tex_w = (FLOAT)atlas.width;
     const FLOAT tex_h = (FLOAT)atlas.height;
-    long pen = screen_x;
+    GlyphQuad quad;
+    // -0.5: pixel centers, like ScreenRect
+    quad.x1 = (FLOAT)(pen.x - atlas.pad) - 0.5f;
+    quad.y1 = (FLOAT)pen.y - 0.5f;
+    quad.x2 = quad.x1 + slot;
+    quad.y2 = quad.y1 + atlas.cell;
+    quad.u1 = atlas.u[glyph] / tex_w;
+    quad.v1 = atlas.v[glyph] / tex_h;
+    quad.u2 = (atlas.u[glyph] + slot) / tex_w;
+    quad.v2 = (atlas.v[glyph] + atlas.cell) / tex_h;
+    return quad;
+}
+
+// Two triangles
+static void WriteQuad(TextVertex *q, const GlyphQuad &quad, D3DCOLOR color)
+{
+    q[0].pos = D3DXVECTOR4(quad.x1, quad.y1, 1.0f, 1.0f);
+    q[0].u = quad.u1;
+    q[0].v = quad.v1;
+    q[1].pos = D3DXVECTOR4(quad.x2, quad.y1, 1.0f, 1.0f);
+    q[1].u = quad.u2;
+    q[1].v = quad.v1;
+    q[2].pos = D3DXVECTOR4(quad.x1, quad.y2, 1.0f, 1.0f);
+    q[2].u = quad.u1;
+    q[2].v = quad.v2;
+    q[3].pos = D3DXVECTOR4(quad.x2, quad.y1, 1.0f, 1.0f);
+    q[3].u = quad.u2;
+    q[3].v = quad.v1;
+    q[4].pos = D3DXVECTOR4(quad.x2, quad.y2, 1.0f, 1.0f);
+    q[4].u = quad.u2;
+    q[4].v = quad.v2;
+    q[5].pos = D3DXVECTOR4(quad.x1, quad.y2, 1.0f, 1.0f);
+    q[5].u = quad.u1;
+    q[5].v = quad.v2;
+    for (int k = 0; k < 6; k++)
+    {
+        q[k].color = color;
+    }
+}
+
+void Renderer::BatchText(LPCWSTR text, POINT pen, D3DCOLOR color)
+{
+    const FontAtlas &atlas = m_atlases[m_text_batch_font];
     for (int i = 0; text[i] != L'\0' && i < TEXT_MAX_CHARS; i++)
     {
         const int g = glyph_index(text[i]);
         if (text[i] != L' ')
         {
-            if (m_TextBatchCount + 6 > TEXT_BATCH_VERTICES)
+            if (m_text_batch_count + 6 > TEXT_BATCH_VERTICES)
             {
-                FlushText();
-                m_TextBatchFont = font;
+                FlushText(); // Keeps the batch's font
             }
-
-            const int slot = atlas.advance[g] + 2 * atlas.pad;
-            // -0.5: pixel centers, like ScreenRect
-            const FLOAT x1 = (FLOAT)(pen - atlas.pad) - 0.5f;
-            const FLOAT y1 = (FLOAT)screen_y - 0.5f;
-            const FLOAT x2 = x1 + slot;
-            const FLOAT y2 = y1 + cell;
-            const FLOAT u1 = atlas.u[g] / tex_w;
-            const FLOAT v1 = atlas.v[g] / tex_h;
-            const FLOAT u2 = (atlas.u[g] + slot) / tex_w;
-            const FLOAT v2 = (atlas.v[g] + cell) / tex_h;
-
-            TextVertex *q = &g_TextBatch[m_TextBatchCount];
-            q[0].pos = D3DXVECTOR4(x1, y1, 1.0f, 1.0f);
-            q[0].u = u1;
-            q[0].v = v1;
-            q[1].pos = D3DXVECTOR4(x2, y1, 1.0f, 1.0f);
-            q[1].u = u2;
-            q[1].v = v1;
-            q[2].pos = D3DXVECTOR4(x1, y2, 1.0f, 1.0f);
-            q[2].u = u1;
-            q[2].v = v2;
-            q[3].pos = D3DXVECTOR4(x2, y1, 1.0f, 1.0f);
-            q[3].u = u2;
-            q[3].v = v1;
-            q[4].pos = D3DXVECTOR4(x2, y2, 1.0f, 1.0f);
-            q[4].u = u2;
-            q[4].v = v2;
-            q[5].pos = D3DXVECTOR4(x1, y2, 1.0f, 1.0f);
-            q[5].u = u1;
-            q[5].v = v2;
-            for (int k = 0; k < 6; k++)
-            {
-                q[k].color = diffuse;
-            }
-            m_TextBatchCount += 6;
+            WriteQuad(&g_TextBatch[m_text_batch_count], GlyphQuadAt(atlas, g, pen), color);
+            m_text_batch_count += 6;
         }
-        pen += atlas.advance[g];
+        pen.x += atlas.advance[g];
     }
 }
 
 void Renderer::FlushText()
 {
-    if (m_TextBatchCount == 0)
+    if (m_text_batch_count == 0)
     {
         return;
     }
-    const FontAtlas &atlas = m_Atlases[m_TextBatchFont];
+    const FontAtlas &atlas = m_atlases[m_text_batch_font];
 
     // Texture times the text color, blended by the coverage; pixel exact
-    m_pDevice->SetTexture(0, atlas.texture);
-    m_pDevice->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_MODULATE);
-    m_pDevice->SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_TEXTURE);
-    m_pDevice->SetTextureStageState(0, D3DTSS_COLORARG2, D3DTA_DIFFUSE);
-    m_pDevice->SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_MODULATE);
-    m_pDevice->SetTextureStageState(0, D3DTSS_ALPHAARG1, D3DTA_TEXTURE);
-    m_pDevice->SetTextureStageState(0, D3DTSS_ALPHAARG2, D3DTA_DIFFUSE);
-    m_pDevice->SetTextureStageState(0, D3DTSS_MINFILTER, D3DTEXF_POINT);
-    m_pDevice->SetTextureStageState(0, D3DTSS_MAGFILTER, D3DTEXF_POINT);
-    m_pDevice->SetTextureStageState(0, D3DTSS_ADDRESSU, D3DTADDRESS_CLAMP);
-    m_pDevice->SetTextureStageState(0, D3DTSS_ADDRESSV, D3DTADDRESS_CLAMP);
-    m_pDevice->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
-    m_pDevice->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
-    m_pDevice->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
-    m_pDevice->SetVertexShader(D3DFVF_TEXTVERTEX);
-    m_pDevice->DrawPrimitiveUP(D3DPT_TRIANGLELIST, m_TextBatchCount / 3, g_TextBatch, sizeof(TextVertex));
-    m_pDevice->SetTexture(0, NULL);
-    m_TextBatchCount = 0;
+    m_device->SetTexture(0, atlas.texture);
+    m_device->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_MODULATE);
+    m_device->SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_TEXTURE);
+    m_device->SetTextureStageState(0, D3DTSS_COLORARG2, D3DTA_DIFFUSE);
+    m_device->SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_MODULATE);
+    m_device->SetTextureStageState(0, D3DTSS_ALPHAARG1, D3DTA_TEXTURE);
+    m_device->SetTextureStageState(0, D3DTSS_ALPHAARG2, D3DTA_DIFFUSE);
+    m_device->SetTextureStageState(0, D3DTSS_MINFILTER, D3DTEXF_POINT);
+    m_device->SetTextureStageState(0, D3DTSS_MAGFILTER, D3DTEXF_POINT);
+    m_device->SetTextureStageState(0, D3DTSS_ADDRESSU, D3DTADDRESS_CLAMP);
+    m_device->SetTextureStageState(0, D3DTSS_ADDRESSV, D3DTADDRESS_CLAMP);
+    m_device->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
+    m_device->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
+    m_device->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
+    m_device->SetVertexShader(D3DFVF_TEXTVERTEX);
+    m_device->DrawPrimitiveUP(D3DPT_TRIANGLELIST, m_text_batch_count / 3, g_TextBatch, sizeof(TextVertex));
+    m_device->SetTexture(0, NULL);
+    m_text_batch_count = 0;
 }
 
 int Renderer::TextWidth(Font font, LPCWSTR text) const
@@ -633,11 +717,11 @@ int Renderer::TextWidth(Font font, LPCWSTR text) const
         font = FONT_TEXT;
     }
 
-    const FontAtlas &atlas = m_Atlases[font];
+    const FontAtlas &atlas = m_atlases[font];
     if (atlas.texture == NULL)
     {
         unsigned width = 0;
-        if (m_pFonts[font] == NULL || FAILED(m_pFonts[font]->GetTextExtent(text, (unsigned)-1, &width)))
+        if (m_fonts[font] == NULL || FAILED(m_fonts[font]->GetTextExtent(text, (unsigned)-1, &width)))
         {
             return 0;
         }
@@ -654,7 +738,7 @@ int Renderer::TextWidth(Font font, LPCWSTR text) const
 
 void Renderer::TextXFont(Font font, LPCWSTR text, long screen_x, long screen_y, Color color, int align)
 {
-    XFONT *pFont = m_pFonts[font];
+    XFONT *pFont = m_fonts[font];
     if (pFont == NULL)
     {
         return;
@@ -674,24 +758,24 @@ void Renderer::TextXFont(Font font, LPCWSTR text, long screen_x, long screen_y, 
     pFont->SetTextAlignment(XFONT_TOP | align);
 
     LPDIRECT3DSURFACE8 pBackBuffer;
-    m_pDevice->GetBackBuffer(0, D3DBACKBUFFER_TYPE_MONO, &pBackBuffer);
+    m_device->GetBackBuffer(0, D3DBACKBUFFER_TYPE_MONO, &pBackBuffer);
     pFont->TextOut(pBackBuffer, text, -1, screen_x, screen_y);
     pBackBuffer->Release();
 }
 
 int Renderer::FontHeight(Font font) const
 {
-    return (font >= 0 && font < FONT_COUNT) ? m_FontHeights[font] : 0;
+    return (font >= 0 && font < FONT_COUNT) ? m_font_heights[font] : 0;
 }
 
 int Renderer::FontDescent(Font font) const
 {
-    return (font >= 0 && font < FONT_COUNT) ? m_FontDescents[font] : 0;
+    return (font >= 0 && font < FONT_COUNT) ? m_font_descents[font] : 0;
 }
 
 int Renderer::FontCapHeight(Font font) const
 {
-    return (font >= 0 && font < FONT_COUNT) ? m_FontCapHeights[font] : 0;
+    return (font >= 0 && font < FONT_COUNT) ? m_font_cap_heights[font] : 0;
 }
 
 void Renderer::Rect(FLOAT x1, FLOAT y1, FLOAT x2, FLOAT y2, D3DCOLOR top_color, D3DCOLOR bottom_color)
@@ -710,87 +794,110 @@ void Renderer::Outline(FLOAT x1, FLOAT y1, FLOAT x2, FLOAT y2, D3DCOLOR color)
 // After a pause (a slow operation), carry on instead of jumping
 static const DWORD BACKGROUND_MAX_STEP_MS = 250;
 
+// The background's mesh and gradient (static: too big for the stack). The
+// gradient is kept between frames, for the vertex colors.
+struct BackgroundBuffers
+{
+    FLOAT xy[BACKGROUND_VERTEX_COUNT * 2];
+    FLOAT uv[BACKGROUND_VERTEX_COUNT * 2];
+    TextVertex vertices[BACKGROUND_VERTEX_COUNT];
+    DWORD gradient[BACKGROUND_GRADIENT_WIDTH * BACKGROUND_GRADIENT_HEIGHT];
+};
+static BackgroundBuffers g_Background;
+
+// The mesh's first count corners as vertices
+static void FillBackgroundVertices(BackgroundBuffers &buffers, int count)
+{
+    for (int i = 0; i < count; i++)
+    {
+        TextVertex &vertex = buffers.vertices[i];
+        vertex.pos = D3DXVECTOR4(buffers.xy[i * 2] - 0.5f, buffers.xy[i * 2 + 1] - 0.5f, 1.0f, 1.0f);
+        vertex.u = buffers.uv[i * 2];
+        vertex.v = buffers.uv[i * 2 + 1];
+        // Without the texture: the gradient color at the corner (middle dither row)
+        int texel = (int)(buffers.uv[i * 2] * BACKGROUND_GRADIENT_WIDTH);
+        texel = (texel < 0) ? 0 : (texel >= BACKGROUND_GRADIENT_WIDTH) ? BACKGROUND_GRADIENT_WIDTH - 1 : texel;
+        vertex.color = buffers.gradient[(BACKGROUND_DITHER_ROWS / 2) * BACKGROUND_GRADIENT_WIDTH + texel];
+    }
+}
+
 void Renderer::DrawBackground()
 {
     FlushText();
-
-    static FLOAT xy[BACKGROUND_VERTEX_COUNT * 2];
-    static FLOAT uv[BACKGROUND_VERTEX_COUNT * 2];
-    static TextVertex vertices[BACKGROUND_VERTEX_COUNT];
-    static DWORD gradient[BACKGROUND_GRADIENT_WIDTH * BACKGROUND_GRADIENT_HEIGHT];
-
-    // The gradient, again when the theme changed
-    const Theme &theme = GetTheme();
-    if (m_BackgroundTextureTheme != m_ThemeIndex)
+    if (m_background_texture_theme != m_theme_index)
     {
-        build_background_gradient(theme.background, theme.map_standard, gradient);
-        if (m_pBackgroundTexture == NULL &&
-            FAILED(m_pDevice->CreateTexture(BACKGROUND_GRADIENT_WIDTH, BACKGROUND_GRADIENT_HEIGHT, 1, 0, D3DFMT_A8R8G8B8, 0, &m_pBackgroundTexture)))
-        {
-            m_pBackgroundTexture = NULL;
-        }
-        D3DLOCKED_RECT locked;
-        if (m_pBackgroundTexture != NULL && SUCCEEDED(m_pBackgroundTexture->LockRect(0, &locked, NULL, 0)))
-        {
-            XGSwizzleRect(gradient, 0, NULL, locked.pBits, BACKGROUND_GRADIENT_WIDTH, BACKGROUND_GRADIENT_HEIGHT, NULL, sizeof(DWORD));
-            m_pBackgroundTexture->UnlockRect(0);
-        }
-        m_BackgroundTextureTheme = m_ThemeIndex;
+        RebuildBackgroundGradient();
     }
+    AdvanceBackgroundClock();
 
-    const DWORD now = GetTickCount();
-    if (m_BackgroundTick != 0)
+    const int count = BuildBackgroundMesh((FLOAT)m_width, (FLOAT)m_height, m_background_seconds, g_Background.xy, g_Background.uv);
+    FillBackgroundVertices(g_Background, count);
+
+    SetBackgroundTextureStages();
+    m_device->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
+    m_device->SetVertexShader(D3DFVF_TEXTVERTEX);
+    m_device->DrawPrimitiveUP(D3DPT_TRIANGLELIST, count / 3, g_Background.vertices, sizeof(TextVertex));
+    m_device->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
+    m_device->SetTexture(0, NULL);
+}
+
+void Renderer::RebuildBackgroundGradient()
+{
+    const Theme &theme = GetTheme();
+    BuildBackgroundGradient(theme.background, theme.map_standard, g_Background.gradient);
+    if (m_background_texture == NULL &&
+        FAILED(m_device->CreateTexture(BACKGROUND_GRADIENT_WIDTH, BACKGROUND_GRADIENT_HEIGHT, 1, 0, D3DFMT_A8R8G8B8, 0, &m_background_texture)))
     {
-        DWORD elapsed = now - m_BackgroundTick;
+        m_background_texture = NULL;
+    }
+    D3DLOCKED_RECT locked;
+    if (m_background_texture != NULL && SUCCEEDED(m_background_texture->LockRect(0, &locked, NULL, 0)))
+    {
+        XGSwizzleRect(g_Background.gradient, 0, NULL, locked.pBits, BACKGROUND_GRADIENT_WIDTH, BACKGROUND_GRADIENT_HEIGHT, NULL, sizeof(DWORD));
+        m_background_texture->UnlockRect(0);
+    }
+    m_background_texture_theme = m_theme_index;
+}
+
+void Renderer::AdvanceBackgroundClock()
+{
+    const DWORD now = GetTickCount();
+    if (m_background_tick != 0)
+    {
+        DWORD elapsed = now - m_background_tick;
         if (elapsed > BACKGROUND_MAX_STEP_MS)
         {
             elapsed = BACKGROUND_MAX_STEP_MS;
         }
-        m_BackgroundSeconds += elapsed / 1000.0;
+        m_background_seconds += elapsed / 1000.0;
     }
-    m_BackgroundTick = now;
+    m_background_tick = now;
+}
 
-    const int count = build_background_mesh((FLOAT)m_Width, (FLOAT)m_Height, m_BackgroundSeconds, xy, uv);
-
-    for (int i = 0; i < count; i++)
-    {
-        TextVertex &vertex = vertices[i];
-        vertex.pos = D3DXVECTOR4(xy[i * 2] - 0.5f, xy[i * 2 + 1] - 0.5f, 1.0f, 1.0f);
-        vertex.u = uv[i * 2];
-        vertex.v = uv[i * 2 + 1];
-        // Without the texture: the gradient color at the corner (middle dither row)
-        int texel = (int)(uv[i * 2] * BACKGROUND_GRADIENT_WIDTH);
-        texel = (texel < 0) ? 0 : (texel >= BACKGROUND_GRADIENT_WIDTH) ? BACKGROUND_GRADIENT_WIDTH - 1 : texel;
-        vertex.color = gradient[(BACKGROUND_DITHER_ROWS / 2) * BACKGROUND_GRADIENT_WIDTH + texel];
-    }
-
-    if (m_pBackgroundTexture != NULL)
+void Renderer::SetBackgroundTextureStages()
+{
+    if (m_background_texture != NULL)
     {
         // Exact texels (the dithering is in them), the dither rows repeating down
-        m_pDevice->SetTexture(0, m_pBackgroundTexture);
-        m_pDevice->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_SELECTARG1);
-        m_pDevice->SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_TEXTURE);
-        m_pDevice->SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_SELECTARG1);
-        m_pDevice->SetTextureStageState(0, D3DTSS_ALPHAARG1, D3DTA_TEXTURE);
-        m_pDevice->SetTextureStageState(0, D3DTSS_MINFILTER, D3DTEXF_POINT);
-        m_pDevice->SetTextureStageState(0, D3DTSS_MAGFILTER, D3DTEXF_POINT);
-        m_pDevice->SetTextureStageState(0, D3DTSS_ADDRESSU, D3DTADDRESS_CLAMP);
-        m_pDevice->SetTextureStageState(0, D3DTSS_ADDRESSV, D3DTADDRESS_WRAP);
+        m_device->SetTexture(0, m_background_texture);
+        m_device->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_SELECTARG1);
+        m_device->SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_TEXTURE);
+        m_device->SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_SELECTARG1);
+        m_device->SetTextureStageState(0, D3DTSS_ALPHAARG1, D3DTA_TEXTURE);
+        m_device->SetTextureStageState(0, D3DTSS_MINFILTER, D3DTEXF_POINT);
+        m_device->SetTextureStageState(0, D3DTSS_MAGFILTER, D3DTEXF_POINT);
+        m_device->SetTextureStageState(0, D3DTSS_ADDRESSU, D3DTADDRESS_CLAMP);
+        m_device->SetTextureStageState(0, D3DTSS_ADDRESSV, D3DTADDRESS_WRAP);
     }
     else
     {
-        m_pDevice->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_DISABLE);
+        m_device->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_DISABLE);
     }
-    m_pDevice->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
-    m_pDevice->SetVertexShader(D3DFVF_TEXTVERTEX);
-    m_pDevice->DrawPrimitiveUP(D3DPT_TRIANGLELIST, count / 3, vertices, sizeof(TextVertex));
-    m_pDevice->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
-    m_pDevice->SetTexture(0, NULL);
 }
 
 void Renderer::FillScreen(D3DCOLOR color)
 {
-    ScreenRect(0.0f, 0.0f, (FLOAT)m_Width, (FLOAT)m_Height, color, color);
+    ScreenRect(0.0f, 0.0f, (FLOAT)m_width, (FLOAT)m_height, color, color);
 }
 
 void Renderer::ScreenRect(FLOAT x1, FLOAT y1, FLOAT x2, FLOAT y2, D3DCOLOR top_color, D3DCOLOR bottom_color)
@@ -807,11 +914,11 @@ void Renderer::ScreenRect(FLOAT x1, FLOAT y1, FLOAT x2, FLOAT y2, D3DCOLOR top_c
     v[3].pos = D3DXVECTOR4(x2 - 0.5f, y2 - 0.5f, 1.0f, 1.0f);
     v[3].color = bottom_color;
 
-    m_pDevice->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_DISABLE);
-    m_pDevice->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
-    m_pDevice->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
-    m_pDevice->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
+    m_device->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_DISABLE);
+    m_device->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
+    m_device->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
+    m_device->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
 
-    m_pDevice->SetVertexShader(D3DFVF_SCREENVERTEX);
-    m_pDevice->DrawPrimitiveUP(D3DPT_TRIANGLESTRIP, 2, v, sizeof(ScreenVertex));
+    m_device->SetVertexShader(D3DFVF_SCREENVERTEX);
+    m_device->DrawPrimitiveUP(D3DPT_TRIANGLESTRIP, 2, v, sizeof(ScreenVertex));
 }

@@ -4,7 +4,24 @@
 #include "xbpartitioner.h"
 #include "app_internal.h"
 
-// Order of the Start menu, must match labels[] in DisplayStartMenu()
+// Shows each theme while it is selected in the Theme menu
+class ThemePreview : public MenuPreview
+{
+  public:
+    explicit ThemePreview(Renderer &ui) : m_ui(ui)
+    {
+    }
+
+    void Preview(int item)
+    {
+        m_ui.SetTheme(item);
+    }
+
+  private:
+    Renderer &m_ui;
+};
+
+// Order of the Start menu, must match the labels in StartMenuItems
 enum MenuItem
 {
     MENU_EDIT_PARTITION = 0,
@@ -20,96 +37,109 @@ enum MenuItem
     MENU_ITEM_COUNT
 };
 
+// The Start menu's labels and enabled items, for the selected partition
+class StartMenuItems
+{
+  public:
+    StartMenuItems(int partition, const PartitionTableSession &session, const Settings &settings)
+    {
+        FillLabels(partition, session, settings);
+        FillEnabled(partition, session);
+    }
+
+    MenuRequest Request(int selected) const
+    {
+        const MenuRequest menu = {L"Menu", m_labels, m_enabled, MENU_ITEM_COUNT, selected, MENU_FOOTER_TOP_LEVEL, NULL};
+        return menu;
+    }
+
+  private:
+    void FillLabels(int partition, const PartitionTableSession &session, const Settings &settings)
+    {
+        swprintf(m_edit_label, L"Edit partition %d (%c)", partition + 1, PartitionLetter(partition));
+        swprintf(m_format_label, L"Format partition %d (%d KB clusters)", partition + 1, session.Edited().CalculateClusterSizeForPartition(partition));
+        swprintf(m_check_label, L"Check file system on partition %d", partition + 1);
+
+        m_labels[MENU_EDIT_PARTITION] = m_edit_label;
+        m_labels[MENU_FORMAT_SELECTED] = m_format_label;
+        m_labels[MENU_CHECK_SELECTED] = m_check_label;
+        m_labels[MENU_UNDO_ALL] = L"Undo all changes since the last write";
+        m_labels[MENU_PARTITION_TABLE] = L"Partition table...";
+        m_labels[MENU_SYSTEM_INFO] = L"System information";
+        m_labels[MENU_RESIZE_KEEPS_DATA] = settings.ResizeKeepsData() ? L"Resizing keeps data: On" : L"Resizing keeps data: Off";
+        m_labels[MENU_THEME] = L"Theme...";
+        m_labels[MENU_ABOUT] = L"About";
+        m_labels[MENU_EXIT] = L"Exit to dashboard";
+    }
+
+    void FillEnabled(int partition, const PartitionTableSession &session)
+    {
+        for (int i = 0; i < MENU_ITEM_COUNT; i++)
+        {
+            m_enabled[i] = true;
+        }
+        m_enabled[MENU_FORMAT_SELECTED] = session.Edited().IsPartitionEnabled(partition);
+        // Checks what is on disk, i.e. the written table
+        m_enabled[MENU_CHECK_SELECTED] = session.InUse().IsPartitionEnabled(partition);
+        m_enabled[MENU_UNDO_ALL] = session.Changes().Any();
+    }
+
+    wchar_t m_edit_label[60];
+    wchar_t m_format_label[60];
+    wchar_t m_check_label[60];
+    LPCWSTR m_labels[MENU_ITEM_COUNT]; // Indexed by MenuItem
+    bool m_enabled[MENU_ITEM_COUNT];
+};
+
 void App::DisplayStartMenu()
 {
     // Coming back from a submenu: on the item they came from
     int selected = 0;
-
-    while (true)
+    do
     {
-        wchar_t edit_label[60];
-        swprintf(edit_label, L"Edit partition %d (%c)", m_CurrentPart + 1, partition_letter(m_CurrentPart));
+        const StartMenuItems items(m_main_screen.SelectedPartition(), m_session, m_settings);
+        selected = m_menus.Run(items.Request(selected));
+    } while (!HandleStartMenuChoice(selected));
+}
 
-        wchar_t format_label[60];
-        swprintf(format_label, L"Format partition %d (%d KB clusters)", m_CurrentPart + 1, m_pTable->CalculateClusterSizeForPartition(m_CurrentPart));
-
-        wchar_t check_label[60];
-        swprintf(check_label, L"Check file system on partition %d", m_CurrentPart + 1);
-
-        const LPCWSTR resize_label = m_ResizeKeepsData ? L"Resizing keeps data: On" : L"Resizing keeps data: Off";
-
-        // Indexed by MenuItem
-        const LPCWSTR labels[MENU_ITEM_COUNT] = {
-            edit_label,
-            format_label,
-            check_label,
-            L"Undo all changes since the last write",
-            L"Partition table...",
-            L"System information",
-            resize_label,
-            L"Theme...",
-            L"About",
-            L"Exit to dashboard",
-        };
-
-        bool enabled[MENU_ITEM_COUNT];
-        for (int i = 0; i < MENU_ITEM_COUNT; i++)
+bool App::HandleStartMenuChoice(int choice)
+{
+    switch (choice)
+    {
+    case MENU_EDIT_PARTITION:
+        m_editor.Run(m_main_screen.SelectedPartition());
+        return true;
+    case MENU_FORMAT_SELECTED:
+        m_writer.FormatOne(m_main_screen.SelectedPartition());
+        return true;
+    case MENU_CHECK_SELECTED:
+        m_fsck.CheckFileSystem(m_main_screen.SelectedPartition());
+        return true;
+    case MENU_PARTITION_TABLE:
+        return DisplayPartitionTableMenu();
+    case MENU_UNDO_ALL:
+        m_session.UndoAllChanges();
+        return true;
+    case MENU_SYSTEM_INFO:
+        m_info.ShowSystemInfo();
+        return true;
+    case MENU_RESIZE_KEEPS_DATA:
+        m_settings.ToggleResizeKeepsData();
+        SaveSettings();
+        return false; // Stays in the menu so the new state shows
+    case MENU_THEME:
+        return DisplayThemeMenu();
+    case MENU_ABOUT:
+        m_info.ShowAbout();
+        return true;
+    case MENU_EXIT:
+        if (ConfirmExit())
         {
-            enabled[i] = true;
+            QuitToDashboard();
         }
-        enabled[MENU_FORMAT_SELECTED] = m_pTable->isPartitionEnabled(m_CurrentPart);
-        // Checks what is on disk, i.e. the written table
-        enabled[MENU_CHECK_SELECTED] = m_pTableOriginal->isPartitionEnabled(m_CurrentPart);
-        enabled[MENU_UNDO_ALL] = CheckIfPartitionTableChanged();
-
-        selected = RunMenu(L"Menu", labels, enabled, MENU_ITEM_COUNT, selected, false);
-
-        switch (selected)
-        {
-        case MENU_EDIT_PARTITION:
-            DisplayEditPartition();
-            return;
-        case MENU_FORMAT_SELECTED:
-            DoFormatOne();
-            return;
-        case MENU_CHECK_SELECTED:
-            DoCheckFileSystem();
-            return;
-        case MENU_PARTITION_TABLE:
-            if (DisplayPartitionTableMenu())
-            {
-                return;
-            }
-            break; // Back: show this menu again
-        case MENU_UNDO_ALL:
-            UndoAllChanges();
-            return;
-        case MENU_SYSTEM_INFO:
-            DisplaySystemInfo();
-            return;
-        case MENU_RESIZE_KEEPS_DATA:
-            // Stays in the menu so the new state shows
-            m_ResizeKeepsData = !m_ResizeKeepsData;
-            SaveSettings();
-            break;
-        case MENU_THEME:
-            if (DisplayThemeMenu())
-            {
-                return;
-            }
-            break; // Back: show this menu again
-        case MENU_ABOUT:
-            DisplayAbout();
-            return;
-        case MENU_EXIT:
-            if (ConfirmExit())
-            {
-                QuitToDashboard();
-            }
-            return;
-        default:
-            return;
-        }
+        return true;
+    default:
+        return true;
     }
 }
 
@@ -131,16 +161,18 @@ bool App::DisplayThemeMenu()
         enabled[i] = true;
     }
 
-    const int original = m_Ui.GetThemeIndex();
-    const int chosen = RunMenu(L"Theme", labels, enabled, count, original, true, &App::PreviewTheme);
+    const int original = m_ui.GetThemeIndex();
+    ThemePreview preview(m_ui);
+    const MenuRequest menu = {L"Theme", labels, enabled, count, original, MENU_FOOTER_SUBMENU, &preview};
+    const int chosen = m_menus.Run(menu);
 
     if (chosen < 0)
     {
-        m_Ui.SetTheme(original);
+        m_ui.SetTheme(original);
         return chosen == MENU_RESULT_CLOSE;
     }
 
-    m_Ui.SetTheme(chosen);
+    m_ui.SetTheme(chosen);
     if (chosen != original)
     {
         SaveSettings();
@@ -183,17 +215,18 @@ bool App::DisplayPartitionTableMenu()
         bool loadable[LOADED_TABLE_COUNT];
         enabled[TABLE_MENU_LOAD_TABLE] = GetLoadableTables(loadable);
 
-        selected = RunMenu(L"Partition table", labels, enabled, TABLE_MENU_ITEM_COUNT, selected, true);
+        const MenuRequest menu = {L"Partition table", labels, enabled, TABLE_MENU_ITEM_COUNT, selected, MENU_FOOTER_SUBMENU, NULL};
+        selected = m_menus.Run(menu);
 
         switch (selected)
         {
         case MENU_RESULT_BACK:
             return false;
         case TABLE_MENU_WRITE:
-            DoWriteTable();
+            m_writer.WriteEditedTable();
             return true;
         case TABLE_MENU_WRITE_AND_FORMAT:
-            DoFormatAll();
+            m_writer.WriteAndFormatChanged();
             return true;
         case TABLE_MENU_NEW_TABLE:
             if (DisplayNewTableMenu())
@@ -208,7 +241,7 @@ bool App::DisplayPartitionTableMenu()
             }
             break; // Back: show this menu again
         case TABLE_MENU_ERASE:
-            DoEraseTable();
+            m_writer.EraseTables();
             return true;
         default:
             return true;
@@ -216,19 +249,10 @@ bool App::DisplayPartitionTableMenu()
     }
 }
 
-// Preset layouts, in the order of the New partition table menu (see ApplyPreset())
-enum Preset
-{
-    PRESET_STOCK = 0,
-    PRESET_F,
-    PRESET_F_G,
-    PRESET_COUNT
-};
-
 // Nothing is written. False if the user went back with B.
 bool App::DisplayNewTableMenu()
 {
-    // Indexed by Preset
+    // Indexed by TablePreset
     static const LPCWSTR labels[PRESET_COUNT] = {
         L"Stock partitions only",
         L"Stock + F (rest of the disk)",
@@ -237,7 +261,8 @@ bool App::DisplayNewTableMenu()
 
     static const bool enabled[PRESET_COUNT] = {true, true, true};
 
-    const int choice = RunMenu(L"New partition table", labels, enabled, PRESET_COUNT, 0, true);
+    const MenuRequest menu = {L"New partition table", labels, enabled, PRESET_COUNT, 0, MENU_FOOTER_SUBMENU, NULL};
+    const int choice = m_menus.Run(menu);
     if (choice == MENU_RESULT_BACK)
     {
         return false;
@@ -245,7 +270,7 @@ bool App::DisplayNewTableMenu()
 
     if (choice >= 0)
     {
-        ApplyPreset(choice);
+        m_session.ApplyPreset((TablePreset)choice);
     }
     return true;
 }
@@ -254,9 +279,9 @@ bool App::DisplayNewTableMenu()
 // would wipe the layout), the kernel's needs the patch. True if any can.
 bool App::GetLoadableTables(bool loadable[LOADED_TABLE_COUNT])
 {
-    loadable[LOADED_TABLE_KERNEL] = (m_pKernelTable != NULL);
-    loadable[LOADED_TABLE_HDD] = IsMainTableUsable();
-    loadable[LOADED_TABLE_HDD_BACKUP] = IsBackupTableUsable();
+    loadable[LOADED_TABLE_KERNEL] = (m_tables.HasLba48Patch());
+    loadable[LOADED_TABLE_HDD] = m_tables.IsMainTableUsable();
+    loadable[LOADED_TABLE_HDD_BACKUP] = m_tables.IsBackupTableUsable();
 
     return loadable[LOADED_TABLE_KERNEL] || loadable[LOADED_TABLE_HDD] || loadable[LOADED_TABLE_HDD_BACKUP];
 }
@@ -274,7 +299,8 @@ bool App::DisplayLoadTableMenu()
     bool loadable[LOADED_TABLE_COUNT];
     GetLoadableTables(loadable);
 
-    const int choice = RunMenu(L"Load partition table", labels, loadable, LOADED_TABLE_COUNT, 0, true);
+    const MenuRequest menu = {L"Load partition table", labels, loadable, LOADED_TABLE_COUNT, 0, MENU_FOOTER_SUBMENU, NULL};
+    const int choice = m_menus.Run(menu);
     if (choice == MENU_RESULT_BACK)
     {
         return false;
@@ -287,33 +313,6 @@ bool App::DisplayLoadTableMenu()
     return true;
 }
 
-// Nothing is written. An identical layout leaves the table alone, so the
-// "Current table" label keeps its source.
-void App::ApplyPreset(int preset)
-{
-    XboxPartitionTableManipulator preview(m_pTable->GetPartitionTable(), m_TotalHddSectors, m_FullLba48, m_Physical4k);
-
-    switch (preset)
-    {
-    case PRESET_STOCK:
-        preview.SetupPartitionsStock();
-        break;
-    case PRESET_F:
-        preview.SetupPartitionsFOnly();
-        break;
-    case PRESET_F_G:
-        preview.SetupPartitionsFGSplit();
-        break;
-    default:
-        return;
-    }
-
-    if (!preview.HasSameLayout(*m_pTable))
-    {
-        m_pTable->LoadNewTable(preview.GetPartitionTable());
-        m_LoadedTable = LOADED_TABLE_PRESET;
-    }
-}
 
 // Only the editor changes (no confirmation): write it to make it active
 void App::LoadTable(LoadedTable which)
@@ -321,17 +320,15 @@ void App::LoadTable(LoadedTable which)
     switch (which)
     {
     case LOADED_TABLE_KERNEL:
-        m_pTable->LoadNewTable(m_pTableOriginal->GetPartitionTable());
+        m_session.UndoAllChanges();
         break;
     case LOADED_TABLE_HDD:
-        m_pTable->LoadNewTable(m_TableHdd);
+        m_session.Load(m_tables.MainTable(), which);
         break;
     case LOADED_TABLE_HDD_BACKUP:
-        m_pTable->LoadNewTable(m_TableHddBackup);
+        m_session.Load(m_tables.BackupTable(), which);
         break;
     default:
-        return;
+        break;
     }
-
-    m_LoadedTable = which;
 }

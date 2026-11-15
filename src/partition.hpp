@@ -122,13 +122,13 @@ static_assert(XboxPartitionTableSize == HDD_SECTOR_SIZE, "XboxPartitionTable mus
 static_assert(offsetof(XboxPartitionTable, Version) == 0x10, "XboxPartitionTable::Version is misplaced!");
 static_assert(offsetof(XboxPartitionTable, TableEntries) == 0x30, "XboxPartitionTable::TableEntries is misplaced!");
 
-class XboxPartitionTableManipulator
+class PartitionTableEditor
 {
 
   public:
     // physical_4k: 512e drive, see GetBackupTableLba()
-    XboxPartitionTableManipulator(const uint64_t total_hdd_lba, const bool lbav4, const bool physical_4k);
-    XboxPartitionTableManipulator(const XboxPartitionTable &part_table, const uint64_t total_hdd_lba, const bool lbav4, const bool physical_4k);
+    PartitionTableEditor(const uint64_t total_hdd_lba, const bool lbav4, const bool physical_4k);
+    PartitionTableEditor(const XboxPartitionTable &part_table, const uint64_t total_hdd_lba, const bool lbav4, const bool physical_4k);
 
     // 0 if there is none (unknown size, or no room after the stock partitions)
     uint64_t GetBackupTableLba() const;
@@ -146,7 +146,7 @@ class XboxPartitionTableManipulator
     void SetupPartitionsFOnly();
     void SetupPartitionsFGSplit();
 
-    XboxPartitionTable GetPartitionTable();
+    XboxPartitionTable GetPartitionTable() const;
 
     void LoadNewTable(const XboxPartitionTable &part_table);
 
@@ -162,14 +162,14 @@ class XboxPartitionTableManipulator
 
     void EnablePartition(const int partition_number);
     void DisablePartition(const int partition_number);
-    bool isPartitionEnabled(const int partition_number) const;
+    bool IsPartitionEnabled(const int partition_number) const;
 
     unsigned int CalculateClusterSizeForPartition(const int partition_number) const;
     unsigned int CalculateClusterSize(const uint64_t lba_size) const;
 
-    XboxPartitionTableEntry getPartitionEntry(const int partition_number) const;
+    XboxPartitionTableEntry GetPartitionEntry(const int partition_number) const;
     // Names and the unused fields of disabled entries are ignored
-    bool HasSameLayout(const XboxPartitionTableManipulator &other) const;
+    bool HasSameLayout(const PartitionTableEditor &other) const;
     // False if other partitions have moved into its range since
     bool RestorePartitionEntry(const int partition_number, const XboxPartitionTableEntry &entry);
 
@@ -228,7 +228,7 @@ class XboxPartitionTableManipulator
 
     uint64_t AlignStartTo4k(const uint64_t value) const;
     uint64_t AlignTo4k(const uint64_t value) const;
-    bool isAlignedTo4k(const uint64_t value) const;
+    bool IsAlignedTo4k(const uint64_t value) const;
 
   private:
     void SortPartitions(uint64_t *starts, uint64_t *ends) const;
@@ -305,6 +305,16 @@ uint64_t FatxClusterAt(const FatxLayout &layout, const uint32_t cluster_bytes, c
 // XBpartitioner's cluster size in KB for a partition size: 16 KB up to
 // 256 GB, doubling each time the size doubles
 unsigned int ClusterSizeKbFor(const uint64_t lba_size);
+
+typedef struct
+{
+    uint64_t lowest;
+    uint64_t highest;
+} FatxLbaRange;
+
+// The sizes either side of lba_size whose FAT has the same size and entry
+// width, found in LBA_ALIGNMENT steps from lba_size
+FatxLbaRange FatxSameLayoutRange(const uint64_t lba_size, const uint32_t cluster_bytes);
 
 // The size range where the FAT keeps its size, so a resize only needs a
 // table change (capped by ClusterSizeKbFor() when growing). Shrinking also

@@ -27,11 +27,11 @@ static const int BACKGROUND_GRADIENT_HEIGHT = BACKGROUND_DITHER_ROWS;
 
 // Columns go from the darkest to the lightest mix of background towards
 // accent; row r rounds with the threshold (r + 0.5) / 16.
-void build_background_gradient(D3DCOLOR background, D3DCOLOR accent, DWORD *texels);
+void BuildBackgroundGradient(D3DCOLOR background, D3DCOLOR accent, DWORD *texels);
 
 // xy: screen pixels; uv: on the gradient, v repeats (wrap in v, point
 // sampling). Returns the vertex count. Rows and columns keep their identity
 // as they scroll, so points keep their motion and triangles their color.
-int build_background_mesh(FLOAT width, FLOAT height, double seconds, FLOAT *xy, FLOAT *uv);
+int BuildBackgroundMesh(FLOAT width, FLOAT height, double seconds, FLOAT *xy, FLOAT *uv);
 
 #endif // BACKGROUND_H_

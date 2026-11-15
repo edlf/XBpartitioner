@@ -295,7 +295,7 @@ TEST(DiskTarget, GrowingKeepsClearOfTheBackup)
 {
     const uint64_t total = 20ULL * 1024 * 1024 * 1024 / HDD_SECTOR_SIZE + 5; // Not a whole number of 4K blocks
     XboxPartitionTable table = MakeTable(XBOX_PART6_LBA_START, 8 * MB / HDD_SECTOR_SIZE);
-    const XboxPartitionTableManipulator editor(table, total, true, true);
+    const PartitionTableEditor editor(table, total, true, true);
     const uint64_t end = XBOX_PART6_LBA_START + 8 * MB / HDD_SECTOR_SIZE + editor.GetGrowthLimit(5);
     const uint64_t last_full_block = (total & ~(uint64_t)(LBA_ALIGNMENT - 1)) - LBA_ALIGNMENT;
     EXPECT_LE(end, last_full_block);

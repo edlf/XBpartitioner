@@ -34,92 +34,79 @@ static int launch_partition_index()
 }
 
 App::App()
-    : m_Layout(&g_Layout480), m_pTable(NULL), m_pTableOriginal(NULL), m_pKernelTable(NULL), m_AnalogButton(-1), m_DigitalButtons(0), m_FullLba48(false),
-      m_TotalHddSectors(0), m_Physical4k(false), m_BackupStatus(BACKUP_NOT_USED), m_Lba48Version(0), m_CurrentPart(0), m_SelectionBarY(0.0f),
-      m_SelectionBarPlaced(false), m_SelectionBarTick(0), m_LoadedTable(LOADED_TABLE_KERNEL), m_pActiveEditView(NULL), m_WaitForRelease(false),
-      m_LaunchPartition(-1), m_ThemeSaveBlocked(false), m_Animations(true), m_ForceLba48V3(false), m_ResizeKeepsData(false), m_TitanBios(false)
+    : m_layout(&g_Layout480),
+     
+      m_launch_partition(launch_partition_index()),
+      m_filesystems(*this), m_tables(m_hdd), m_dialogs(m_ui, m_input, *this), m_menus(m_ui, m_input, m_dialogs),
+      m_main_screen(m_ui, MainScreenSources{m_session, m_tables, m_filesystems}),
+      m_editor(ScreenTools{m_ui, m_input, m_dialogs}, EditorSources{m_session, m_filesystems, m_settings}),
+      m_fsck(m_dialogs, m_session, m_launch_partition),
+      m_writer(TableWriterParts{m_tables, m_session, m_filesystems, m_fsck, m_dialogs, m_settings, m_launch_partition}),
+      m_info(m_dialogs, InfoSources{m_tables, m_session, m_settings, m_drive, m_ui}),
+      m_checks(StartupCheckParts{m_tables, m_session, m_hdd, m_dialogs, m_writer, m_fsck, m_info, m_settings, m_launch_partition})
 {
-    memset(m_ClusterSizes, 0, sizeof(m_ClusterSizes));
-    memset(m_Usage, 0, sizeof(m_Usage));
-    memset(m_UsageKnown, 0, sizeof(m_UsageKnown));
-    memset(&m_TableKernel, 0, sizeof(m_TableKernel));
-    memset(&m_TableHdd, 0, sizeof(m_TableHdd));
-    memset(&m_TableHddBackup, 0, sizeof(m_TableHddBackup));
-    memset(m_Controllers, 0, sizeof(m_Controllers));
-    memset(&m_Drive, 0, sizeof(m_Drive));
+    memset(&m_drive, 0, sizeof(m_drive));
 
-    for (int i = 0; i < XboxPartitionTableEntryCount; i++)
-    {
-        RtlInitAnsiString(&m_PartitionPaths[i], partStr[i]);
-    }
-
-    m_LaunchPartition = launch_partition_index();
-
-    m_Ui.Init();
-    m_Layout = (m_Ui.GetVideoMode() == VIDEO_MODE_720P) ? &g_Layout720 : &g_Layout480;
+    m_ui.Init();
+    m_layout = (m_ui.GetVideoMode() == VIDEO_MODE_720P) ? &g_Layout720 : &g_Layout480;
     LoadSettings();
+    m_dialogs.Configure(m_layout, m_settings.Animations());
+    m_menus.Configure(m_layout);
+    m_main_screen.Configure(m_layout);
+    m_editor.Configure(m_layout);
 
     XDEVICE_PREALLOC_TYPE deviceTypes[] = {
         {XDEVICE_TYPE_GAMEPAD, 4},
     };
-    XInitDevices(ARRAY_COUNT(deviceTypes), deviceTypes);
+    XInitDevices(ArrayLength(deviceTypes), deviceTypes);
 
     // Give the controllers time to be enumerated
     Sleep(2000);
 
-    // Later ones are picked up by UpdateControllers()
-    const DWORD present = XGetDevices(XDEVICE_TYPE_GAMEPAD);
-    for (int i = 0; i < ARRAY_COUNT(m_Controllers); i++)
-    {
-        if (present & (1 << i))
-        {
-            m_Controllers[i] = XInputOpen(XDEVICE_TYPE_GAMEPAD, i, XDEVICE_NO_SLOT, 0);
-        }
-    }
+    m_input.OpenPresentPads();
 
-    m_TotalHddSectors = get_hdd_size();
-    // Before any table manipulator: it decides where the backup table goes
-    read_drive_identify();
-    m_Physical4k = m_Drive.physical_4k;
+    // Before any table editor: the drive decides where the backup table goes
+    m_drive = m_hdd.ReadIdentify();
+    m_tables.ReadDiskSize(m_drive.physical_4k);
 
-    // Also creates m_pTableOriginal; without a patch m_pKernelTable stays NULL
-    reload_lba48();
+    // Also starts the editor, from the kernel's table if it has the patch
+    m_writer.StartFromKernelTable();
 
-    m_TableHdd = read_hdd_main_partition_table();
-    m_TableHddBackup = read_hdd_backup_partition_table();
+    m_tables.ReadDiskTables();
 
-    RefreshClusterSizes();
+    m_filesystems.RefreshAll();
 
-    m_CurrentPart = m_pTable->GetFirstAvailablePartitionSlot();
+    m_main_screen.Select(m_session.Edited().GetFirstAvailablePartitionSlot());
 
     FadeIn();
 }
 
 App::~App()
 {
-    delete m_pTableOriginal;
-    delete m_pTable;
-
-    m_Ui.Shutdown();
+    m_ui.Shutdown();
 }
 
 void App::MainLoop()
 {
-    RunStartupChecks();
+    // QuitToDashboard() doesn't return
+    if (!m_checks.Run())
+    {
+        QuitToDashboard();
+    }
 
     // One frame per pass: Present waits for the vertical blank
     while (true)
     {
-        UpdateSelectionBar();
+        m_main_screen.UpdateSelectionBar();
 
-        m_Ui.BeginFrame();
-        DrawMainScreen();
-        DrawControlsHint();
-        m_Ui.EndFrame();
+        m_ui.BeginFrame();
+        m_main_screen.Draw();
+        m_main_screen.DrawControlsHint();
+        m_ui.EndFrame();
 
-        if (ReadInput())
+        if (m_input.Read())
         {
-            HandleMainScreenButtons(m_DigitalButtons, m_AnalogButton);
+            HandleMainScreenButtons(m_input.DigitalButtons(), m_input.AnalogButton());
         }
     }
 }
@@ -129,21 +116,15 @@ void App::HandleMainScreenButtons(int buttons, int analog)
 {
     const int direction = (buttons & XINPUT_GAMEPAD_DPAD_UP) ? -1 : (buttons & XINPUT_GAMEPAD_DPAD_DOWN) ? 1 : 0;
 
+    m_main_screen.MoveSelection(direction);
     if (direction != 0)
     {
-        const int move = m_MainScreenRepeat.Step(direction);
-        const int part = m_CurrentPart + move;
-        if (part >= 0 && part < XboxPartitionTableEntryCount)
-        {
-            m_CurrentPart = part;
-        }
         return;
     }
-    m_MainScreenRepeat.Step(0);
 
     if (analog == XINPUT_GAMEPAD_A)
     {
-        DisplayEditPartition();
+        m_editor.Run(m_main_screen.SelectedPartition());
     }
     else if (buttons & XINPUT_GAMEPAD_START)
     {
@@ -151,67 +132,31 @@ void App::HandleMainScreenButtons(int buttons, int analog)
     }
 }
 
-void App::UpdateSelectionBar()
-{
-    const FLOAT target = (FLOAT)TableRowTop(m_CurrentPart);
 
-    if (!m_SelectionBarPlaced)
-    {
-        m_SelectionBarY = target;
-        m_SelectionBarPlaced = true;
-        return;
-    }
-
-    SlideTowards(m_SelectionBarY, target, m_SelectionBarTick);
-}
-
-// Back to the last written (or startup) table
-void App::UndoAllChanges()
-{
-    LoadTable(LOADED_TABLE_KERNEL);
-}
 
 // True for Exit; warns first about unwritten changes
 bool App::ConfirmExit()
 {
-    if (CheckIfPartitionTableChanged())
+    if (m_session.Changes().Any())
     {
         static const LPCWSTR lines[] = {
             L"The partition table has changes that were not written.",
             L"They will be lost when you exit.",
         };
-        return ConfirmWarning(lines, ARRAY_COUNT(lines), L"Exit");
+        return m_dialogs.ConfirmWarning(lines, ArrayLength(lines), L"Exit");
     }
 
     static const LPCWSTR lines[] = {
         L"Exit XBpartitioner and return to the dashboard?",
     };
-    return RunDialog(L"Exit", COLOR_WHITE, lines, ARRAY_COUNT(lines), L"Exit", L"Cancel");
-}
-
-bool App::CheckStellar()
-{
-    const char *stellarSignature = "stellar";
-    size_t stellarSignatureLen = strlen(stellarSignature);
-    BYTE *stellarScanStart = (BYTE *)0x80010000;
-    BYTE *stellarScanEnd = (BYTE *)0x80026800; // 90kb
-
-    for (BYTE *scanPtr = stellarScanStart; scanPtr < stellarScanEnd - stellarSignatureLen; scanPtr++)
-    {
-        if (_memicmp(scanPtr, stellarSignature, stellarSignatureLen) == 0)
-        {
-            return true;
-        }
-    }
-
-    return false;
+    return m_dialogs.RunDialog(DialogText{L"Exit", COLOR_WHITE, lines, ArrayLength(lines)}, DialogButtons{L"Exit", L"Cancel"});
 }
 
 // Does not return
 void App::QuitToDashboard()
 {
     FadeOut();
-    m_Ui.Shutdown();
+    m_ui.Shutdown();
 
     LD_LAUNCH_DASHBOARD LaunchDashData = {XLD_LAUNCH_DASHBOARD_MAIN_MENU};
     XLaunchNewImage(NULL, (LAUNCH_DATA *)&LaunchDashData);

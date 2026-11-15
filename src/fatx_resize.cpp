@@ -1180,51 +1180,6 @@ bool FatxReadUsage(FatxReader &reader, uint64_t lba_size, FatxUsage *usage, Fatx
 namespace
 {
 
-// The sizes around lba_size with the same FAT (size and entry width)
-void fat_interval(uint64_t lba_size, uint32_t cluster_bytes, uint64_t *lowest, uint64_t *highest)
-{
-    const FatxLayout layout = FatxLayoutFor(lba_size, cluster_bytes);
-    const auto same = [&](uint64_t size) {
-        const FatxLayout other = FatxLayoutFor(size, cluster_bytes);
-        return other.bytes_per_entry == layout.bytes_per_entry && other.bytes_per_fat == layout.bytes_per_fat && other.cluster_limit >= 2;
-    };
-
-    // Doubling steps outwards, then halving back in
-    uint64_t high = lba_size;
-    uint64_t step = LBA_ALIGNMENT;
-    while (step < LBA48_MAX_LBA && same(high + step))
-    {
-        high += step;
-        step *= 2;
-    }
-    while (step > LBA_ALIGNMENT)
-    {
-        step /= 2;
-        if (same(high + step))
-        {
-            high += step;
-        }
-    }
-
-    uint64_t low = lba_size;
-    step = LBA_ALIGNMENT;
-    while (low > step && same(low - step))
-    {
-        low -= step;
-        step *= 2;
-    }
-    while (step > LBA_ALIGNMENT)
-    {
-        step /= 2;
-        if (low > step && same(low - step))
-        {
-            low -= step;
-        }
-    }
-    *lowest = low;
-    *highest = high;
-}
-
 // The largest size the cluster size allows growing to (XBpartitioner's
 // rule), 0 if it allows none
 uint64_t cluster_size_cap(uint32_t cluster_bytes)
@@ -1322,8 +1277,7 @@ uint64_t FatxKeepingSizeBelow(uint64_t old_lba_size, const FatxUsage &usage, uin
         {
             return size;
         }
-        uint64_t lowest, highest;
-        fat_interval(size, cluster_bytes, &lowest, &highest);
+        const uint64_t lowest = FatxSameLayoutRange(size, cluster_bytes).lowest;
         if (lowest < LBA_ALIGNMENT * 2)
         {
             return 0;
@@ -1350,8 +1304,7 @@ uint64_t FatxKeepingSizeAbove(uint64_t old_lba_size, const FatxUsage &usage, uin
         }
 
         // The best this FAT size can do is its largest allowed size
-        uint64_t lowest, highest;
-        fat_interval(size, cluster_bytes, &lowest, &highest);
+        const uint64_t highest = FatxSameLayoutRange(size, cluster_bytes).highest;
         uint64_t top = highest;
         if (top > old_lba_size && top > cap)
         {

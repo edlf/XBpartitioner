@@ -959,13 +959,10 @@ bool scan_fat_entries(FatxReader &reader, const FatxLayout &layout, uint64_t fir
     return true;
 }
 
-} // namespace
-
-bool FatxCheckResize(FatxReader &reader, uint64_t old_lba_size, uint64_t new_lba_size, FatxResizeResult *resize, FatxProgress *progress)
+// The cluster size from a FATX header that isn't mid-resize; false if there
+// is none (status NO_FILE_SYSTEM if it isn't FATX at all)
+bool read_cluster_bytes(FatxReader &reader, FatxResizeResult *resize)
 {
-    memset(resize, 0, sizeof(*resize));
-    resize->status = FATX_RESIZE_NOT_CHECKED;
-
     unsigned char header[HDD_SECTOR_SIZE];
     if (!reader.Read(0, header, sizeof(header)))
     {
@@ -988,33 +985,37 @@ bool FatxCheckResize(FatxReader &reader, uint64_t old_lba_size, uint64_t new_lba
         return false;
     }
     resize->cluster_bytes = sectors_per_cluster * HDD_SECTOR_SIZE;
+    return true;
+}
 
-    FatxInPlaceResizeRange(old_lba_size, resize->cluster_bytes, &resize->min_lba, &resize->max_lba);
-    if (new_lba_size < resize->min_lba || new_lba_size > resize->max_lba)
-    {
-        resize->status = FATX_RESIZE_OUT_OF_RANGE;
-        return false;
-    }
+// A partition's FAT before and after a resize that keeps the FAT's size
+struct ResizeCheck
+{
+    FatxReader &reader;
+    FatxLayout before;
+    FatxLayout after;
+    uint64_t old_lba_size;
+    FatxProgress *progress; // Or NULL
+};
 
-    const FatxLayout before = FatxLayoutFor(old_lba_size, resize->cluster_bytes);
-    const FatxLayout after = FatxLayoutFor(new_lba_size, resize->cluster_bytes);
+// The new clusters' entries are in the FAT's unused tail, which should be all
+// zeros (free)
+bool check_growth(const ResizeCheck &check, FatxResizeResult *resize)
+{
     uint64_t used;
     bool all_zero;
-
-    if (after.cluster_limit >= before.cluster_limit)
+    if (!scan_fat_entries(check.reader, check.before, check.before.cluster_limit, check.after.cluster_limit, &used, &all_zero))
     {
-        // The new clusters' entries are in the FAT's unused tail, which
-        // should be all zeros (free)
-        if (!scan_fat_entries(reader, before, before.cluster_limit, after.cluster_limit, &used, &all_zero))
-        {
-            return false;
-        }
-        resize->status = all_zero ? FATX_RESIZE_OK : FATX_RESIZE_FAT_NOT_CLEAN;
-        return all_zero;
+        return false;
     }
+    resize->status = all_zero ? FATX_RESIZE_OK : FATX_RESIZE_FAT_NOT_CLEAN;
+    return all_zero;
+}
 
-    // Shrinking: only trust "free" after a clean check
-    FatxCheck(reader, old_lba_size * HDD_SECTOR_SIZE, &resize->check, progress);
+// Only trusts "free" after a clean check
+bool check_shrink(const ResizeCheck &check, FatxResizeResult *resize)
+{
+    FatxCheck(check.reader, check.old_lba_size * HDD_SECTOR_SIZE, &resize->check, check.progress);
     if (resize->check.status != FATX_CHECK_DONE)
     {
         return false;
@@ -1024,13 +1025,42 @@ bool FatxCheckResize(FatxReader &reader, uint64_t old_lba_size, uint64_t new_lba
         resize->status = FATX_RESIZE_HAS_ERRORS;
         return false;
     }
-    if (!scan_fat_entries(reader, before, after.cluster_limit, before.cluster_limit, &used, &all_zero))
+    uint64_t used;
+    bool all_zero;
+    if (!scan_fat_entries(check.reader, check.before, check.after.cluster_limit, check.before.cluster_limit, &used, &all_zero))
     {
         return false;
     }
     resize->clusters_in_use = used;
     resize->status = (used == 0) ? FATX_RESIZE_OK : FATX_RESIZE_CLUSTERS_IN_USE;
     return used == 0;
+}
+
+} // namespace
+
+bool FatxCheckResize(FatxReader &reader, uint64_t old_lba_size, uint64_t new_lba_size, FatxResizeResult *resize, FatxProgress *progress)
+{
+    memset(resize, 0, sizeof(*resize));
+    resize->status = FATX_RESIZE_NOT_CHECKED;
+    if (!read_cluster_bytes(reader, resize))
+    {
+        return false;
+    }
+
+    FatxInPlaceResizeRange(old_lba_size, resize->cluster_bytes, &resize->min_lba, &resize->max_lba);
+    if (new_lba_size < resize->min_lba || new_lba_size > resize->max_lba)
+    {
+        resize->status = FATX_RESIZE_OUT_OF_RANGE;
+        return false;
+    }
+
+    const ResizeCheck check = {
+        reader, FatxLayoutFor(old_lba_size, resize->cluster_bytes), FatxLayoutFor(new_lba_size, resize->cluster_bytes), old_lba_size, progress};
+    if (check.after.cluster_limit >= check.before.cluster_limit)
+    {
+        return check_growth(check, resize);
+    }
+    return check_shrink(check, resize);
 }
 
 bool FatxRepair(FatxDevice &device, uint64_t partition_bytes, FatxRepairResult *repair, bool write, FatxProgress *progress)

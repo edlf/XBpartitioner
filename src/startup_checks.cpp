@@ -1,27 +1,35 @@
-// Startup checks and the warnings they lead to.
-
 #include "stdafx.h"
-#include "xbpartitioner.h"
-#include "app_internal.h"
+#include "startup_checks.h"
+#include "array_length.h"
+#include "partition_format.h"
+#include "disk_partition_device.h"
+#include <stdio.h>
+#include <string.h>
 
-void App::RunStartupChecks()
+StartupChecks::StartupChecks(const StartupCheckParts &parts)
+    : m_tables(parts.tables), m_session(parts.session), m_hdd(parts.hdd), m_dialogs(parts.dialogs), m_writer(parts.writer),
+      m_fsck(parts.fsck), m_info(parts.info), m_settings(parts.settings), m_launch_partition(parts.launch_partition)
 {
-    // Cancel quits (QuitToDashboard doesn't return)
-    if (m_pKernelTable == NULL && !DisplayNoInfo())
+}
+
+bool StartupChecks::Run()
+{
+    // Cancel quits
+    if (!m_tables.HasLba48Patch() && !AskContinueWithoutPatch())
     {
-        QuitToDashboard();
+        return false;
     }
 
     if (CheckStellar())
     {
         WarnStellarDetected();
-        QuitToDashboard();
+        return false;
     }
 
     // The overview first, the specific warnings after it
-    if (SystemInfoNeedsAttention())
+    if (m_info.SystemInfoNeedsAttention())
     {
-        DisplaySystemInfo();
+        m_info.ShowSystemInfo();
     }
 
     // Before anything offers to write
@@ -30,34 +38,35 @@ void App::RunStartupChecks()
 
     // A backup in Titan's version was written for a Titan BIOS (by it, or here
     // with a copy in sector 0): keep writing it that way
-    m_TitanBios = IsBackupTableUsable() && m_TableHddBackup.Version == XBOX_TABLE_VERSION_TITAN;
+    m_tables.SetTitanBios(m_tables.IsBackupTableUsable() && m_tables.BackupTable().Version == XBOX_TABLE_VERSION_TITAN);
 
     // On an older BIOS a restored v4 backup would be used at the wrong place.
     // Only a backup (sector 0 empty) may be a Titan BIOS's: asked first.
-    const bool backup_needs_v4 = !m_FullLba48 && XboxPartitionTableManipulator::HasHighLbaBits(m_TableHddBackup);
-    if (IsBackupTableUsable() && !backup_needs_v4)
+    const bool backup_needs_v4 = !m_tables.FullLba48() && PartitionTableEditor::HasHighLbaBits(m_tables.BackupTable());
+    if (m_tables.IsBackupTableUsable() && !backup_needs_v4)
     {
-        if (!XboxPartitionTableManipulator::HasMagic(m_TableHdd))
+        if (!PartitionTableEditor::HasMagic(m_tables.MainTable()))
         {
             OfferTitanOrRestore();
         }
-        else if (!IsMainTableUsable())
+        else if (!m_tables.IsMainTableUsable())
         {
             OfferBackupRestore();
         }
     }
 
     // An interrupted resize leaves a partition unusable, so deal with it early
-    OfferFinishResizes();
+    m_writer.OfferFinishResizes();
 
     WarnUnalignedPartitions();
     // A matching backup under the last partition can often be kept with a
     // 4 KB shrink; otherwise warn as usual
-    if (m_BackupStatus != BACKUP_OVERLAPPED_MATCH || !OfferShrinkForBackup())
+    if (m_tables.Backup() != BACKUP_OVERLAPPED_MATCH || !OfferShrinkForBackup())
     {
         WarnBackupOverlapped();
     }
     CheckTableStatus();
+    return true;
 }
 
 // "kernel, hdd" for the tables that match
@@ -78,13 +87,13 @@ static void list_tables(const XboxPartitionTable *const *tables, const LPCWSTR *
 }
 
 // A version other than v3, v4 or Titan is only warned about
-void App::CheckTableVersions()
+void StartupChecks::CheckTableVersions()
 {
-    const XboxPartitionTable *tables[] = {m_pKernelTable != NULL ? &m_TableKernel : NULL, &m_TableHdd, &m_TableHddBackup};
+    const XboxPartitionTable *tables[] = {m_tables.HasLba48Patch() ? &m_tables.KernelTable() : NULL, &m_tables.MainTable(), &m_tables.BackupTable()};
     static const LPCWSTR names[] = {L"kernel", L"hdd", L"hdd backup"};
 
     wchar_t found_in[40];
-    list_tables(tables, names, ARRAY_COUNT(tables), XboxPartitionTableManipulator::HasUnknownVersion, found_in);
+    list_tables(tables, names, ArrayLength(tables), PartitionTableEditor::HasUnknownVersion, found_in);
     if (found_in[0] == L'\0')
     {
         return;
@@ -92,9 +101,9 @@ void App::CheckTableVersions()
 
     // The first unknown one's version, for the message
     unsigned char version = 0;
-    for (int i = ARRAY_COUNT(tables) - 1; i >= 0; i--)
+    for (int i = ArrayLength(tables) - 1; i >= 0; i--)
     {
-        if (tables[i] != NULL && XboxPartitionTableManipulator::HasUnknownVersion(*tables[i]))
+        if (tables[i] != NULL && PartitionTableEditor::HasUnknownVersion(*tables[i]))
         {
             version = tables[i]->Version;
         }
@@ -110,111 +119,100 @@ void App::CheckTableVersions()
         L"Known are 0x00 (LBA48 v3), 0x01 (v4) and 0x03 (Titan):",
         L"this one may be read wrong. Check it before writing.",
     };
-    ShowWarning(lines, ARRAY_COUNT(lines));
+    m_dialogs.ShowWarning(lines, ArrayLength(lines));
 }
 
 // Sector 0 is empty and the backup is fine. Titan patched BIOSes only use the
 // backup table: with one, the backup is just written again (and from then on
-// every write asks about sector 0, see write_partition_tables). Otherwise the
+// every write asks about sector 0, see TableWriter::WriteTables). Otherwise the
 // usual restore question.
-void App::OfferTitanOrRestore()
+void StartupChecks::OfferTitanOrRestore()
 {
     static const LPCWSTR lines[] = {
         L"There is no partition table in sector 0, only the",
         L"backup one. Titan patched BIOSes only use the backup.",
         L"Do you have a Titan patched BIOS?",
     };
-    if (!RunDialog(L"Warning", COLOR_WARNING, lines, ARRAY_COUNT(lines), L"Titan BIOS", L"No"))
+    if (!m_dialogs.RunDialog(DialogText{L"Warning", COLOR_WARNING, lines, ArrayLength(lines)}, DialogButtons{L"Titan BIOS", L"No"}))
     {
-        m_TitanBios = false;
+        m_tables.SetTitanBios(false);
         OfferBackupRestore();
         return;
     }
 
-    m_TitanBios = true;
-    bool main_written = false;
-    if (write_partition_tables(m_TableHddBackup, NULL, &main_written))
+    m_tables.SetTitanBios(true);
+    const TableWriteOutcome outcome = m_writer.WriteTables(m_tables.BackupTable());
+    if (outcome.written)
     {
-        ShowMessage(L"Done", COLOR_GREEN, main_written ? L"Written as the backup and the main table." : L"The backup partition table was written.");
+        const LPCWSTR done = outcome.main_written ? L"Written as the backup and the main table." : L"The backup partition table was written.";
+        m_dialogs.ShowMessage(L"Done", COLOR_GREEN, done);
     }
     else
     {
-        ShowMessage(L"Error", COLOR_RED, L"The backup partition table could not be written.");
+        m_dialogs.ShowMessage(L"Error", COLOR_RED, L"The backup partition table could not be written.");
     }
 }
 
-// Without the patch the size is the 28 bit one: ends aren't checked (0)
-static ULONGLONG table_check_size(const XboxPartitionTable *kernel_table, ULONGLONG total_sectors)
-{
-    return (kernel_table != NULL) ? total_sectors : 0;
-}
 
-bool App::IsMainTableUsable()
-{
-    return XboxPartitionTableManipulator::IsTableUsable(m_TableHdd, table_check_size(m_pKernelTable, m_TotalHddSectors));
-}
 
-bool App::IsBackupTableUsable()
-{
-    return XboxPartitionTableManipulator::IsTableUsable(m_TableHddBackup, table_check_size(m_pKernelTable, m_TotalHddSectors));
-}
 
 // Main table broken, backup fine: offer to restore it (No leaves the disk alone)
-void App::OfferBackupRestore()
+void StartupChecks::OfferBackupRestore()
 {
     const LPCWSTR lines[] = {
-        XboxPartitionTableManipulator::HasMagic(m_TableHdd) ? L"The main partition table is damaged." : L"The main partition table is missing.",
+        PartitionTableEditor::HasMagic(m_tables.MainTable()) ? L"The main partition table is damaged." : L"The main partition table is missing.",
         L"The backup partition table is valid.",
         L"Restore it? It is written as the main table.",
     };
-    if (!RunDialog(L"Warning", COLOR_WARNING, lines, ARRAY_COUNT(lines), L"Restore", L"No"))
+    if (!m_dialogs.RunDialog(DialogText{L"Warning", COLOR_WARNING, lines, ArrayLength(lines)}, DialogButtons{L"Restore", L"No"}))
     {
         return;
     }
 
     // Also gives it to the kernel, so the partitions work right away
-    if (write_partition_tables(m_TableHddBackup))
+    if (m_writer.WriteTables(m_tables.BackupTable()).written)
     {
-        ShowMessage(L"Done", COLOR_GREEN, L"The backup partition table was restored.");
+        m_dialogs.ShowMessage(L"Done", COLOR_GREEN, L"The backup partition table was restored.");
     }
     else
     {
-        ShowMessage(L"Error", COLOR_RED, L"The backup partition table could not be restored.");
+        m_dialogs.ShowMessage(L"Error", COLOR_RED, L"The backup partition table could not be restored.");
     }
 }
 
 // Starts or sizes that aren't whole 4 KB blocks (other tools): editing
 // one rounds it, which moves it
-void App::WarnUnalignedPartitions()
+void StartupChecks::WarnUnalignedPartitions()
 {
-    bool marked[XboxPartitionTableEntryCount];
-    bool any = false;
+    const PartitionTableEditor &edited = m_session.Edited();
+    PartitionSet unaligned;
     for (int i = 0; i < XboxPartitionTableEntryCount; i++)
     {
-        marked[i] = m_pTable->isPartitionEnabled(i) &&
-                    (!m_pTable->isAlignedTo4k(m_pTable->GetPartitionStart(i)) || !m_pTable->isAlignedTo4k(m_pTable->GetPartitionSize(i)));
-        any = any || marked[i];
+        if (edited.IsPartitionEnabled(i) && (!edited.IsAlignedTo4k(edited.GetPartitionStart(i)) || !edited.IsAlignedTo4k(edited.GetPartitionSize(i))))
+        {
+            unaligned.Add(i);
+        }
     }
-    if (!any)
+    if (unaligned.IsEmpty())
     {
         return;
     }
 
     wchar_t list[100];
-    FormatPartitionList(marked, list, ARRAY_COUNT(list));
+    FormatPartitionList(unaligned, list, ArrayLength(list));
     wchar_t line1[120];
     swprintf(line1, L"Not aligned to 4 KB: %s.", list);
 
     const LPCWSTR lines[] = {
         line1,
-        m_Physical4k ? L"This drive has 4K sectors, so they are slower." : L"That makes them slower on drives with 4K sectors.",
+        m_tables.Physical4k() ? L"This drive has 4K sectors, so they are slower." : L"That makes them slower on drives with 4K sectors.",
         L"Editing one rounds it to 4 KB, which moves it:",
         L"it then needs formatting, and its data is lost.",
     };
-    ShowWarning(lines, ARRAY_COUNT(lines));
+    m_dialogs.ShowWarning(lines, ArrayLength(lines));
 }
 
-void App::WarnStellarDetected()
+void StartupChecks::WarnStellarDetected()
 {
     const LPCWSTR lines[] = {
         L"You are currently running Stellar.",
@@ -222,14 +220,14 @@ void App::WarnStellarDetected()
         L"",
         L"Returning you to your launcher.",
     };
-    ShowError(lines, ARRAY_COUNT(lines));
+    m_dialogs.ShowError(lines, ArrayLength(lines));
 }
 
 // Pre v4 patches only use the low 32 bits of each LBA: a table with v4
 // values (over 2TB) shows those partitions in the wrong place
-void App::CheckForV4TableOnOldBios()
+void StartupChecks::CheckForV4TableOnOldBios()
 {
-    if (m_FullLba48 || m_pKernelTable == NULL)
+    if (m_tables.FullLba48() || !m_tables.HasLba48Patch())
     {
         return;
     }
@@ -240,14 +238,14 @@ void App::CheckForV4TableOnOldBios()
         const XboxPartitionTable *table;
         LPCWSTR name;
     } tables[] = {
-        {&m_TableKernel, L"kernel"},
-        {&m_TableHdd, L"hdd"},
-        {&m_TableHddBackup, L"hdd backup"},
+        {&m_tables.KernelTable(), L"kernel"},
+        {&m_tables.MainTable(), L"hdd"},
+        {&m_tables.BackupTable(), L"hdd backup"},
     };
 
-    for (int i = 0; i < ARRAY_COUNT(tables); i++)
+    for (size_t i = 0; i < ArrayLength(tables); i++)
     {
-        if (XboxPartitionTableManipulator::HasMagic(*tables[i].table) && XboxPartitionTableManipulator::HasHighLbaBits(*tables[i].table))
+        if (PartitionTableEditor::HasMagic(*tables[i].table) && PartitionTableEditor::HasHighLbaBits(*tables[i].table))
         {
             if (found_in[0] != L'\0')
             {
@@ -263,7 +261,7 @@ void App::CheckForV4TableOnOldBios()
     }
 
     // force_lba48_v3 on a v4 BIOS: worded for that
-    const bool forced = m_ForceLba48V3 && m_Lba48Version > 3;
+    const bool forced = m_settings.ForceLba48V3() && m_tables.Lba48Version() > 3;
 
     wchar_t line1[80];
     wchar_t line3[80];
@@ -273,7 +271,7 @@ void App::CheckForV4TableOnOldBios()
     }
     else
     {
-        swprintf(line1, L"This BIOS has LBA48 patch v%d, but a partition table", m_Lba48Version);
+        swprintf(line1, L"This BIOS has LBA48 patch v%d, but a partition table", m_tables.Lba48Version());
     }
     swprintf(line3, L"Found in: %s.", found_in);
 
@@ -284,39 +282,39 @@ void App::CheckForV4TableOnOldBios()
         L"Partitions over 2TB are shown in the wrong place.",
         forced ? L"Do not write or format. Turn force_lba48_v3 off." : L"Do not write or format. Use a v4 BIOS such as Cerbios.",
     };
-    ShowWarning(lines, ARRAY_COUNT(lines));
+    m_dialogs.ShowWarning(lines, ArrayLength(lines));
 }
 
 // True to continue without the LBA48 patch
-bool App::DisplayNoInfo()
+bool StartupChecks::AskContinueWithoutPatch()
 {
     static const LPCWSTR lines[] = {
         L"No LBA48 patch found: custom partitions will not work",
         L"with this BIOS. Update your BIOS to Cerbios.",
     };
-    return RunDialog(L"Warning", COLOR_WARNING, lines, ARRAY_COUNT(lines), L"Continue", L"Quit");
+    return m_dialogs.RunDialog(DialogText{L"Warning", COLOR_WARNING, lines, ArrayLength(lines)}, DialogButtons{L"Continue", L"Quit"});
 }
 
-void App::CheckTableStatus()
+void StartupChecks::CheckTableStatus()
 {
     // Only when both are usable: a broken main gets the restore question,
     // and no backup is normal with other tools
-    if (IsMainTableUsable() && IsBackupTableUsable() && !same_table_but_version(m_TableHdd, m_TableHddBackup))
+    if (m_tables.IsMainTableUsable() && m_tables.IsBackupTableUsable() && !SameTableButVersion(m_tables.MainTable(), m_tables.BackupTable()))
     {
         static const LPCWSTR lines[] = {
             L"The main and backup partition tables don't match!",
             L"Check which one is correct before doing anything.",
             L"Compare them via Partition table > Load partition table.",
         };
-        ShowWarning(lines, ARRAY_COUNT(lines));
+        m_dialogs.ShowWarning(lines, ArrayLength(lines));
     }
 }
 
 // The last partition covers the backup sector: no backup until that changes
-void App::WarnBackupOverlapped()
+void StartupChecks::WarnBackupOverlapped()
 {
     // A matching backup only gets here if OfferShrinkForBackup() couldn't help
-    if (m_BackupStatus != BACKUP_OVERLAPPED && m_BackupStatus != BACKUP_OVERLAPPED_MATCH)
+    if (m_tables.Backup() != BACKUP_OVERLAPPED && m_tables.Backup() != BACKUP_OVERLAPPED_MATCH)
     {
         return;
     }
@@ -327,58 +325,58 @@ void App::WarnBackupOverlapped()
         L"No backup is written until the layout leaves room:",
         L"shrink the last partition, or use a new partition table.",
     };
-    ShowWarning(lines, ARRAY_COUNT(lines));
+    m_dialogs.ShowWarning(lines, ArrayLength(lines));
 }
 
 // The last partition covers the backup sector, but another tool left a valid
 // backup there, so that 4 KB block holds no data. Shrinking by 4 KB keeps the
 // data and needs no format.
-bool App::OfferShrinkForBackup()
+bool StartupChecks::OfferShrinkForBackup()
 {
-    const int part = m_pTableOriginal->FindBackupShrinkCandidate();
+    const int part = m_session.InUse().FindBackupShrinkCandidate();
     if (part < 0 || !ShrinkKeepsData(part))
     {
         return false;
     }
 
     wchar_t line1[80];
-    swprintf(line1, L"Partition %d (%c) covers the backup table sector, but", part + 1, partition_letter(part));
+    swprintf(line1, L"Partition %d (%c) covers the backup table sector, but", part + 1, PartitionLetter(part));
     const LPCWSTR lines[] = {
         line1,
         L"the backup there matches the main partition table,",
         L"so its last 4 KB hold no data. Shrink it by 4 KB so",
         L"the backup is kept? Its data stays, no format needed.",
     };
-    if (!RunDialog(L"Backup table", COLOR_WARNING, lines, ARRAY_COUNT(lines), L"Shrink", L"No"))
+    if (!m_dialogs.RunDialog(DialogText{L"Backup table", COLOR_WARNING, lines, ArrayLength(lines)}, DialogButtons{L"Shrink", L"No"}))
     {
         return true;
     }
 
-    XboxPartitionTableManipulator shrunk(m_pTableOriginal->GetPartitionTable(), m_TotalHddSectors, m_FullLba48, m_Physical4k);
+    PartitionTableEditor shrunk = m_tables.Manipulate(m_session.InUse().GetPartitionTable());
     shrunk.PartitionDecreaseSizeBy(part, LBA_ALIGNMENT);
 
-    bool backup_written = false;
-    if (write_partition_tables(shrunk.GetPartitionTable(), &backup_written))
+    const TableWriteOutcome outcome = m_writer.WriteTables(shrunk.GetPartitionTable());
+    if (outcome.written)
     {
         wchar_t done[80];
-        swprintf(done, backup_written ? L"Partition %d shrunk by 4 KB, backup table written." : L"Partition %d shrunk by 4 KB.", part + 1);
-        ShowMessage(L"Done", COLOR_GREEN, done);
+        swprintf(done, outcome.backup_written ? L"Partition %d shrunk by 4 KB, backup table written." : L"Partition %d shrunk by 4 KB.", part + 1);
+        m_dialogs.ShowMessage(L"Done", COLOR_GREEN, done);
 
         // Unmount so the kernel picks up the new size; until then it could
         // write into the freed block, where the backup now lives. Our own
         // partition can't be unmounted, but settings stop being saved once
         // it has changed size, so nothing writes there.
-        if (part != m_LaunchPartition)
+        if (part != m_launch_partition)
         {
-            IoDismountVolumeByName(&m_PartitionPaths[part]);
+            DismountPartition(part);
         }
 
         // Show that the file system still reads fine
-        CheckFileSystem(part);
+        m_fsck.CheckFileSystem(part);
     }
     else
     {
-        ShowMessage(L"Error", COLOR_RED, L"The partition table could not be written.");
+        m_dialogs.ShowMessage(L"Error", COLOR_RED, L"The partition table could not be written.");
     }
     return true;
 }
@@ -386,13 +384,13 @@ bool App::OfferShrinkForBackup()
 // Checks the 4 KB shrink is harmless: the FAT size (derived from the
 // partition size) must not change, and the dropped block must not be part
 // of a used cluster.
-bool App::ShrinkKeepsData(int partition)
+bool StartupChecks::ShrinkKeepsData(int partition)
 {
-    const ULONGLONG start = m_pTableOriginal->GetPartitionStart(partition);
-    const ULONGLONG size = m_pTableOriginal->GetPartitionSize(partition);
+    const ULONGLONG start = m_session.InUse().GetPartitionStart(partition);
+    const ULONGLONG size = m_session.InUse().GetPartitionSize(partition);
 
     BYTE sector[HDD_SECTOR_SIZE];
-    if (!read_hdd_sector(start, sector))
+    if (!m_hdd.ReadSector(start, sector))
     {
         return false;
     }
@@ -429,7 +427,7 @@ bool App::ShrinkKeepsData(int partition)
 
     // The cluster must be free (0) in the FAT
     const ULONGLONG entry_byte = start * HDD_SECTOR_SIZE + FATX_HEADER_BYTES + cluster * before.bytes_per_entry;
-    if (!read_hdd_sector(entry_byte / HDD_SECTOR_SIZE, sector))
+    if (!m_hdd.ReadSector(entry_byte / HDD_SECTOR_SIZE, sector))
     {
         return false;
     }
@@ -442,4 +440,22 @@ bool App::ShrinkKeepsData(int partition)
         }
     }
     return true;
+}
+
+bool StartupChecks::CheckStellar()
+{
+    const char *stellarSignature = "stellar";
+    size_t stellarSignatureLen = strlen(stellarSignature);
+    BYTE *stellarScanStart = (BYTE *)0x80010000;
+    BYTE *stellarScanEnd = (BYTE *)0x80026800; // 90kb
+
+    for (BYTE *scanPtr = stellarScanStart; scanPtr < stellarScanEnd - stellarSignatureLen; scanPtr++)
+    {
+        if (_memicmp(scanPtr, stellarSignature, stellarSignatureLen) == 0)
+        {
+            return true;
+        }
+    }
+
+    return false;
 }

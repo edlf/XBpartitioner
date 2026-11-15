@@ -7,10 +7,93 @@ static const uint32_t FORMAT_CHUNK_BYTES = 64 * 1024;
 
 static const uint32_t FORMAT_ROOT_CLUSTER = 1;
 
+// A format under way. The buffer holds a FAT chunk, the header or the root
+// folder, whichever is bigger.
+struct FormatJob
+{
+    FatxDevice &device;
+    FatxLayout layout;
+    uint32_t cluster_bytes;
+    unsigned char *buffer;
+    FatxProgress *progress; // Or NULL
+};
+
+// Down to a sector, so tests can make 32 bit FATs in small images
+static bool is_formattable_cluster_size(uint32_t cluster_bytes)
+{
+    return cluster_bytes >= HDD_SECTOR_SIZE && cluster_bytes <= 1024 * 1024 && (cluster_bytes & (cluster_bytes - 1)) == 0;
+}
+
+// 1. The old file system is gone from here on
+static bool wipe_header(const FormatJob &job)
+{
+    memset(job.buffer, 0xFF, FATX_HEADER_BYTES);
+    return job.device.Write(0, job.buffer, FATX_HEADER_BYTES) && job.device.Sync();
+}
+
+// Entry 0 is the media marker, entry 1 (the root) its chain's end
+static void put_first_fat_entries(unsigned char *chunk, uint32_t width)
+{
+    const uint32_t media = (width == 2) ? (FATX_FAT_MEDIA & 0xFFFF) : FATX_FAT_MEDIA;
+    const uint32_t end = (width == 2) ? (FATX_FAT_END & 0xFFFF) : FATX_FAT_END;
+    memcpy(chunk, &media, width);
+    memcpy(chunk + width * FORMAT_ROOT_CLUSTER, &end, width);
+}
+
+// 2. The FAT, every other entry free; up to 95% of the progress
+static bool write_fat(const FormatJob &job)
+{
+    const uint64_t fat_bytes = job.layout.bytes_per_fat;
+    for (uint64_t written = 0; written < fat_bytes;)
+    {
+        const uint64_t left = fat_bytes - written;
+        const uint32_t length = (left < FORMAT_CHUNK_BYTES) ? (uint32_t)left : FORMAT_CHUNK_BYTES;
+        memset(job.buffer, 0, length);
+        if (written == 0)
+        {
+            put_first_fat_entries(job.buffer, job.layout.bytes_per_entry);
+        }
+        if (!job.device.Write(FATX_HEADER_BYTES + written, job.buffer, length))
+        {
+            return false;
+        }
+        written += length;
+        if (job.progress != NULL)
+        {
+            job.progress->Update((int)(written * 95 / fat_bytes));
+        }
+    }
+    return true;
+}
+
+// 3. No entries (0xFF ends the list)
+static bool write_empty_root(const FormatJob &job)
+{
+    memset(job.buffer, FATX_DIRENT_END, job.cluster_bytes);
+    return job.device.Write(job.layout.data_offset + (uint64_t)(FORMAT_ROOT_CLUSTER - 1) * job.cluster_bytes, job.buffer, job.cluster_bytes);
+}
+
+// 4. Last, once everything it points to is in place. 0x00 "FATX", 0x04
+// serial, 0x08 sectors per cluster, 0x0C root cluster, 0x10 a 16 bit 0; the
+// rest of the 4 KB stays 0xFF.
+static bool write_header(const FormatJob &job, uint32_t serial)
+{
+    memset(job.buffer, 0xFF, FATX_HEADER_BYTES);
+    const uint32_t signature = FATX_signature;
+    const uint32_t sectors_per_cluster = job.cluster_bytes / HDD_SECTOR_SIZE;
+    const uint32_t root = FORMAT_ROOT_CLUSTER;
+    const uint16_t zero = 0;
+    memcpy(job.buffer + FATX_SIGNATURE_OFFSET, &signature, 4);
+    memcpy(job.buffer + 4, &serial, 4);
+    memcpy(job.buffer + FATX_SECTORS_PER_CLUSTER_OFFSET, &sectors_per_cluster, 4);
+    memcpy(job.buffer + FATX_ROOT_CLUSTER_OFFSET, &root, 4);
+    memcpy(job.buffer + 16, &zero, 2);
+    return job.device.Sync() && job.device.Write(0, job.buffer, FATX_HEADER_BYTES) && job.device.Sync();
+}
+
 bool FatxFormat(FatxDevice &device, uint64_t lba_size, uint32_t cluster_bytes, uint32_t serial, FatxProgress *progress)
 {
-    // Down to a sector, so tests can make 32 bit FATs in small images
-    if (cluster_bytes < HDD_SECTOR_SIZE || cluster_bytes > 1024 * 1024 || (cluster_bytes & (cluster_bytes - 1)) != 0)
+    if (!is_formattable_cluster_size(cluster_bytes))
     {
         return false;
     }
@@ -20,69 +103,17 @@ bool FatxFormat(FatxDevice &device, uint64_t lba_size, uint32_t cluster_bytes, u
         return false; // No room for the root folder
     }
 
-    // The chunk buffer, also used for the header and the root folder
     const uint32_t buffer_bytes = (cluster_bytes > FORMAT_CHUNK_BYTES) ? cluster_bytes : FORMAT_CHUNK_BYTES;
     unsigned char *buffer = (unsigned char *)malloc(buffer_bytes);
     if (buffer == NULL)
     {
         return false;
     }
-    bool ok = true;
-
-    // 1. Wipe the old header, so the old file system is gone from here on
-    memset(buffer, 0xFF, FATX_HEADER_BYTES);
-    ok = device.Write(0, buffer, FATX_HEADER_BYTES) && device.Sync();
-
-    // 2. The FAT: entry 0 is the media marker, entry 1 (the root) its chain's
-    // end, the rest free
-    uint64_t written = 0;
-    while (ok && written < layout.bytes_per_fat)
-    {
-        const uint64_t left = layout.bytes_per_fat - written;
-        const uint32_t length = (left < FORMAT_CHUNK_BYTES) ? (uint32_t)left : FORMAT_CHUNK_BYTES;
-        memset(buffer, 0, length);
-        if (written == 0)
-        {
-            const uint32_t width = layout.bytes_per_entry;
-            const uint32_t media = (width == 2) ? (FATX_FAT_MEDIA & 0xFFFF) : FATX_FAT_MEDIA;
-            const uint32_t end = (width == 2) ? (FATX_FAT_END & 0xFFFF) : FATX_FAT_END;
-            memcpy(buffer, &media, width);
-            memcpy(buffer + width * FORMAT_ROOT_CLUSTER, &end, width);
-        }
-        ok = device.Write(FATX_HEADER_BYTES + written, buffer, length);
-        written += length;
-        if (progress != NULL)
-        {
-            progress->Update((int)(written * 95 / layout.bytes_per_fat));
-        }
-    }
-
-    // 3. The root folder: no entries (0xFF ends the list)
-    if (ok)
-    {
-        memset(buffer, FATX_DIRENT_END, cluster_bytes);
-        ok = device.Write(layout.data_offset + (uint64_t)(FORMAT_ROOT_CLUSTER - 1) * cluster_bytes, buffer, cluster_bytes);
-    }
-
-    // 4. The header last, once everything it points to is in place.
-    // 0x00 "FATX", 0x04 serial, 0x08 sectors per cluster, 0x0C root cluster,
-    // 0x10 a 16 bit 0; the rest of the 4 KB stays 0xFF.
-    if (ok)
-    {
-        memset(buffer, 0xFF, FATX_HEADER_BYTES);
-        const uint32_t signature = FATX_signature;
-        const uint32_t sectors_per_cluster = cluster_bytes / HDD_SECTOR_SIZE;
-        const uint32_t root = FORMAT_ROOT_CLUSTER;
-        const uint16_t zero = 0;
-        memcpy(buffer + FATX_SIGNATURE_OFFSET, &signature, 4);
-        memcpy(buffer + 4, &serial, 4);
-        memcpy(buffer + FATX_SECTORS_PER_CLUSTER_OFFSET, &sectors_per_cluster, 4);
-        memcpy(buffer + FATX_ROOT_CLUSTER_OFFSET, &root, 4);
-        memcpy(buffer + 16, &zero, 2);
-        ok = device.Sync() && device.Write(0, buffer, FATX_HEADER_BYTES) && device.Sync();
-    }
-
+    const FormatJob job = {device, layout, cluster_bytes, buffer, progress};
+    // Each step only once the one before it worked
+    const bool ok = wipe_header(job) && write_fat(job) && write_empty_root(job) && write_header(job, serial);
     free(buffer);
+
     if (ok && progress != NULL)
     {
         progress->Update(100);

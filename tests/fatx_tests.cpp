@@ -77,13 +77,46 @@ struct Image
         return RunCheck(device, SMALL);
     }
 
-    // Changes an entry of \apps (0 a.txt, 1 b.txt) through a function
-    template <typename F> void EditEntry(uint32_t index, F edit)
+    // Change one field of an entry of \apps (0 a.txt, 1 b.txt)
+    void SetFirstCluster(uint32_t index, uint32_t cluster)
     {
         FatxDirent entry;
         uint64_t offset;
-        ASSERT_TRUE(writer.GetEntry(apps, index, &entry, &offset));
-        edit(entry);
+        TakeEntry(index, &entry, &offset);
+        entry.first_cluster = cluster;
+        PutEntry(offset, entry);
+    }
+    void SetFileSize(uint32_t index, uint32_t size)
+    {
+        FatxDirent entry;
+        uint64_t offset;
+        TakeEntry(index, &entry, &offset);
+        entry.file_size = size;
+        PutEntry(offset, entry);
+    }
+    void SetNameLength(uint32_t index, unsigned char length)
+    {
+        FatxDirent entry;
+        uint64_t offset;
+        TakeEntry(index, &entry, &offset);
+        entry.name_length = length;
+        PutEntry(offset, entry);
+    }
+    // Overwrites the start of the name, the length unchanged
+    void SetNameStart(uint32_t index, const char *start)
+    {
+        FatxDirent entry;
+        uint64_t offset;
+        TakeEntry(index, &entry, &offset);
+        memcpy(entry.name, start, strlen(start));
+        PutEntry(offset, entry);
+    }
+    void TakeEntry(uint32_t index, FatxDirent *entry, uint64_t *offset)
+    {
+        ASSERT_TRUE(writer.GetEntry(apps, index, entry, offset));
+    }
+    void PutEntry(uint64_t offset, const FatxDirent &entry)
+    {
         ASSERT_TRUE(writer.SetEntry(offset, entry));
     }
 
@@ -224,7 +257,7 @@ TEST(FatxCheck, ImageShorterThanThePartition)
 TEST(FatxCheck, CrossLinkedFiles)
 {
     Image image;
-    image.EditEntry(1, [&](FatxDirent &e) { e.first_cluster = image.a_first; });
+    image.SetFirstCluster(1, image.a_first);
     const Check check = image.Run();
     EXPECT_TRUE(HasMessage(check.result, true, "used twice")) << Messages(check.result);
     // b.txt's own cluster is now used by nothing
@@ -275,7 +308,7 @@ TEST(FatxCheck, BadMarkerInAChain)
 TEST(FatxCheck, SizeLongerThanTheChain)
 {
     Image image;
-    image.EditEntry(1, [](FatxDirent &e) { e.file_size = CLUSTER * 5; });
+    image.SetFileSize(1, CLUSTER * 5);
     const Check check = image.Run();
     EXPECT_TRUE(HasMessage(check.result, true, "need 5 clusters, the chain has 1")) << Messages(check.result);
 }
@@ -283,7 +316,7 @@ TEST(FatxCheck, SizeLongerThanTheChain)
 TEST(FatxCheck, ChainLongerThanTheSizeIsAWarning)
 {
     Image image;
-    image.EditEntry(0, [](FatxDirent &e) { e.file_size = 10; });
+    image.SetFileSize(0, 10);
     const Check check = image.Run();
     EXPECT_EQ(check.result.errors, 0u) << Messages(check.result);
     EXPECT_TRUE(HasMessage(check.result, false, "2 clusters more")) << Messages(check.result);
@@ -292,7 +325,7 @@ TEST(FatxCheck, ChainLongerThanTheSizeIsAWarning)
 TEST(FatxCheck, FileWithSizeButNoCluster)
 {
     Image image;
-    image.EditEntry(1, [](FatxDirent &e) { e.first_cluster = 0; });
+    image.SetFirstCluster(1, 0);
     const Check check = image.Run();
     EXPECT_TRUE(HasMessage(check.result, true, "but no clusters")) << Messages(check.result);
 }
@@ -321,7 +354,7 @@ TEST(FatxCheck, BadClustersAreCountedNotLost)
 TEST(FatxCheck, DeletedEntriesAreSkipped)
 {
     Image image;
-    image.EditEntry(1, [](FatxDirent &e) { e.name_length = FATX_DIRENT_DELETED; });
+    image.SetNameLength(1, FATX_DIRENT_DELETED);
     const Check check = image.Run();
     EXPECT_EQ(check.result.errors, 0u) << Messages(check.result);
     EXPECT_EQ(check.result.files, 2u);
@@ -331,7 +364,7 @@ TEST(FatxCheck, DeletedEntriesAreSkipped)
 TEST(FatxCheck, BadNameLength)
 {
     Image image;
-    image.EditEntry(1, [](FatxDirent &e) { e.name_length = 50; });
+    image.SetNameLength(1, 50);
     const Check check = image.Run();
     EXPECT_TRUE(HasMessage(check.result, true, "bad name length (50)")) << Messages(check.result);
 }
@@ -339,7 +372,7 @@ TEST(FatxCheck, BadNameLength)
 TEST(FatxCheck, NameWithForbiddenCharacters)
 {
     Image image;
-    image.EditEntry(1, [](FatxDirent &e) { e.name[0] = '*'; });
+    image.SetNameStart(1, "*");
     const Check check = image.Run();
     EXPECT_EQ(check.result.errors, 0u) << Messages(check.result);
     EXPECT_TRUE(HasMessage(check.result, false, "\\apps\\*.txt")) << Messages(check.result);
@@ -348,7 +381,7 @@ TEST(FatxCheck, NameWithForbiddenCharacters)
 TEST(FatxCheck, SameNameTwiceIgnoringCase)
 {
     Image image;
-    image.EditEntry(1, [](FatxDirent &e) { memcpy(e.name, "A.TXT", 5); });
+    image.SetNameStart(1, "A.TXT");
     const Check check = image.Run();
     EXPECT_TRUE(HasMessage(check.result, true, "this name twice")) << Messages(check.result);
 }
@@ -372,7 +405,7 @@ TEST(FatxCheck, DirectoryLoop)
     Image image;
     ASSERT_TRUE(image.writer.MakeDirectory(image.apps, "loop"));
     ASSERT_TRUE(image.writer.Flush());
-    image.EditEntry(2, [&](FatxDirent &e) { e.first_cluster = image.apps; });
+    image.SetFirstCluster(2, image.apps);
     const Check check = image.Run();
     ASSERT_TRUE(check.ran);
     EXPECT_TRUE(HasMessage(check.result, true, "used twice")) << Messages(check.result);
@@ -528,7 +561,7 @@ TEST(FatxRepair, DryRunWritesNothing)
 TEST(FatxRepair, TrimsLongChainsAndKeepsTheData)
 {
     Image image;
-    image.EditEntry(0, [](FatxDirent &e) { e.file_size = 10; }); // a.txt: 3 clusters, now needs 1
+    image.SetFileSize(0, 10); // a.txt: 3 clusters, now needs 1
 
     const Repair repair = RunRepair(image.device, SMALL, true);
     ASSERT_TRUE(repair.ok);
@@ -551,7 +584,7 @@ TEST(FatxRepair, TrimsLongChainsAndKeepsTheData)
 TEST(FatxRepair, EmptyFileLosesItsClusters)
 {
     Image image;
-    image.EditEntry(1, [](FatxDirent &e) { e.file_size = 0; }); // b.txt keeps its cluster
+    image.SetFileSize(1, 0); // b.txt keeps its cluster
 
     const Repair repair = RunRepair(image.device, SMALL, true);
     ASSERT_TRUE(repair.ok);
@@ -581,7 +614,7 @@ TEST(FatxRepair, RefusesWithErrors)
     // Cross-linked: b.txt's own cluster looks lost, but we can't know which
     // file is the broken one
     Image image;
-    image.EditEntry(1, [&](FatxDirent &e) { e.first_cluster = image.a_first; });
+    image.SetFirstCluster(1, image.a_first);
     const std::vector<unsigned char> before = Snapshot(image.device);
 
     const Repair repair = RunRepair(image.device, SMALL, true);

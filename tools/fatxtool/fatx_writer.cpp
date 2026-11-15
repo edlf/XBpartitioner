@@ -59,7 +59,7 @@ FatxWriter::FatxWriter(FatxDevice &device, uint64_t partition_bytes, uint32_t cl
 {
     if (m_cluster_bytes == 0)
     {
-        const XboxPartitionTableManipulator sizes(0, true, false);
+        const PartitionTableEditor sizes(0, true, false);
         m_cluster_bytes = sizes.CalculateClusterSize(partition_bytes / HDD_SECTOR_SIZE) * 1024;
     }
     m_layout = FatxLayoutFor(partition_bytes / HDD_SECTOR_SIZE, m_cluster_bytes);
