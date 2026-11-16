@@ -112,7 +112,8 @@ void Panels::Actions(const Part &part)
     }
     else
     {
-        ImGui::TextDisabled("The FATX volume fills the drive, and there's no partition table to hold a new size.");
+        ImGui::TextDisabled(Src().stock_layout ? "The stock partitions have fixed places, and there's no partition table to hold a new size."
+                                               : "The FATX volume fills the drive, and there's no partition table to hold a new size.");
     }
     ImGui::Spacing();
     ImGui::SeparatorText("Cluster size and defragmenting, keeping the data");

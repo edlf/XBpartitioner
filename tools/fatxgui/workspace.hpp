@@ -44,6 +44,8 @@ struct Source
     std::string name;
     uint64_t bytes = 0;
     bool has_table = false;
+    // No table, but the stock partitions at the fixed places the stock kernel uses
+    bool stock_layout = false;
     // Hard drive with a table; memory unit for a drive with FATX straight on
     // it; for an image without a table, what the user said it is
     FatxMedium medium = FATX_MEDIUM_UNKNOWN;
@@ -63,10 +65,11 @@ struct Source
         return type == IMAGE;
     }
     // A FATX volume straight on a drive fills it, and there's no table to
-    // hold a new size; memory units have a fixed size
+    // hold a new size; memory units have a fixed size, and so do the stock
+    // partitions without a table
     bool CanResize() const
     {
-        return has_table || (type == IMAGE && medium != FATX_MEDIUM_MEMORY_UNIT);
+        return has_table || (type == IMAGE && !stock_layout && medium != FATX_MEDIUM_MEMORY_UNIT);
     }
     // "Xbox drive", "Memory unit image"...
     std::string Kind() const
@@ -78,6 +81,10 @@ struct Source
         if (type == DRIVE)
         {
             return "Xbox drive";
+        }
+        if (stock_layout)
+        {
+            return "Disk image (stock, no table)";
         }
         return has_table ? "Disk image" : "Partition image";
     }

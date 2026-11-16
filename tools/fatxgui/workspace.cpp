@@ -4,23 +4,13 @@
 #include <string.h>
 
 #include "job_runner.hpp"
+#include "stock_layout.hpp"
 
 namespace fatxgui
 {
 
 namespace
 {
-
-uint32_t read_signature(FatxReader &reader)
-{
-    unsigned char sector[HDD_SECTOR_SIZE];
-    uint32_t signature = 0;
-    if (reader.Read(0, sector, sizeof(sector)))
-    {
-        memcpy(&signature, sector, 4);
-    }
-    return signature;
-}
 
 // The enabled partitions in the table at sector 0; false if there is none
 bool read_table_parts(FatxDevice &disk, uint64_t bytes, std::vector<Part> *parts)
@@ -59,11 +49,13 @@ bool same_place(const Part &a, const Part &b)
     return a.index == b.index && a.start == b.start && a.sectors == b.sectors;
 }
 
-// A FATX volume (or one mid-resize) from sector 0, with no table
-bool has_fatx_at_start(FatxReader &disk)
+Part whole_volume_part(uint64_t sectors, uint64_t max_sectors)
 {
-    const uint32_t signature = read_signature(disk);
-    return signature == FATX_signature || signature == FATX_RESIZING_SIGNATURE;
+    Part part;
+    part.start = 0;
+    part.sectors = sectors;
+    part.max_sectors = max_sectors;
+    return part;
 }
 
 } // namespace
@@ -78,6 +70,10 @@ bool layout_matches_scan(SourceIo &io, const Source &src)
     if (read_table_parts(io.Disk(), io.Size(), &parts) != src.has_table)
     {
         return false;
+    }
+    if (src.stock_layout)
+    {
+        return read_stock_parts(io.Disk(), &parts);
     }
     if (!src.has_table)
     {
@@ -107,34 +103,34 @@ bool scan_source(Source *src, FatxProgress &whole, std::string *error)
     src->bytes = io.Size();
 
     src->has_table = read_table_parts(io.Disk(), src->bytes, &src->parts);
+    src->stock_layout = false;
     src->medium_needed = false;
+    const uint64_t sectors = src->bytes / HDD_SECTOR_SIZE;
+    const bool fatx_at_start = !src->has_table && has_fatx_at_start(io.Disk());
     if (src->has_table)
     {
         src->medium = FATX_MEDIUM_HARD_DRIVE;
     }
+    else if (!fatx_at_start && read_stock_parts(io.Disk(), &src->parts))
+    {
+        src->stock_layout = true;
+        src->medium = FATX_MEDIUM_HARD_DRIVE;
+    }
     else if (src->type == Source::IMAGE)
     {
-        Part part;
-        part.start = 0;
-        part.sectors = src->bytes / HDD_SECTOR_SIZE;
-        part.max_sectors = (16ULL << 40) / HDD_SECTOR_SIZE; // The file just grows
-        src->parts.push_back(part);
+        src->parts.assign(1, whole_volume_part(sectors, (16ULL << 40) / HDD_SECTOR_SIZE)); // The file just grows
         // A memory unit or a hard drive partition: only the user knows
-        if (src->medium == FATX_MEDIUM_UNKNOWN && has_fatx_at_start(io.Disk()))
+        if (src->medium == FATX_MEDIUM_UNKNOWN && fatx_at_start)
         {
             src->medium_needed = true;
             return true;
         }
     }
-    else if (has_fatx_at_start(io.Disk()))
+    else if (fatx_at_start)
     {
         // A memory unit, or a USB stick used as one: one volume, the whole drive
         src->medium = FATX_MEDIUM_MEMORY_UNIT;
-        Part part;
-        part.start = 0;
-        part.sectors = src->bytes / HDD_SECTOR_SIZE;
-        part.max_sectors = part.sectors;
-        src->parts.push_back(part);
+        src->parts.assign(1, whole_volume_part(sectors, sectors));
     }
     else
     {

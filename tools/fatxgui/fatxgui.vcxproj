@@ -79,6 +79,7 @@
     <ClCompile Include="activity_log.cpp" />
     <ClCompile Include="job_runner.cpp" />
     <ClCompile Include="workspace.cpp" />
+    <ClCompile Include="stock_layout.cpp" />
     <ClCompile Include="dialogs.cpp" />
     <ClCompile Include="windows_shell.cpp" />
     <ClCompile Include="open_commands.cpp" />
@@ -129,6 +130,7 @@
     <ClInclude Include="activity_log.hpp" />
     <ClInclude Include="job_runner.hpp" />
     <ClInclude Include="workspace.hpp" />
+    <ClInclude Include="stock_layout.hpp" />
     <ClInclude Include="dialogs.hpp" />
     <ClInclude Include="windows_shell.hpp" />
     <ClInclude Include="commands.hpp" />

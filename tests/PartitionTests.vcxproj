@@ -91,6 +91,7 @@
     <ClCompile Include="local_folder_tests.cpp" />
     <ClCompile Include="drive_survey_tests.cpp" />
     <ClCompile Include="xbox_hdd_format_tests.cpp" />
+    <ClCompile Include="stock_layout_tests.cpp" />
     <ClCompile Include="..\src\partition.cpp" />
     <ClCompile Include="..\src\partition_format.cpp" />
     <ClCompile Include="..\src\partition_status.cpp" />
@@ -114,6 +115,7 @@
     <ClCompile Include="..\tools\fatxgui\drive_survey.cpp" />
     <ClCompile Include="..\tools\fatxtool\xbox_hdd_format.cpp" />
     <ClCompile Include="..\tools\fatxgui\text.cpp" />
+    <ClCompile Include="..\tools\fatxgui\stock_layout.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\src\partition.hpp" />
